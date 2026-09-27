@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = ["crates/eventstore"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+doris-eventstore = { path = "crates/eventstore" }
+base64 = "0.23"
+getrandom = "0.4"
+jiff = { version = "0.2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+sqlx = { version = "0.9", features = ["sqlite", "runtime-tokio", "migrate"] }
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+uuid = { version = "1", features = ["v4", "serde"] }
