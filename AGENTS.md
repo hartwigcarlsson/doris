@@ -1,3 +1,102 @@
-AGENTS.md: Doris
+# AGENTS.md: Doris
 
+Doris is a bookkeeping system for Swedish companies. It must comply with
+Bokföringslagen (SFS 1999:1078):
+https://www.riksdagen.se/sv/dokument-och-lagar/dokument/svensk-forfattningssamling/bokforingslag-19991078_sfs-1999-1078/
 
+Features are built incrementally, one step at a time. Each step gets a design
+spec in `docs/superpowers/specs/` and an implementation plan in
+`docs/superpowers/plans/`.
+
+## Principles
+- **Self-contained, lightweight, fast.** The system is one binary plus one
+  SQLite file. There are no external services and no runtime CDN dependencies:
+  fonts, icons and CSS are shipped with the app. Don't add a dependency when a
+  few lines of code will do.
+- **TDD is mandatory.** No functionality or bug fix goes in unless a failing
+  test demonstrates it first. The cycle is red → green → refactor, and each
+  cycle ends in a commit.
+- **Rust only.** Node is a dev dependency, used only for the Playwright e2e
+  tests and never at runtime.
+
+## Stack
+| Layer | Choice | Why |
+|---|---|---|
+| Backend | Rust, tonic 0.14 + tonic-web (gRPC-Web), axum via tonic | One process serves both the API and the frontend |
+| Frontend | Leptos 0.8 CSR, built with Trunk, Tailwind v4 (standalone CLI) | Pure WASM SPA; no SSR, so gRPC is the only protocol |
+| API | gRPC-Web (`tonic-web-wasm-client` in the browser) | Typed contract shared from `proto/` |
+| Storage | SQLite via sqlx 0.9 | A single file |
+| Model | Event sourcing, with projections for reads | Append-only history, as BFL requires |
+
+## Layout
+```
+proto/              .proto files (package doris.<area>.v1)
+migrations/         sqlx migrations, NNNN_name.sql, shared by all crates
+crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
+crates/identity     doris-identity: users, passkeys, invitations, sessions
+crates/proto        doris-proto: generated code (feature `server` for stubs)
+crates/server       doris-server: binary, gRPC services, embedded frontend
+crates/web          doris-web: Leptos CSR app, UI components
+e2e/                Playwright tests (virtual WebAuthn authenticator)
+```
+
+## Event sourcing rules
+- The `events` table is append-only, and a trigger rejects UPDATE and DELETE.
+  Never work around this.
+- Payloads are JSON and carry `schema_version`. Never change the meaning of an
+  existing event. To change one, add a new version or a new event type and
+  upcast old payloads when reading.
+- Projections are updated in the **same transaction** as the append
+  (`BEGIN IMMEDIATE`). Every projection must be rebuildable from `read_all`,
+  and a test must cover that.
+- Rules that span many records, such as a unique email, are enforced inside the
+  write transaction, for example with UNIQUE constraints on projections.
+- Domain logic is pure: `decide(state, cmd) -> Result<Vec<Event>>` and
+  `evolve(state, event)`. Test it given/when/then, without a database.
+- Operational data is **not** events and may be purged. That covers sessions
+  and WebAuthn ceremony state.
+
+## BFL requirements to keep in mind
+- Varaktighet (durability): accounting data must never be altered or deleted.
+  Corrections are new entries.
+- Behandlingshistorik (5 kap. 11 §): record who did what and when. This lives
+  in the event metadata.
+- Archiving: data must be kept 7 years in a readable form, which is why events
+  are stored as JSON rather than an opaque binary.
+- SQLite runs with `journal_mode=WAL`, `synchronous=FULL` and
+  `foreign_keys=ON`.
+
+## Naming and language
+- Code, identifiers, URLs, query params, proto, event names, commits: English.
+- Only user-visible UI text is Swedish.
+
+## Authentication
+- WebAuthn/passkeys only (webauthn-rs). Never store or accept passwords.
+- A user is identified by email plus a display name, and can have several
+  passkeys.
+- The first user to register becomes admin. After that, registration requires
+  an email-bound invitation that an admin creates.
+- The session is an opaque token in the `doris_session` cookie, set with
+  `HttpOnly; Secure; SameSite=Strict`. Only a SHA-256 hash of the token is
+  stored, and the same goes for invitation tokens.
+- Email is personal data: never log it.
+
+## Style
+The UI follows shadcn preset `b1Gdz9bFY`: style mira, base color stone, theme
+amber, font Inter (self-hosted), small radius, lucide icons (inlined SVG).
+Design tokens live in `crates/web/style/input.css`. Build only the components
+you need.
+
+## Commands
+```
+make dev     # backend + `trunk serve` (proxies /doris.* to backend)
+make test    # cargo test --workspace
+make e2e     # build frontend, start server on temp DB, run Playwright
+make dist    # target/dist/doris (assets embedded) + doris-web-<ver>.tar.gz
+```
+Server configuration comes from env vars or CLI flags: `DORIS_DATABASE`,
+`DORIS_LISTEN`, `DORIS_RP_ID`, `DORIS_RP_ORIGIN`, `DORIS_CORS_ORIGINS`,
+`DORIS_SERVE_FRONTEND`.
+
+Requires `protoc` on PATH, plus `trunk` and the `wasm32-unknown-unknown`
+target for the frontend.
