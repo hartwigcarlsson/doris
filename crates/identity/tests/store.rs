@@ -6,6 +6,7 @@ use doris_identity::{
 use jiff::{SignedDuration, Timestamp};
 use serde_json::json;
 use sqlx::SqlitePool;
+use uuid::Uuid;
 
 fn now() -> Timestamp {
     "2026-09-28T10:00:00Z".parse().unwrap()
@@ -27,12 +28,41 @@ async fn event_count(pool: &SqlitePool) -> i64 {
 }
 
 #[tokio::test]
+async fn registered_user_keeps_the_callers_id() {
+    let pool = db().await;
+    let id = Uuid::new_v4();
+
+    let anna = register(
+        &pool,
+        id,
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(anna.id, id);
+    assert_eq!(get_user(&pool, id).await.unwrap().unwrap().id, id);
+}
+
+#[tokio::test]
 async fn first_user_becomes_admin_and_is_findable_by_email() {
     let pool = db().await;
 
-    let anna = register(&pool, "Anna@Example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "Anna@Example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(anna.role, Role::Admin);
     let found = find_user_by_email(&pool, "ANNA@example.se")
@@ -52,13 +82,29 @@ async fn first_user_becomes_admin_and_is_findable_by_email() {
 #[tokio::test]
 async fn second_user_needs_an_invitation() {
     let pool = db().await;
-    register(&pool, "anna@example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
 
-    let err = register(&pool, "bo@example.se", "Bo", None, passkey("c2"), now())
-        .await
-        .unwrap_err();
+    let err = register(
+        &pool,
+        Uuid::new_v4(),
+        "bo@example.se",
+        "Bo",
+        None,
+        passkey("c2"),
+        now(),
+    )
+    .await
+    .unwrap_err();
 
     assert!(
         matches!(err, Error::Domain(DomainError::InvitationRequired)),
@@ -66,6 +112,7 @@ async fn second_user_needs_an_invitation() {
     );
     let err = register(
         &pool,
+        Uuid::new_v4(),
         "bo@example.se",
         "Bo",
         Some("bogus"),
@@ -80,15 +127,24 @@ async fn second_user_needs_an_invitation() {
 #[tokio::test]
 async fn invited_user_registers_once_as_member() {
     let pool = db().await;
-    let anna = register(&pool, "anna@example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
     let (_, token) = create_invitation(&pool, anna.id, "bo@example.se", now())
         .await
         .unwrap();
 
     let bo = register(
         &pool,
+        Uuid::new_v4(),
         "bo@example.se",
         "Bo",
         Some(&token),
@@ -99,6 +155,7 @@ async fn invited_user_registers_once_as_member() {
     .unwrap();
     let again = register(
         &pool,
+        Uuid::new_v4(),
         "bo2@example.se",
         "Bo",
         Some(&token),
@@ -118,9 +175,17 @@ async fn invited_user_registers_once_as_member() {
 #[tokio::test]
 async fn expired_invitation_is_rejected() {
     let pool = db().await;
-    let anna = register(&pool, "anna@example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
     let (_, token) = create_invitation(&pool, anna.id, "bo@example.se", now())
         .await
         .unwrap();
@@ -128,6 +193,7 @@ async fn expired_invitation_is_rejected() {
     let later = now() + SignedDuration::from_hours(24 * 7);
     let err = register(
         &pool,
+        Uuid::new_v4(),
         "bo@example.se",
         "Bo",
         Some(&token),
@@ -146,9 +212,17 @@ async fn expired_invitation_is_rejected() {
 #[tokio::test]
 async fn invitation_tokens_are_stored_only_as_hashes() {
     let pool = db().await;
-    let anna = register(&pool, "anna@example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
 
     let (_, token) = create_invitation(&pool, anna.id, "bo@example.se", now())
         .await
@@ -168,14 +242,23 @@ async fn invitation_tokens_are_stored_only_as_hashes() {
 #[tokio::test]
 async fn invitations_are_admin_only_and_unique_per_email() {
     let pool = db().await;
-    let anna = register(&pool, "anna@example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
     let (_, token) = create_invitation(&pool, anna.id, "bo@example.se", now())
         .await
         .unwrap();
     let bo = register(
         &pool,
+        Uuid::new_v4(),
         "bo@example.se",
         "Bo",
         Some(&token),
@@ -213,9 +296,17 @@ async fn invitations_are_admin_only_and_unique_per_email() {
 #[tokio::test]
 async fn duplicate_email_is_rejected_without_writing_events() {
     let pool = db().await;
-    let anna = register(&pool, "anna@example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
     // A pending invitation for an email that registers in the meantime is the
     // only way to reach the users UNIQUE constraint through the public API.
     let (_, token) = create_invitation(&pool, anna.id, "bo@example.se", now())
@@ -230,6 +321,7 @@ async fn duplicate_email_is_rejected_without_writing_events() {
 
     let err = register(
         &pool,
+        Uuid::new_v4(),
         "Bo@Example.se",
         "Bo",
         Some(&token),
@@ -246,9 +338,17 @@ async fn duplicate_email_is_rejected_without_writing_events() {
 #[tokio::test]
 async fn a_credential_cannot_belong_to_two_users() {
     let pool = db().await;
-    let anna = register(&pool, "anna@example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
     let (_, token) = create_invitation(&pool, anna.id, "bo@example.se", now())
         .await
         .unwrap();
@@ -256,6 +356,7 @@ async fn a_credential_cannot_belong_to_two_users() {
 
     let err = register(
         &pool,
+        Uuid::new_v4(),
         "bo@example.se",
         "Bo",
         Some(&token),
@@ -272,9 +373,17 @@ async fn a_credential_cannot_belong_to_two_users() {
 #[tokio::test]
 async fn users_can_add_passkeys_and_logins_update_them() {
     let pool = db().await;
-    let anna = register(&pool, "anna@example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
 
     add_passkey(&pool, anna.id, passkey("c2")).await.unwrap();
     let dup = add_passkey(&pool, anna.id, passkey("c2"))
@@ -308,9 +417,17 @@ async fn users_can_add_passkeys_and_logins_update_them() {
 #[tokio::test]
 async fn events_record_who_acted() {
     let pool = db().await;
-    let anna = register(&pool, "anna@example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
     create_invitation(&pool, anna.id, "bo@example.se", now())
         .await
         .unwrap();
@@ -326,14 +443,23 @@ async fn events_record_who_acted() {
 #[tokio::test]
 async fn rebuilt_projections_equal_incremental_ones() {
     let pool = db().await;
-    let anna = register(&pool, "anna@example.se", "Anna", None, passkey("c1"), now())
-        .await
-        .unwrap();
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
     let (_, token) = create_invitation(&pool, anna.id, "bo@example.se", now())
         .await
         .unwrap();
     register(
         &pool,
+        Uuid::new_v4(),
         "bo@example.se",
         "Bo",
         Some(&token),
@@ -379,6 +505,7 @@ async fn concurrent_bootstrap_yields_exactly_one_admin() {
             tokio::spawn(async move {
                 register(
                     &pool,
+                    Uuid::new_v4(),
                     &format!("u{i}@example.se"),
                     "U",
                     None,

@@ -25,3 +25,5 @@ CREATE TABLE invitations (
     expires_at    INTEGER NOT NULL, -- unix seconds, for range queries
     accepted_by   TEXT
 );
+
+CREATE INDEX invitations_email ON invitations (email);

@@ -59,8 +59,12 @@ impl From<sqlx::Error> for Error {
 
 /// Registers a user with their first passkey. The very first user becomes
 /// admin; everyone after that needs a valid invitation for the same email.
+///
+/// The caller chooses `user_id` (Plan 2's WebAuthn ceremony picks it at
+/// `begin_registration`, where it becomes the WebAuthn user handle).
 pub async fn register(
     pool: &SqlitePool,
+    user_id: Uuid,
     email: &str,
     display_name: &str,
     invitation_token: Option<&str>,
@@ -68,7 +72,7 @@ pub async fn register(
     now: Timestamp,
 ) -> Result<User> {
     let cmd = RegisterUser {
-        user_id: Uuid::new_v4(),
+        user_id,
         email: Email::parse(email)?,
         display_name: DisplayName::parse(display_name)?,
         passkey,

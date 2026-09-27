@@ -95,12 +95,15 @@ pub async fn open(url: &str) -> Result<SqlitePool, Error> {
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Full)
         .foreign_keys(true);
-    // Every connection to `:memory:` is its own database, so keep exactly one.
-    let max_connections = if url.contains(":memory:") { 1 } else { 8 };
-    let pool = SqlitePoolOptions::new()
-        .max_connections(max_connections)
-        .connect_with(options)
-        .await?;
+    // Every connection to `:memory:` is its own database, so keep exactly one
+    // and never let the pool recycle it: a fresh connection would be an
+    // empty, unmigrated database.
+    let in_memory = url.contains(":memory:");
+    let mut pool_options = SqlitePoolOptions::new().max_connections(if in_memory { 1 } else { 8 });
+    if in_memory {
+        pool_options = pool_options.idle_timeout(None).max_lifetime(None);
+    }
+    let pool = pool_options.connect_with(options).await?;
     sqlx::migrate!("../../migrations").run(&pool).await?;
     Ok(pool)
 }
