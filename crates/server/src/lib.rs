@@ -9,6 +9,7 @@ use doris_proto::auth::v1::auth_service_server::AuthServiceServer;
 use http::header::CONTENT_TYPE;
 use http::{HeaderName, HeaderValue, Method, StatusCode};
 use rust_embed::RustEmbed;
+use std::time::Duration;
 use tonic::service::Routes;
 use tonic_web::GrpcWebLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -59,4 +60,5 @@ fn cors(origins: Vec<HeaderValue>) -> CorsLayer {
             "grpc-message",
             "grpc-status-details-bin",
         ]))
+        .max_age(Duration::from_secs(7200))
 }

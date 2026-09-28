@@ -53,7 +53,7 @@ pub async fn invitation_email(
 pub async fn list_invitations(pool: &SqlitePool) -> Result<Vec<InvitationSummary>> {
     let rows: Vec<(String, String, i64, bool)> = sqlx::query_as(
         "SELECT invitation_id, email, expires_at, accepted_by IS NOT NULL
-         FROM invitations ORDER BY expires_at DESC",
+         FROM invitations ORDER BY expires_at DESC, invitation_id",
     )
     .fetch_all(pool)
     .await?;

@@ -107,6 +107,14 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - CORS is off unless `DORIS_CORS_ORIGINS` is set. Set it only when the frontend
   is served from another origin on the same site; WebAuthn's RP ID must still
   match.
+- `DORIS_CORS_ORIGINS` values are exact origins (`https://app.example.se`:
+  scheme + host [+ port], no path or trailing slash).
+- `DORIS_RP_ORIGIN` must be the origin the page actually runs on (under
+  `trunk serve` that's the trunk port; on a CDN, the CDN's origin), and only
+  one origin can do WebAuthn per server.
+- Use `localhost` (not `127.0.0.1`) in dev and e2e: the RP id is `localhost`,
+  and Chromium only accepts `Secure` cookies over plain http on `localhost`.
+- `DORIS_LISTEN` defaults to `127.0.0.1:3000`; containers need `0.0.0.0:3000`.
 
 ## Style
 The UI follows shadcn preset `b1Gdz9bFY`: style mira, base color stone, theme

@@ -33,13 +33,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::parse();
     let pool = doris_eventstore::open(&config.database).await?;
     let auth = Auth::new(pool.clone(), &config.rp_id, &config.rp_origin).await?;
+    let cors_origins = config
+        .cors_origins
+        .into_iter()
+        .filter(|o| !o.is_empty())
+        .collect();
     let app = doris_server::router::<WebDist>(
         AuthApi::new(pool, auth),
-        config.cors_origins,
+        cors_origins,
         config.serve_frontend,
     );
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!("listening on http://{}", config.listen);
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
+}
+
+/// Resolves on Ctrl-C or, on Unix, SIGTERM (sent by `kill`, container
+/// runtimes and orchestrators when stopping the process).
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl-C handler");
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }
