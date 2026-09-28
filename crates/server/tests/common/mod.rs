@@ -153,14 +153,27 @@ pub async fn http(
     url: &str,
     headers: &[(&str, &str)],
 ) -> http::Response<String> {
-    use http_body_util::{BodyExt, Empty};
-    let client = Client::builder(TokioExecutor::new()).build_http::<Empty<axum::body::Bytes>>();
+    http_with_body(method, url, headers, b"").await
+}
+
+pub async fn http_with_body(
+    method: http::Method,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &'static [u8],
+) -> http::Response<String> {
+    use http_body_util::{BodyExt, Full};
+    let client = Client::builder(TokioExecutor::new()).build_http::<Full<axum::body::Bytes>>();
     let mut request = http::Request::builder().method(method).uri(url);
     for (name, value) in headers {
         request = request.header(*name, *value);
     }
     let response = client
-        .request(request.body(Empty::new()).unwrap())
+        .request(
+            request
+                .body(Full::new(axum::body::Bytes::from_static(body)))
+                .unwrap(),
+        )
         .await
         .unwrap();
     let (parts, body) = response.into_parts();

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{TestServer, authed, device, session_from, set_cookie};
+use common::{TestServer, authed, device, http_with_body, session_from, set_cookie};
 use doris_proto::auth::v1 as pb;
 use tonic::{Code, Request};
 use webauthn_rs::prelude::CreationChallengeResponse;
@@ -373,4 +373,23 @@ async fn errors_carry_stable_codes_for_the_frontend() {
         (Code::InvalidArgument, "invalid_ceremony")
     );
     assert_eq!(unknown_invite.code(), Code::NotFound);
+}
+
+#[tokio::test]
+async fn malformed_requests_get_a_stable_code_not_internals() {
+    let server = TestServer::start().await;
+
+    let response = http_with_body(
+        http::Method::POST,
+        &format!("{}/doris.auth.v1.AuthService/GetStatus", server.base),
+        &[
+            ("content-type", "application/grpc-web+proto"),
+            ("x-grpc-web", "1"),
+        ],
+        b"garbage!!",
+    )
+    .await;
+
+    assert_eq!(response.headers()["grpc-status"], "13");
+    assert_eq!(response.headers()["grpc-message"], "internal");
 }

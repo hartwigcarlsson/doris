@@ -26,7 +26,8 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
 ) -> Router {
     let mut app = Routes::new(AuthServiceServer::new(api))
         .into_axum_router()
-        .layer(GrpcWebLayer::new());
+        .layer(GrpcWebLayer::new())
+        .layer(axum::middleware::map_response(hide_internal_messages));
     app = if serve_frontend {
         // Compressed on the fly: brotli cuts the wasm to about a third.
         app.fallback_service(get(assets::serve::<E>).layer(CompressionLayer::new()))
@@ -37,6 +38,24 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
         app = app.layer(cors(cors_origins));
     }
     app
+}
+
+/// Our statuses carry stable codes. tonic's own internal errors (e.g. a
+/// malformed request body) would expose implementation details instead, so
+/// they are logged and replaced with `internal`.
+async fn hide_internal_messages(
+    mut response: axum::response::Response,
+) -> axum::response::Response {
+    let headers = response.headers_mut();
+    let internal = headers.get("grpc-status").is_some_and(|s| s == "13");
+    if let Some(message) = headers
+        .get("grpc-message")
+        .filter(|m| internal && *m != "internal")
+    {
+        tracing::warn!("grpc internal error: {message:?}");
+        headers.insert("grpc-message", HeaderValue::from_static("internal"));
+    }
+    response
 }
 
 fn cors(origins: Vec<HeaderValue>) -> CorsLayer {
