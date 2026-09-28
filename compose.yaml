@@ -1,0 +1,16 @@
+services:
+  doris:
+    image: ghcr.io/hartwigcarlsson/doris:latest
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # WebAuthn: the origin the browser uses to reach Doris.
+      DORIS_RP_ID: ${DORIS_RP_ID:-localhost}
+      DORIS_RP_ORIGIN: ${DORIS_RP_ORIGIN:-http://localhost:3000}
+    volumes:
+      - doris-data:/data
+    restart: unless-stopped
+
+volumes:
+  doris-data:

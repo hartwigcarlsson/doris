@@ -160,10 +160,15 @@ make web       # debug frontend build into crates/web/dist
 make e2e       # frontend + debug server, then Playwright
 make dist      # target/dist/doris (frontend embedded) + doris-web-<ver>.tar.gz
 make e2e-dist  # Playwright against the release binary from `make dist`
+docker compose up --build  # the image on :3000, data in the `doris-data` volume
 ```
 Server configuration comes from env vars or CLI flags: `DORIS_DATABASE`,
 `DORIS_LISTEN`, `DORIS_RP_ID`, `DORIS_RP_ORIGIN`, `DORIS_CORS_ORIGINS`,
 `DORIS_SERVE_FRONTEND`.
+
+Pushes build the `Dockerfile` in GitHub Actions (`.github/workflows/image.yml`)
+and publish it to `ghcr.io/hartwigcarlsson/doris`: tagged by branch, `sha-…`,
+`latest` on main, and the version for `v*` tags.
 
 Requires `protoc` on PATH and the system OpenSSL (webauthn-rs links it:
 `brew install openssl@3` on macOS, `libssl-dev` on Debian/Ubuntu), plus
