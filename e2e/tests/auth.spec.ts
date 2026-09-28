@@ -123,3 +123,15 @@ test("form validation messages are in Swedish", async ({ page, app }) => {
 
   await expect(page.getByRole("alert")).toHaveText("Ange en giltig e-postadress.");
 });
+
+test("the invitation list only shows once there are invitations", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.getByRole("link", { name: "Inbjudningar" }).click();
+  await expect(page.getByRole("heading", { name: "Bjud in" })).toBeVisible();
+
+  await expect(page.getByRole("heading", { name: "Inbjudningar" })).toHaveCount(0);
+
+  await page.getByLabel("E-post").fill("bo@example.se");
+  await page.getByRole("button", { name: "Skapa inbjudan" }).click();
+  await expect(page.getByRole("heading", { name: "Inbjudningar" })).toBeVisible();
+});

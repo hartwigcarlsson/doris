@@ -66,22 +66,24 @@ pub fn Invitations() -> impl IntoView {
                     })
                 }}
             </Card>
-            <Card title="Inbjudningar">
-                <ul class="grid gap-2">
-                    <For each=move || invitations.get() key=|i| i.id.clone() let(invitation)>
-                        <li class="flex justify-between gap-2">
-                            <span>{invitation.email}</span>
-                            <span class="text-muted-foreground">
-                                {if invitation.accepted {
-                                    "Använd".to_owned()
-                                } else {
-                                    format!("Giltig till {}", date(&invitation.expires_at))
-                                }}
-                            </span>
-                        </li>
-                    </For>
-                </ul>
-            </Card>
+            <Show when=move || !invitations.get().is_empty()>
+                <Card title="Inbjudningar">
+                    <ul class="grid gap-2">
+                        <For each=move || invitations.get() key=|i| i.id.clone() let(invitation)>
+                            <li class="flex justify-between gap-2">
+                                <span>{invitation.email}</span>
+                                <span class="text-muted-foreground">
+                                    {if invitation.accepted {
+                                        "Använd".to_owned()
+                                    } else {
+                                        format!("Giltig till {}", date(&invitation.expires_at))
+                                    }}
+                                </span>
+                            </li>
+                        </For>
+                    </ul>
+                </Card>
+            </Show>
         </div>
     }
 }
