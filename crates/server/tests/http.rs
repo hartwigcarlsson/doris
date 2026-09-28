@@ -128,6 +128,7 @@ async fn security_headers_are_set_on_frontend_responses() {
         html.headers()["content-security-policy"],
         "frame-ancestors 'none'"
     );
+    assert_eq!(html.headers()["referrer-policy"], "no-referrer");
     assert_eq!(js.headers()["x-content-type-options"], "nosniff");
 }
 

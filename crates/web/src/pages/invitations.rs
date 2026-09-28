@@ -1,5 +1,6 @@
 use crate::api::{api, pb};
 use crate::errors::describe;
+use crate::format::date;
 use crate::ui::{Button, Card, ErrorAlert, Field};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
@@ -74,7 +75,7 @@ pub fn Invitations() -> impl IntoView {
                                 {if invitation.accepted {
                                     "Använd".to_owned()
                                 } else {
-                                    format!("Giltig till {}", &invitation.expires_at[..10])
+                                    format!("Giltig till {}", date(&invitation.expires_at))
                                 }}
                             </span>
                         </li>

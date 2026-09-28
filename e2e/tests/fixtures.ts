@@ -86,10 +86,13 @@ export const test = base.extend<Fixtures>({
       },
       stdio: "inherit",
     });
-    await waitUntilUp(origin);
-    await use(origin);
-    server.kill();
-    rmSync(dir, { recursive: true, force: true });
+    try {
+      await waitUntilUp(origin);
+      await use(origin);
+    } finally {
+      server.kill();
+      rmSync(dir, { recursive: true, force: true });
+    }
   },
   newPerson: async ({ browser }, use) => {
     const contexts: BrowserContext[] = [];

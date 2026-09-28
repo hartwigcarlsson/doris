@@ -72,6 +72,10 @@ pub async fn serve<E: RustEmbed>(uri: Uri, headers: HeaderMap) -> Response {
             HeaderName::from_static("content-security-policy"),
             HeaderValue::from_static("frame-ancestors 'none'"),
         );
+        h.insert(
+            HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("no-referrer"),
+        );
     }
     response
 }

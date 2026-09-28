@@ -20,6 +20,7 @@ pub fn Register() -> impl IntoView {
     let email_locked = RwSignal::new(false);
     let error = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
+    let invitation_failed = RwSignal::new(false);
 
     // An invitation decides the email; show it and lock the field.
     Effect::new(move |_| {
@@ -33,7 +34,10 @@ pub fn Register() -> impl IntoView {
                         email.set(found.into_inner().email);
                         email_locked.set(true);
                     }
-                    Err(status) => error.set(Some(describe(&status))),
+                    Err(status) => {
+                        error.set(Some(describe(&status)));
+                        invitation_failed.set(true);
+                    }
                 }
             });
         }
@@ -62,7 +66,9 @@ pub fn Register() -> impl IntoView {
         });
     };
 
-    let open = move || session.bootstrap_required.get() || invitation().is_some();
+    let open = move || {
+        !invitation_failed.get() && (session.bootstrap_required.get() || invitation().is_some())
+    };
     let title = if session.bootstrap_required.get_untracked() {
         "Skapa administratörskonto"
     } else {
@@ -73,10 +79,17 @@ pub fn Register() -> impl IntoView {
         <Card title=title description="Du loggar in med en passkey – inget lösenord behövs.">
             <Show
                 when=open
-                fallback=|| {
+                fallback=move || {
                     view! {
+                        <ErrorAlert message=error />
                         <p class="text-muted-foreground">
-                            "Registrering kräver en inbjudan. " <A href="/login" attr:class="underline">"Logga in"</A>
+                            {move || {
+                                if invitation_failed.get() {
+                                    ""
+                                } else {
+                                    "Registrering kräver en inbjudan. "
+                                }
+                            }} <A href="/login" attr:class="underline">"Logga in"</A>
                         </p>
                     }
                 }

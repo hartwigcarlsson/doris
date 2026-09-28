@@ -1,4 +1,4 @@
-VERSION := $(shell cargo pkgid -p doris-server | sed 's/.*@//')
+VERSION = $(shell cargo pkgid -p doris-server | sed 's/.*@//')
 DIST := target/dist
 
 .PHONY: test web e2e e2e-dist dev dist
@@ -35,4 +35,8 @@ dist:
 	mkdir -p $(DIST)
 	cp target/release/doris $(DIST)/doris
 	tar -czf $(DIST)/doris-web-$(VERSION).tar.gz -C crates/web/dist .
+	@tar -tzf $(DIST)/doris-web-$(VERSION).tar.gz | grep -qx './index.html' || \
+		{ echo "dist: tarball missing ./index.html"; exit 1; }
+	@tar -tzf $(DIST)/doris-web-$(VERSION).tar.gz | grep -q '_bg\.wasm$$' || \
+		{ echo "dist: tarball missing *_bg.wasm"; exit 1; }
 	@echo "built $(DIST)/doris and $(DIST)/doris-web-$(VERSION).tar.gz"

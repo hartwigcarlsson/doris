@@ -3,6 +3,7 @@
 mod api;
 mod app;
 mod errors;
+mod format;
 mod pages;
 mod passkey;
 mod ui;

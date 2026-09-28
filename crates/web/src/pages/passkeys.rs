@@ -1,5 +1,6 @@
 use crate::api::{api, pb};
 use crate::errors::describe;
+use crate::format::date;
 use crate::passkey;
 use crate::ui::{Button, Card, ErrorAlert, Field};
 use leptos::ev::SubmitEvent;
@@ -49,7 +50,7 @@ pub fn Passkeys() -> impl IntoView {
                             <span class="text-muted-foreground">
                                 {passkey
                                     .last_used_at
-                                    .map(|at| format!("Senast använd {}", &at[..10]))
+                                    .map(|at| format!("Senast använd {}", date(&at)))
                                     .unwrap_or_else(|| "Aldrig använd".to_owned())}
                             </span>
                         </li>

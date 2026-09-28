@@ -63,6 +63,16 @@ test("registration without an invitation is closed after the first user", async 
   await expect(stranger.getByRole("button", { name: "Skapa konto med passkey" })).toHaveCount(0);
 });
 
+test("an unusable invitation shows the error and closes the registration form", async ({ page, app, newPerson }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+
+  const stranger = await newPerson();
+  await stranger.goto(`${app}/register?invitation=bogus`);
+
+  await expect(stranger.getByRole("alert")).toHaveText("Inbjudan finns inte eller har redan använts.");
+  await expect(stranger.getByRole("button", { name: "Skapa konto med passkey" })).toHaveCount(0);
+});
+
 test("a user adds a second passkey and signs in with it", async ({ page, app, authenticator: laptop }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna", passkey: "Laptop" });
   await page.getByRole("link", { name: "Passkeys" }).click();
