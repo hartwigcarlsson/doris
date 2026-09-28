@@ -40,8 +40,9 @@ pub async fn serve<E: RustEmbed>(uri: Uri, headers: HeaderMap) -> Response {
     } else {
         "no-cache"
     };
+    // Weak, because the compression layer may send another representation.
     let etag = format!(
-        "\"{}\"",
+        "W/\"{}\"",
         file.metadata
             .sha256_hash()
             .iter()

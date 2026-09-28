@@ -4,7 +4,7 @@ use common::{TestServer, http};
 use http::Method;
 use http::header::{
     ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_MAX_AGE,
-    CACHE_CONTROL, CONTENT_TYPE, ETAG,
+    CACHE_CONTROL, CONTENT_ENCODING, CONTENT_TYPE, ETAG,
 };
 
 #[tokio::test]
@@ -106,6 +106,8 @@ async fn etag_supports_conditional_requests() {
     )
     .await;
 
+    // Weak: the same file is also sent compressed, a different representation.
+    assert!(etag.starts_with("W/\""), "{etag}");
     assert_eq!(second.status(), 304);
     assert_eq!(second.headers()[ETAG], etag);
     assert!(second.body().is_empty());
@@ -130,6 +132,21 @@ async fn security_headers_are_set_on_frontend_responses() {
     );
     assert_eq!(html.headers()["referrer-policy"], "no-referrer");
     assert_eq!(js.headers()["x-content-type-options"], "nosniff");
+}
+
+#[tokio::test]
+async fn frontend_files_are_compressed_for_browsers_that_accept_it() {
+    let server = TestServer::start().await;
+    let url = format!("{}/", server.base);
+
+    let brotli = http(Method::GET, &url, &[("accept-encoding", "gzip, br")]).await;
+    let gzip = http(Method::GET, &url, &[("accept-encoding", "gzip")]).await;
+    let plain = http(Method::GET, &url, &[]).await;
+
+    assert_eq!(brotli.headers()[CONTENT_ENCODING], "br");
+    assert_eq!(gzip.headers()[CONTENT_ENCODING], "gzip");
+    assert!(!plain.headers().contains_key(CONTENT_ENCODING));
+    assert!(plain.body().contains("<title>Doris</title>"));
 }
 
 #[tokio::test]

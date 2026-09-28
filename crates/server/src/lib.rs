@@ -12,6 +12,7 @@ use rust_embed::RustEmbed;
 use std::time::Duration;
 use tonic::service::Routes;
 use tonic_web::GrpcWebLayer;
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 pub use grpc::{AuthApi, SESSION_COOKIE};
@@ -27,7 +28,8 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
         .into_axum_router()
         .layer(GrpcWebLayer::new());
     app = if serve_frontend {
-        app.fallback_service(get(assets::serve::<E>))
+        // Compressed on the fly: brotli cuts the wasm to about a third.
+        app.fallback_service(get(assets::serve::<E>).layer(CompressionLayer::new()))
     } else {
         app.fallback(|| async { StatusCode::NOT_FOUND })
     };
