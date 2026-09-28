@@ -1,0 +1,81 @@
+import { addAuthenticator, expect, logIn, register, removeAuthenticator, test } from "./fixtures";
+
+test("the first user registers with a passkey and becomes admin", async ({ page, app }) => {
+  await page.goto(app);
+  await expect(page).toHaveURL(`${app}/register`);
+  await expect(page.getByRole("heading", { name: "Skapa administratörskonto" })).toBeVisible();
+
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+
+  await expect(page.getByText("administratör")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Inbjudningar" })).toBeVisible();
+});
+
+test("a user signs out and back in with the passkey", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+
+  await page.getByRole("button", { name: "Logga ut" }).click();
+  await expect(page).toHaveURL(`${app}/login`);
+  await page.goto(app);
+  await expect(page).toHaveURL(`${app}/login`);
+
+  await logIn(page, app, "anna@example.se");
+  await expect(page.getByText("Inloggad som Anna")).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Inloggad som Anna")).toBeVisible();
+});
+
+test("an unknown email fails like any other failed login", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.getByRole("button", { name: "Logga ut" }).click();
+
+  await logIn(page, app, "nobody@example.se");
+
+  await expect(page.getByRole("alert")).toHaveText("Inloggningen misslyckades.");
+});
+
+test("an admin invites a member who registers through the link", async ({ page, app, newPerson }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.getByRole("link", { name: "Inbjudningar" }).click();
+  await page.getByLabel("E-post").fill("bo@example.se");
+  await page.getByRole("button", { name: "Skapa inbjudan" }).click();
+  const link = await page.getByLabel("Inbjudningslänk").inputValue();
+  expect(link).toContain("/register?invitation=");
+
+  const bo = await newPerson();
+  await register(bo, app, { email: "bo@example.se", name: "Bo", passkey: "Telefon", invitationLink: link });
+
+  await expect(bo.getByText("användare")).toBeVisible();
+  await expect(bo.getByRole("link", { name: "Inbjudningar" })).toHaveCount(0);
+  await bo.goto(`${app}/admin/invitations`);
+  await expect(bo.getByRole("alert")).toHaveText("Du saknar behörighet.");
+  await page.reload();
+  await expect(page.getByText("Använd", { exact: true })).toBeVisible();
+});
+
+test("registration without an invitation is closed after the first user", async ({ page, app, newPerson }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+
+  const stranger = await newPerson();
+  await stranger.goto(`${app}/register`);
+
+  await expect(stranger.getByText("Registrering kräver en inbjudan.")).toBeVisible();
+  await expect(stranger.getByRole("button", { name: "Skapa konto med passkey" })).toHaveCount(0);
+});
+
+test("a user adds a second passkey and signs in with it", async ({ page, app, authenticator: laptop }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna", passkey: "Laptop" });
+  await page.getByRole("link", { name: "Passkeys" }).click();
+  await expect(page.getByText("Laptop")).toBeVisible();
+
+  // Switch to another device: only the "phone" authenticator is present now.
+  await removeAuthenticator(page, laptop);
+  await addAuthenticator(page);
+  await page.getByLabel("Passkeyns namn").fill("Telefon");
+  await page.getByRole("button", { name: "Lägg till passkey" }).click();
+  await expect(page.getByText("Telefon")).toBeVisible();
+
+  await page.getByRole("button", { name: "Logga ut" }).click();
+  await logIn(page, app, "anna@example.se");
+  await expect(page.getByText("Inloggad som Anna")).toBeVisible();
+});
