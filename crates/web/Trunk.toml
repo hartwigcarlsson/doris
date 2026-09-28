@@ -1,0 +1,10 @@
+[build]
+target = "index.html"
+dist = "dist"
+
+[tools]
+tailwindcss = "4.3.3"
+
+# `trunk serve` proxies API calls to the server, so dev is same-origin.
+[[proxy]]
+backend = "http://localhost:3000/doris.auth.v1.AuthService"
