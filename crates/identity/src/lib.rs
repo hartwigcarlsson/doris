@@ -5,6 +5,7 @@
 
 pub mod domain;
 mod projections;
+mod session;
 pub mod token;
 
 use domain::{
@@ -19,6 +20,7 @@ use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 pub use projections::rebuild_projections;
+pub use session::{SESSION_TTL, create_session, end_session, session_user};
 
 const USER_STREAM: &str = "user-";
 const INVITATION_STREAM: &str = "invitation-";
