@@ -48,14 +48,16 @@ async fn hide_internal_messages(
 ) -> axum::response::Response {
     let headers = response.headers_mut();
     let internal = headers.get("grpc-status").is_some_and(|s| s == "13");
-    if let Some(message) = headers
-        .get("grpc-message")
-        .filter(|m| internal && *m != "internal")
-    {
-        tracing::warn!("grpc internal error: {message:?}");
+    if let Some(message) = grpc_message(headers).filter(|m| internal && m != "internal") {
+        tracing::warn!("grpc internal error: {message}");
         headers.insert("grpc-message", HeaderValue::from_static("internal"));
     }
     response
+}
+
+/// The `grpc-message` header, percent-decoded as gRPC sends it.
+fn grpc_message(headers: &http::HeaderMap) -> Option<String> {
+    tonic::Status::from_header_map(headers).map(|status| status.message().to_owned())
 }
 
 fn cors(origins: Vec<HeaderValue>) -> CorsLayer {
@@ -82,4 +84,26 @@ fn cors(origins: Vec<HeaderValue>) -> CorsLayer {
             "grpc-status-details-bin",
         ]))
         .max_age(Duration::from_secs(7200))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grpc_message;
+    use http::HeaderMap;
+
+    #[test]
+    fn grpc_messages_are_percent_decoded_for_the_log() {
+        let mut headers = HeaderMap::new();
+        headers.insert("grpc-status", "13".parse().unwrap());
+        headers.insert(
+            "grpc-message",
+            "protocol%20error:%20invalid%20flag".parse().unwrap(),
+        );
+
+        assert_eq!(
+            grpc_message(&headers).as_deref(),
+            Some("protocol error: invalid flag")
+        );
+        assert_eq!(grpc_message(&HeaderMap::new()), None);
+    }
 }
