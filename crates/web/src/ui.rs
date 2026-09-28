@@ -58,7 +58,7 @@ pub fn Field(
         move || hint.get().map(|_| hint_id.clone())
     };
     view! {
-        <div class="grid gap-1.5">
+        <div class="grid gap-2">
             <label for=id class=LABEL>
                 {label}
             </label>

@@ -50,7 +50,7 @@ pub fn Invitations() -> impl IntoView {
     view! {
         <div class="grid gap-6">
             <Card title="Bjud in" description="Länken gäller i 7 dagar och kan användas en gång.">
-                <form class="grid gap-3" novalidate on:submit=submit>
+                <form class="grid gap-4" novalidate on:submit=submit>
                     <Field label="E-post" id="email" kind="email" value=email />
                     <ErrorAlert message=error />
                     <Button disabled=busy>"Skapa inbjudan"</Button>
@@ -58,7 +58,7 @@ pub fn Invitations() -> impl IntoView {
                 {move || {
                     link.get().map(|url| {
                         view! {
-                            <div class="mt-4 grid gap-1.5">
+                            <div class="mt-4 grid gap-2">
                                 <label for="invitation_link" class="text-xs/relaxed font-medium">"Inbjudningslänk"</label>
                                 <input id="invitation_link" readonly value=url class="h-7 w-full rounded-md border border-input bg-muted px-2 text-xs/relaxed" />
                             </div>

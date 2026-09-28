@@ -58,7 +58,7 @@ pub fn Passkeys() -> impl IntoView {
                 </ul>
             </Card>
             <Card title="Lägg till passkey">
-                <form class="grid gap-3" novalidate on:submit=submit>
+                <form class="grid gap-4" novalidate on:submit=submit>
                     <Field label="Passkeyns namn" id="passkey_name" placeholder="t.ex. iPhone" value=name />
                     <ErrorAlert message=error />
                     <Button disabled=busy>"Lägg till passkey"</Button>

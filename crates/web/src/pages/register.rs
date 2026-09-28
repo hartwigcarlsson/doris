@@ -94,7 +94,7 @@ pub fn Register() -> impl IntoView {
                     }
                 }
             >
-                <form class="grid gap-3" novalidate on:submit=submit>
+                <form class="grid gap-4" novalidate on:submit=submit>
                     <Field
                         label="E-post"
                         id="email"

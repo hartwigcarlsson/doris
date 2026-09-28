@@ -50,7 +50,7 @@ pub fn App() -> impl IntoView {
     view! {
         <Router>
             <Header />
-            <main class="mx-auto w-full max-w-md px-4 py-10">
+            <main class="mx-auto w-full max-w-sm px-4 py-10">
                 <Show when=move || session.loaded.get() fallback=|| view! { <p class="text-muted-foreground">"Laddar…"</p> }>
                     <Routes fallback=|| view! { <p>"Sidan finns inte."</p> }>
                         <Route path=path!("/register") view=Register />
