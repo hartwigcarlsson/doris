@@ -103,6 +103,17 @@ test("an invited email is shown as locked, with the reason", async ({ page, app,
   await expect(bo.getByLabel("E-post")).toHaveValue("bo@example.se");
   await expect(bo.getByLabel("E-post")).toHaveAttribute("readonly", "");
   await expect(bo.getByText("E-postadressen kommer från inbjudan.")).toBeVisible();
+
+  // The dashed border marks the field as locked, also while it has focus.
+  const border = () => bo.getByLabel("E-post").evaluate(async (e) => {
+    await Promise.all(e.getAnimations().map((a) => a.finished));
+    const s = getComputedStyle(e);
+    return `${s.borderStyle} ${s.borderColor}`;
+  });
+  const before = await border();
+  await bo.getByLabel("E-post").click();
+  expect(before).toMatch(/^dashed /);
+  expect(await border()).toBe(before);
 });
 
 test("a new passkey shows when it was added until it is used", async ({ page, app }) => {
