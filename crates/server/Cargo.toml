@@ -30,6 +30,7 @@ uuid.workspace = true
 webauthn-rs.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 http-body-util.workspace = true
 hyper-util.workspace = true
 tower.workspace = true

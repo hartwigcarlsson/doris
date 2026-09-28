@@ -3,6 +3,7 @@ use doris_identity::Auth;
 use doris_server::{AuthApi, assets::WebDist};
 use http::HeaderValue;
 use std::net::SocketAddr;
+use std::process::ExitCode;
 use url::Url;
 
 /// Doris bookkeeping server.
@@ -28,11 +29,25 @@ struct Config {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ExitCode {
     tracing_subscriber::fmt::init();
-    let config = Config::parse();
-    let pool = doris_eventstore::open(&config.database).await?;
-    let auth = Auth::new(pool.clone(), &config.rp_id, &config.rp_origin).await?;
+    match run(Config::parse()).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("doris: {message}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Starts the server; errors are one sentence for the operator.
+async fn run(config: Config) -> Result<(), String> {
+    let pool = doris_eventstore::open(&config.database)
+        .await
+        .map_err(|e| format!("cannot open database {}: {e}", config.database))?;
+    let auth = Auth::new(pool.clone(), &config.rp_id, &config.rp_origin)
+        .await
+        .map_err(|e| format!("cannot set up WebAuthn for {}: {e}", config.rp_origin))?;
     let cors_origins = config
         .cors_origins
         .into_iter()
@@ -43,12 +58,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cors_origins,
         config.serve_frontend,
     );
-    let listener = tokio::net::TcpListener::bind(config.listen).await?;
+    let listener = tokio::net::TcpListener::bind(config.listen)
+        .await
+        .map_err(|e| format!("cannot listen on {}: {e}", config.listen))?;
     tracing::info!("listening on http://{}", config.listen);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
-    Ok(())
+        .await
+        .map_err(|e| format!("server stopped: {e}"))
 }
 
 /// Resolves on Ctrl-C or, on Unix, SIGTERM (sent by `kill`, container
