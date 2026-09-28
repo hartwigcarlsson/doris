@@ -116,6 +116,28 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   and Chromium only accepts `Secure` cookies over plain http on `localhost`.
 - `DORIS_LISTEN` defaults to `127.0.0.1:3000`; containers need `0.0.0.0:3000`.
 
+## Frontend
+- `crates/web` is a Leptos 0.8 CSR app built with Trunk (`crates/web/Trunk.toml`
+  pins Tailwind 4.3.3, the standalone CLI, so no Node is needed). Output goes to
+  `crates/web/dist`, which the server embeds; it is never committed.
+- `src/api.rs` holds the gRPC-Web client (cookies always included). A
+  `<meta name="doris-api" content="https://api…">` in `index.html` points a
+  CDN-hosted frontend at the API; empty means same origin.
+- `src/passkey.rs` does the browser half of WebAuthn: webauthn-rs JSON in,
+  `navigator.credentials.*`, JSON out.
+- `src/errors.rs` maps API error codes to Swedish text. Add a line there for
+  every new code.
+- `src/ui.rs` holds the preset's components, with class lists copied from
+  shadcn's generated output. Add more by generating them with
+  `npx shadcn init -t vite -b radix -p b1Gdz9bFY` in a scratch directory and
+  copying the classes.
+- The crate also compiles for the host, so `cargo test`/`clippy --workspace`
+  include it. Also lint the wasm build:
+  `cargo clippy -p doris-web --target wasm32-unknown-unknown -- -D warnings`.
+- E2E tests live in `e2e/` (Playwright). Every test spawns its own server on
+  a fresh database, and pages get a Chrome DevTools virtual WebAuthn
+  authenticator. Select elements by their Swedish label or role.
+
 ## Style
 The UI follows shadcn preset `b1Gdz9bFY`: style mira, base color stone, theme
 amber, font Inter (self-hosted), small radius, lucide icons (inlined SVG).
@@ -124,10 +146,12 @@ you need.
 
 ## Commands
 ```
-make dev     # backend + `trunk serve` (proxies /doris.* to backend)
-make test    # cargo test --workspace
-make e2e     # build frontend, start server on temp DB, run Playwright
-make dist    # target/dist/doris (assets embedded) + doris-web-<ver>.tar.gz
+make dev       # server :3000 + `trunk serve` :8080 (open http://localhost:8080)
+make test      # cargo test --workspace (all crates, incl. doris-web unit tests)
+make web       # debug frontend build into crates/web/dist
+make e2e       # frontend + debug server, then Playwright
+make dist      # target/dist/doris (frontend embedded) + doris-web-<ver>.tar.gz
+make e2e-dist  # Playwright against the release binary from `make dist`
 ```
 Server configuration comes from env vars or CLI flags: `DORIS_DATABASE`,
 `DORIS_LISTEN`, `DORIS_RP_ID`, `DORIS_RP_ORIGIN`, `DORIS_CORS_ORIGINS`,

@@ -41,3 +41,9 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+# Release builds strip debuginfo by default. On macOS 27 the stripped
+# proc-macro dylibs (e.g. sqlx-macros) fail to load ("mis-aligned LINKEDIT
+# string pool"), so don't strip what only runs at build time.
+[profile.release.build-override]
+strip = "none"

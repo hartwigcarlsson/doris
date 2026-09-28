@@ -1,4 +1,7 @@
-.PHONY: test web e2e
+VERSION := $(shell cargo pkgid -p doris-server | sed 's/.*@//')
+DIST := target/dist
+
+.PHONY: test web e2e e2e-dist dev dist
 
 # Unit and integration tests (Rust, all crates).
 test:
@@ -12,3 +15,24 @@ web:
 e2e: web
 	cargo build -p doris-server
 	cd e2e && npm ci && npx playwright install chromium && npx playwright test
+
+# The same browser tests against the release binary from `make dist`.
+e2e-dist: dist
+	cd e2e && npm ci && npx playwright install chromium && DORIS_BIN=../$(DIST)/doris npx playwright test
+
+# Server on :3000 and `trunk serve` on :8080 (proxying the API). Open
+# http://localhost:8080 — WebAuthn needs the page's origin as RP origin.
+dev:
+	@trap 'kill 0' EXIT; \
+	DORIS_RP_ORIGIN=http://localhost:8080 cargo run -p doris-server & \
+	cd crates/web && trunk serve --port 8080
+
+# Release binary with the frontend embedded, plus the same frontend as a
+# tarball for serving from a CDN or nginx.
+dist:
+	cd crates/web && trunk build --release
+	cargo build --release -p doris-server
+	mkdir -p $(DIST)
+	cp target/release/doris $(DIST)/doris
+	tar -czf $(DIST)/doris-web-$(VERSION).tar.gz -C crates/web/dist .
+	@echo "built $(DIST)/doris and $(DIST)/doris-web-$(VERSION).tar.gz"
