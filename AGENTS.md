@@ -166,8 +166,9 @@ Server configuration comes from env vars or CLI flags: `DORIS_DATABASE`,
 `DORIS_LISTEN`, `DORIS_RP_ID`, `DORIS_RP_ORIGIN`, `DORIS_CORS_ORIGINS`,
 `DORIS_SERVE_FRONTEND`.
 
-Pushes build the `Dockerfile` in GitHub Actions (`.github/workflows/image.yml`)
-and publish it to `ghcr.io/hartwigcarlsson/doris`: tagged by branch, `sha-…`,
+Every push runs `cargo test --workspace` in GitHub Actions
+(`.github/workflows/ci.yml`). If it passes, the `Dockerfile` is built and
+published to `ghcr.io/hartwigcarlsson/doris`: tagged by branch, `sha-…`,
 `latest` on main, and the version for `v*` tags.
 
 Requires `protoc` on PATH and the system OpenSSL (webauthn-rs links it:
