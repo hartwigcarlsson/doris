@@ -22,7 +22,9 @@ fn authenticator() -> Authenticator {
 
 async fn setup() -> (SqlitePool, Auth) {
     let pool = doris_eventstore::open("sqlite::memory:").await.unwrap();
-    let auth = Auth::new(pool.clone(), "localhost", &origin()).unwrap();
+    let auth = Auth::new(pool.clone(), "localhost", &origin())
+        .await
+        .unwrap();
     (pool, auth)
 }
 
@@ -244,7 +246,9 @@ async fn an_unknown_email_gets_a_convincing_fake_challenge() {
     let (_, real) = auth.begin_login("anna@example.se", now()).await.unwrap();
     let (fake_ceremony, fake) = auth.begin_login("nobody@example.se", now()).await.unwrap();
     let (_, fake_again) = auth.begin_login(" NOBODY@example.se", now()).await.unwrap();
-    let restarted = Auth::new(pool.clone(), "localhost", &origin()).unwrap();
+    let restarted = Auth::new(pool.clone(), "localhost", &origin())
+        .await
+        .unwrap();
     let (_, after_restart) = restarted
         .begin_login("nobody@example.se", now())
         .await
@@ -290,6 +294,96 @@ async fn an_unknown_email_gets_a_convincing_fake_challenge() {
         .await
         .unwrap_err();
     assert!(matches!(err, Error::LoginFailed), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_login_ceremony_can_be_finished_only_once() {
+    let (_, auth) = setup().await;
+    let mut laptop = authenticator();
+    sign_up(&auth, &mut laptop, "anna@example.se", None).await;
+    let (ceremony, options) = auth.begin_login("anna@example.se", now()).await.unwrap();
+    let assertion = laptop.do_authentication(origin(), options).unwrap();
+    auth.finish_login(ceremony, &assertion, now())
+        .await
+        .unwrap();
+
+    let again = auth
+        .finish_login(ceremony, &assertion, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(again, Error::LoginFailed), "{again:?}");
+}
+
+#[tokio::test]
+async fn a_login_ceremony_expires_after_five_minutes() {
+    let (_, auth) = setup().await;
+    let mut laptop = authenticator();
+    sign_up(&auth, &mut laptop, "anna@example.se", None).await;
+    let (ceremony, options) = auth.begin_login("anna@example.se", now()).await.unwrap();
+    let assertion = laptop.do_authentication(origin(), options).unwrap();
+
+    let late = auth
+        .finish_login(ceremony, &assertion, now() + CEREMONY_TTL)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(late, Error::LoginFailed), "{late:?}");
+}
+
+#[tokio::test]
+async fn unknown_email_logins_do_not_write_to_the_database() {
+    let (pool, auth) = setup().await;
+
+    sqlx::query("DROP TABLE server_secrets")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    auth.begin_login("nobody@example.se", now()).await.unwrap();
+}
+
+#[tokio::test]
+async fn finish_registration_rechecks_the_invitation() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let (_, token_bo) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let (_, token_cecilia) = create_invitation(&pool, anna.id, "cecilia@example.se", now())
+        .await
+        .unwrap();
+
+    let (ceremony, options) = auth
+        .begin_registration("bo@example.se", "Bo", Some(&token_bo), "Laptop", now())
+        .await
+        .unwrap();
+    let credential = authenticator().do_registration(origin(), options).unwrap();
+    let wrong_token = auth
+        .finish_registration(ceremony, Some(&token_cecilia), &credential, now())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            wrong_token,
+            Error::Domain(DomainError::InvitationEmailMismatch)
+        ),
+        "{wrong_token:?}"
+    );
+
+    let (ceremony, options) = auth
+        .begin_registration("bo@example.se", "Bo", Some(&token_bo), "Laptop", now())
+        .await
+        .unwrap();
+    let credential = authenticator().do_registration(origin(), options).unwrap();
+    let no_token = auth
+        .finish_registration(ceremony, None, &credential, now())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(no_token, Error::Domain(DomainError::InvitationRequired)),
+        "{no_token:?}"
+    );
 }
 
 #[tokio::test]

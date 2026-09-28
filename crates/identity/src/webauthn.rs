@@ -54,17 +54,22 @@ pub struct Auth {
     pool: SqlitePool,
     webauthn: Webauthn,
     rp_id: String,
+    fake_credential_generator: WebauthnFakeCredentialGenerator<FakePasskeyDistribution>,
 }
 
 impl Auth {
-    pub fn new(pool: SqlitePool, rp_id: &str, rp_origin: &Url) -> Result<Self> {
+    pub async fn new(pool: SqlitePool, rp_id: &str, rp_origin: &Url) -> Result<Self> {
         let webauthn = WebauthnBuilder::new(rp_id, rp_origin)?
             .rp_name("Doris")
             .build()?;
+        let key = fake_credential_key(&pool).await?;
+        let fake_credential_generator =
+            WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new(&key)?;
         Ok(Self {
             pool,
             webauthn,
             rp_id: rp_id.to_owned(),
+            fake_credential_generator,
         })
     }
 
@@ -241,17 +246,22 @@ impl Auth {
     }
 
     /// Verifies the assertion, records the use and starts a session. Every
-    /// failure is [`Error::LoginFailed`].
+    /// failure is [`Error::LoginFailed`], including a missing, already-used
+    /// or expired ceremony.
     pub async fn finish_login(
         &self,
         ceremony_id: Uuid,
         credential: &PublicKeyCredential,
         now: Timestamp,
     ) -> Result<(User, String)> {
+        let ceremony = self.take(ceremony_id, now).await.map_err(|err| match err {
+            Error::CeremonyNotFound | Error::CeremonyExpired => Error::LoginFailed,
+            other => other,
+        })?;
         let Ceremony::Login {
             user_id: Some(user_id),
             state: Some(state),
-        } = self.take(ceremony_id, now).await?
+        } = ceremony
         else {
             return Err(Error::LoginFailed);
         };
@@ -318,9 +328,9 @@ impl Auth {
     /// A challenge shaped like webauthn-rs's real ones, with credential ids
     /// that are stable per email (HMAC keyed by a persisted server secret).
     async fn fake_login_options(&self, email: &str) -> Result<RequestChallengeResponse> {
-        let key = self.fake_credential_key().await?;
-        let generator = WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new(&key)?;
-        let fake_ids = generator.generate(email.trim().to_lowercase().as_bytes())?;
+        let fake_ids = self
+            .fake_credential_generator
+            .generate(email.trim().to_lowercase().as_bytes())?;
         let mut challenge = [0u8; 32];
         getrandom::fill(&mut challenge).expect("OS random source unavailable");
         Ok(RequestChallengeResponse {
@@ -333,6 +343,10 @@ impl Auth {
                     .map(|id| AllowCredentials {
                         type_: "public-key".to_owned(),
                         id: Base64UrlSafeData::from(id.to_vec()),
+                        // Real passkeys registered with "none" attestation
+                        // (ours) also carry no transports; webauthn-rs only
+                        // keeps them for packed/TPM attestation. `None`
+                        // matches real challenges here.
                         transports: None,
                     })
                     .collect(),
@@ -343,21 +357,24 @@ impl Auth {
             mediation: None,
         })
     }
+}
 
-    async fn fake_credential_key(&self) -> Result<Vec<u8>> {
-        let key = WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new_hmac_key()?;
-        sqlx::query(
-            "INSERT OR IGNORE INTO server_secrets (name, value) VALUES ('fake_credential_key', ?)",
-        )
-        .bind(key)
-        .execute(&self.pool)
-        .await?;
-        Ok(sqlx::query_scalar(
-            "SELECT value FROM server_secrets WHERE name = 'fake_credential_key'",
-        )
-        .fetch_one(&self.pool)
-        .await?)
-    }
+/// Loads the persisted fake-credential HMAC key, creating it on first use.
+/// Called once, at [`Auth::new`], so an unknown-email login never touches
+/// the database.
+async fn fake_credential_key(pool: &SqlitePool) -> Result<Vec<u8>> {
+    let key = WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new_hmac_key()?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO server_secrets (name, value) VALUES ('fake_credential_key', ?)",
+    )
+    .bind(key)
+    .execute(pool)
+    .await?;
+    Ok(
+        sqlx::query_scalar("SELECT value FROM server_secrets WHERE name = 'fake_credential_key'")
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 fn credential_id(id: &CredentialID) -> String {
