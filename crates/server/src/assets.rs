@@ -7,8 +7,13 @@ use axum::response::{IntoResponse, Response};
 use rust_embed::RustEmbed;
 
 /// The Trunk build output. Empty when the frontend has not been built.
+///
+/// The path is relative to this crate's `Cargo.toml` (`crates/server/`), not
+/// to this file: rust-embed resolves `folder` that way, and only expands
+/// `$CARGO_MANIFEST_DIR` with the `interpolate-folder-path` feature, which we
+/// don't enable.
 #[derive(RustEmbed)]
-#[folder = "$CARGO_MANIFEST_DIR/../web/dist"]
+#[folder = "../web/dist"]
 #[allow_missing = true]
 pub struct WebDist;
 
