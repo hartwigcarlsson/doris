@@ -90,6 +90,24 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   stored, and the same goes for invitation tokens.
 - Email is personal data: never log it.
 
+## API
+- The contract lives in `proto/doris/auth/v1/auth.proto`. `doris-proto` generates
+  the client; its `server` feature adds the server stubs. The client builds for
+  wasm32 because no transport is generated.
+- gRPC-Web over HTTP/1.1 (`tonic_web::GrpcWebLayer`) shares one port with the
+  embedded frontend. Integration tests speak gRPC-Web too (`GrpcWebClientLayer`
+  over a hyper client), exactly like the browser.
+- Error statuses carry stable snake_case codes as the message, for example
+  `invalid_email`, `not_signed_in`, `not_admin`, `login_failed` and
+  `ceremony_expired`. The frontend translates them. They never contain
+  personal data. The mapping is in `crates/server/src/grpc.rs` (`status`,
+  `domain_code`).
+- The session cookie is `doris_session` (HttpOnly, Secure, SameSite=Strict,
+  Path=/, 30 days).
+- CORS is off unless `DORIS_CORS_ORIGINS` is set. Set it only when the frontend
+  is served from another origin on the same site; WebAuthn's RP ID must still
+  match.
+
 ## Style
 The UI follows shadcn preset `b1Gdz9bFY`: style mira, base color stone, theme
 amber, font Inter (self-hosted), small radius, lucide icons (inlined SVG).

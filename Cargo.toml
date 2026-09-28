@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/eventstore", "crates/identity"]
+members = ["crates/eventstore", "crates/identity", "crates/proto", "crates/server"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,6 +8,8 @@ edition = "2024"
 
 [workspace.dependencies]
 doris-eventstore = { path = "crates/eventstore" }
+doris-identity = { path = "crates/identity" }
+doris-proto = { path = "crates/proto" }
 base64 = "0.23"
 getrandom = "0.4"
 jiff = { version = "0.2", features = ["serde"] }
@@ -23,3 +25,19 @@ uuid = { version = "1", features = ["v4", "serde"] }
 webauthn-authenticator-rs = { version = "0.5", features = ["softpasskey"] }
 webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
 webauthn-rs-proto = "0.5"
+axum = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+http = "1"
+http-body-util = "0.1"
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+mime_guess = "2"
+prost = "0.14"
+rust-embed = "8"
+tonic = { version = "0.14", default-features = false, features = ["codegen"] }
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+tonic-web = "0.14"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"

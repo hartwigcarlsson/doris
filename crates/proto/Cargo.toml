@@ -1,0 +1,16 @@
+[package]
+name = "doris-proto"
+version.workspace = true
+edition.workspace = true
+
+[features]
+# Server stubs; the browser client (wasm32) builds without them.
+server = ["tonic/server", "tonic/router"]
+
+[dependencies]
+prost.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
