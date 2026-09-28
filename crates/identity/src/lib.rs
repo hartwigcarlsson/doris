@@ -5,6 +5,7 @@
 
 pub mod domain;
 mod projections;
+mod queries;
 mod session;
 pub mod token;
 mod webauthn;
@@ -21,6 +22,10 @@ use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 pub use projections::rebuild_projections;
+pub use queries::{
+    InvitationSummary, PasskeySummary, bootstrap_required, invitation_email, list_invitations,
+    list_passkeys,
+};
 pub use session::{SESSION_TTL, create_session, end_session, session_user};
 pub use webauthn::{Auth, CEREMONY_TTL};
 
