@@ -58,12 +58,62 @@ impl From<sqlx::Error> for Error {
 }
 
 /// Registers a user with their first passkey. The very first user becomes
-/// admin; everyone after that needs a valid invitation for the same email.
+/// admin (any invitation token is then ignored); everyone after that needs a
+/// valid invitation for the same email.
 ///
-/// The caller chooses `user_id` (Plan 2's WebAuthn ceremony picks it at
-/// `begin_registration`, where it becomes the WebAuthn user handle).
+/// The caller chooses `user_id`: the WebAuthn ceremony picks it at
+/// `begin_registration`, where it becomes the WebAuthn user handle.
 pub async fn register(
     pool: &SqlitePool,
+    user_id: Uuid,
+    email: &str,
+    display_name: &str,
+    invitation_token: Option<&str>,
+    passkey: Passkey,
+    now: Timestamp,
+) -> Result<User> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let user = register_in(
+        &mut tx,
+        user_id,
+        email,
+        display_name,
+        invitation_token,
+        passkey,
+        now,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(user)
+}
+
+/// Runs every registration rule without saving anything, so a WebAuthn
+/// ceremony can refuse before the authenticator creates a credential.
+pub async fn check_registration(
+    pool: &SqlitePool,
+    email: &str,
+    display_name: &str,
+    invitation_token: Option<&str>,
+    now: Timestamp,
+) -> Result<()> {
+    let placeholder = Passkey::new(String::new(), "placeholder", serde_json::Value::Null)?;
+    let mut tx = doris_eventstore::begin(pool).await?;
+    register_in(
+        &mut tx,
+        Uuid::new_v4(),
+        email,
+        display_name,
+        invitation_token,
+        placeholder,
+        now,
+    )
+    .await?;
+    tx.rollback().await?;
+    Ok(())
+}
+
+async fn register_in(
+    conn: &mut SqliteConnection,
     user_id: Uuid,
     email: &str,
     display_name: &str,
@@ -77,14 +127,12 @@ pub async fn register(
         display_name: DisplayName::parse(display_name)?,
         passkey,
     };
-    let mut tx = doris_eventstore::begin(pool).await?;
-
     let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut *conn)
         .await?;
     let invitation = match invitation_token {
-        Some(token) => Some(load_invitation_by_token(&mut tx, token).await?),
-        None => None,
+        Some(token) if user_count > 0 => Some(load_invitation_by_token(conn, token).await?),
+        _ => None,
     };
     let admission = match (&invitation, user_count) {
         (_, 0) => Admission::Bootstrap,
@@ -92,15 +140,13 @@ pub async fn register(
         (None, _) => Admission::Uninvited,
     };
 
-    let user_id = cmd.user_id;
     let (user_events, accepted) = domain::register_user(admission, cmd, now)?;
     let actor = Some(user_id);
-    commit(&mut tx, &user_stream(user_id), 0, &user_events, actor).await?;
+    commit(conn, &user_stream(user_id), 0, &user_events, actor).await?;
     if let (Some(event), Some((invitation, version))) = (accepted, &invitation) {
         let stream = invitation_stream(invitation.id);
-        commit(&mut tx, &stream, *version, &[event], actor).await?;
+        commit(conn, &stream, *version, &[event], actor).await?;
     }
-    tx.commit().await?;
     Ok(User::from_events(&user_events).expect("registration yields a user"))
 }
 

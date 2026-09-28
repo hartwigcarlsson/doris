@@ -1,7 +1,7 @@
 use doris_identity::domain::{DomainError, Passkey, Role};
 use doris_identity::{
-    Error, add_passkey, create_invitation, find_user_by_email, get_user, rebuild_projections,
-    record_passkey_use, register,
+    Error, add_passkey, check_registration, create_invitation, find_user_by_email, get_user,
+    rebuild_projections, record_passkey_use, register,
 };
 use jiff::{SignedDuration, Timestamp};
 use serde_json::json;
@@ -530,4 +530,90 @@ async fn concurrent_bootstrap_yields_exactly_one_admin() {
         }
     }
     assert_eq!(admins, 1);
+}
+
+#[tokio::test]
+async fn first_user_with_a_stray_invitation_token_still_becomes_admin() {
+    let pool = db().await;
+
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        Some("stray"),
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(anna.role, Role::Admin);
+}
+
+#[tokio::test]
+async fn check_registration_applies_every_rule_but_saves_nothing() {
+    let pool = db().await;
+
+    check_registration(&pool, "anna@example.se", "Anna", None, now())
+        .await
+        .unwrap();
+    assert_eq!(event_count(&pool).await, 0);
+
+    let anna = register(
+        &pool,
+        Uuid::new_v4(),
+        "anna@example.se",
+        "Anna",
+        None,
+        passkey("c1"),
+        now(),
+    )
+    .await
+    .unwrap();
+    let (_, token) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let before = event_count(&pool).await;
+
+    let uninvited = check_registration(&pool, "bo@example.se", "Bo", None, now())
+        .await
+        .unwrap_err();
+    let mismatch = check_registration(&pool, "cecilia@example.se", "C", Some(&token), now())
+        .await
+        .unwrap_err();
+    let bad_name = check_registration(&pool, "bo@example.se", " ", Some(&token), now())
+        .await
+        .unwrap_err();
+    check_registration(&pool, "bo@example.se", "Bo", Some(&token), now())
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(uninvited, Error::Domain(DomainError::InvitationRequired)),
+        "{uninvited:?}"
+    );
+    assert!(
+        matches!(
+            mismatch,
+            Error::Domain(DomainError::InvitationEmailMismatch)
+        ),
+        "{mismatch:?}"
+    );
+    assert!(
+        matches!(bad_name, Error::Domain(DomainError::InvalidDisplayName)),
+        "{bad_name:?}"
+    );
+    assert_eq!(event_count(&pool).await, before);
+    register(
+        &pool,
+        Uuid::new_v4(),
+        "bo@example.se",
+        "Bo",
+        Some(&token),
+        passkey("c2"),
+        now(),
+    )
+    .await
+    .unwrap();
 }
