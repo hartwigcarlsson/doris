@@ -206,3 +206,13 @@ Admin-återställning av passkeys, att ta bort eller byta namn på passkeys, att
 - `make e2e` (bygger frontend, startar servern mot en temporär DB och kör Playwright med virtuell authenticator) → alla flöden i punkt 9 är gröna.
 - `make dist` och därefter `./target/dist/doris` → öppna `http://localhost:3000`, registrera första användaren med en riktig passkey (Touch ID) och logga ut och in igen.
 - `sqlite3 doris.db "UPDATE events SET payload='{}'"` → nekas av en trigger.
+
+## Beslut i Plan 2 (2026-09-28)
+- **OpenSSL:** webauthn-rs länkar mot systemets OpenSSL (Homebrew `openssl@3` på macOS, `libssl-dev` på Debian/Ubuntu). Den är inte vendored.
+- **Sessioner:** gäller i 30 dagar räknat från inloggningen. Utgångna sessioner rensas när en ny skapas.
+- **BeginLogin för okänd e-post:** svaret är en fejkad utmaning från webauthn-rs `WebauthnFakeCredentialGenerator`. Credential-id:na är stabila per e-post och räknas fram med HMAC och en serverhemlighet som sparas i tabellen `server_secrets`. Alla inloggningsfel ger samma `LoginFailed`.
+- **Passkeyns namn:** anges vid *Begin* (`BeginRegistration`, `BeginAddPasskey`) i stället för vid *Finish*. Då valideras namnet innan authenticatorn skapar något credential.
+- **FinishRegistration:** skickar inbjudningstoken igen, så token aldrig lagras i klartext på servern.
+- **Villkorligt UI:** `autocomplete="username webauthn"` går inte att använda, eftersom webauthn-rs registrerar passkeys med `residentKey: discouraged`. Frontend använder `autocomplete="username"`.
+- **Bootstrap:** en inbjudningstoken ignoreras när inga användare finns ännu.
+- **Registreringsförhandskontroll:** `check_registration` kör registreringsreglerna i en transaktion och rullar sedan tillbaka. Ceremonin nekar därmed ogiltig registrering innan authenticatorn tillfrågas.
