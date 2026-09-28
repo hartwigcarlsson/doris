@@ -169,7 +169,9 @@ Server configuration comes from env vars or CLI flags: `DORIS_DATABASE`,
 Every push runs `cargo test --workspace` in GitHub Actions
 (`.github/workflows/ci.yml`). If it passes, the `Dockerfile` is built and
 published to `ghcr.io/hartwigcarlsson/doris`: tagged by branch, `sha-…`,
-`latest` on main, and the version for `v*` tags.
+`latest` on main, and the version for `v*` tags. Dependabot
+(`.github/dependabot.yml`) opens weekly PRs for cargo, the e2e npm packages
+and the actions; its branches run the tests but don't publish an image.
 
 Requires `protoc` on PATH and the system OpenSSL (webauthn-rs links it:
 `brew install openssl@3` on macOS, `libssl-dev` on Debian/Ubuntu), plus

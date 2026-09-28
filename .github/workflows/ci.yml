@@ -16,6 +16,8 @@ jobs:
 
   image:
     needs: test
+    # Dependabot's pushes get a read-only token, so they can't publish.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
