@@ -36,7 +36,7 @@ pub fn Login() -> impl IntoView {
         {move || done.get().then(|| view! { <Redirect path="/" /> })}
         <Show when=move || !session.bootstrap_required.get() fallback=|| view! { <Redirect path="/register" /> }>
             <Card title="Logga in" description="Använd din passkey.">
-                <form class="grid gap-3" on:submit=submit>
+                <form class="grid gap-3" novalidate on:submit=submit>
                     <Field label="E-post" id="email" kind="email" autocomplete="username" value=email />
                     <ErrorAlert message=error />
                     <Button disabled=busy>"Logga in med passkey"</Button>

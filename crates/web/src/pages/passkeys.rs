@@ -48,17 +48,17 @@ pub fn Passkeys() -> impl IntoView {
                         <li class="flex justify-between gap-2">
                             <span class="font-medium">{passkey.name}</span>
                             <span class="text-muted-foreground">
-                                {passkey
-                                    .last_used_at
-                                    .map(|at| format!("Senast använd {}", date(&at)))
-                                    .unwrap_or_else(|| "Aldrig använd".to_owned())}
+                                {match &passkey.last_used_at {
+                                    Some(at) => format!("Senast använd {}", date(at)),
+                                    None => format!("Tillagd {}", date(&passkey.added_at)),
+                                }}
                             </span>
                         </li>
                     </For>
                 </ul>
             </Card>
             <Card title="Lägg till passkey">
-                <form class="grid gap-3" on:submit=submit>
+                <form class="grid gap-3" novalidate on:submit=submit>
                     <Field label="Passkeyns namn" id="passkey_name" placeholder="t.ex. iPhone" value=name />
                     <ErrorAlert message=error />
                     <Button disabled=busy>"Lägg till passkey"</Button>

@@ -125,6 +125,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   CDN-hosted frontend at the API; empty means same origin.
 - `src/passkey.rs` does the browser half of WebAuthn: webauthn-rs JSON in,
   `navigator.credentials.*`, JSON out.
+- Forms use `novalidate`. Validation messages come from the server's error
+  codes, so they're always Swedish; browser messages follow the browser's
+  language.
 - `src/errors.rs` maps API error codes to Swedish text. Add a line there for
   every new code.
 - `src/ui.rs` holds the preset's components, with class lists copied from

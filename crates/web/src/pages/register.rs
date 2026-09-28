@@ -94,8 +94,18 @@ pub fn Register() -> impl IntoView {
                     }
                 }
             >
-                <form class="grid gap-3" on:submit=submit>
-                    <Field label="E-post" id="email" kind="email" autocomplete="username" value=email readonly=email_locked />
+                <form class="grid gap-3" novalidate on:submit=submit>
+                    <Field
+                        label="E-post"
+                        id="email"
+                        kind="email"
+                        autocomplete="username"
+                        value=email
+                        readonly=email_locked
+                        hint=Signal::derive(move || {
+                            email_locked.get().then_some("E-postadressen kommer från inbjudan.")
+                        })
+                    />
                     <Field label="Namn" id="display_name" autocomplete="name" value=display_name />
                     <Field label="Passkeyns namn" id="passkey_name" placeholder="t.ex. MacBook" value=passkey_name />
                     <ErrorAlert message=error />

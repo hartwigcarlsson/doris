@@ -89,3 +89,37 @@ test("a user adds a second passkey and signs in with it", async ({ page, app, au
   await logIn(page, app, "anna@example.se");
   await expect(page.getByText("Inloggad som Anna")).toBeVisible();
 });
+
+test("an invited email is shown as locked, with the reason", async ({ page, app, newPerson }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.getByRole("link", { name: "Inbjudningar" }).click();
+  await page.getByLabel("E-post").fill("bo@example.se");
+  await page.getByRole("button", { name: "Skapa inbjudan" }).click();
+  const link = await page.getByLabel("Inbjudningslänk").inputValue();
+
+  const bo = await newPerson();
+  await bo.goto(link);
+
+  await expect(bo.getByLabel("E-post")).toHaveValue("bo@example.se");
+  await expect(bo.getByLabel("E-post")).toHaveAttribute("readonly", "");
+  await expect(bo.getByText("E-postadressen kommer från inbjudan.")).toBeVisible();
+});
+
+test("a new passkey shows when it was added until it is used", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna", passkey: "MacBook" });
+
+  await page.getByRole("link", { name: "Passkeys" }).click();
+
+  await expect(page.getByText(/^Tillagd \d{4}-\d{2}-\d{2}$/)).toBeVisible();
+  await expect(page.getByText("Aldrig använd")).toHaveCount(0);
+});
+
+test("form validation messages are in Swedish", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.getByRole("link", { name: "Inbjudningar" }).click();
+
+  await page.getByLabel("E-post").fill("inte-en-epost");
+  await page.getByRole("button", { name: "Skapa inbjudan" }).click();
+
+  await expect(page.getByRole("alert")).toHaveText("Ange en giltig e-postadress.");
+});

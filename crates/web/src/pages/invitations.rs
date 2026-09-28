@@ -50,7 +50,7 @@ pub fn Invitations() -> impl IntoView {
     view! {
         <div class="grid gap-6">
             <Card title="Bjud in" description="Länken gäller i 7 dagar och kan användas en gång.">
-                <form class="grid gap-3" on:submit=submit>
+                <form class="grid gap-3" novalidate on:submit=submit>
                     <Field label="E-post" id="email" kind="email" value=email />
                     <ErrorAlert message=error />
                     <Button disabled=busy>"Skapa inbjudan"</Button>
