@@ -8,6 +8,7 @@ test("the app's wasm is served as wasm and cached forever", async ({ page, app }
   expect(response.status()).toBe(200);
   expect(response.headers()["content-type"]).toBe("application/wasm");
   expect(response.headers()["cache-control"]).toBe("public, max-age=31536000, immutable");
+  expect(["br", "gzip"]).toContain(response.headers()["content-encoding"]);
 });
 
 test("the page is revalidated and never framed", async ({ page, app }) => {

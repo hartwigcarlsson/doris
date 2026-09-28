@@ -1,5 +1,7 @@
 VERSION = $(shell cargo pkgid -p doris-server | sed 's/.*@//')
 DIST := target/dist
+# Upper bound for the release wasm, uncompressed (it is sent compressed).
+WASM_BUDGET := 800000
 
 .PHONY: test web e2e e2e-dist dev dist
 
@@ -30,7 +32,10 @@ dev:
 # Release binary with the frontend embedded, plus the same frontend as a
 # tarball for serving from a CDN or nginx.
 dist:
-	cd crates/web && trunk build --release
+	cd crates/web && trunk build --release --cargo-profile wasm-release
+	@wasm=$$(ls crates/web/dist/*_bg.wasm); size=$$(wc -c < $$wasm); \
+		test $$size -le $(WASM_BUDGET) || \
+		{ echo "dist: $$wasm is $$size bytes, over the $(WASM_BUDGET) byte budget"; exit 1; }
 	cargo build --release -p doris-server
 	mkdir -p $(DIST)
 	cp target/release/doris $(DIST)/doris
