@@ -76,6 +76,15 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   passkeys.
 - The first user to register becomes admin. After that, registration requires
   an email-bound invitation that an admin creates.
+- WebAuthn ceremonies (`doris_identity::Auth`) keep their state server-side
+  for 5 minutes, and each one can be finished once. The passkey name is given
+  at *begin*, and the invitation token is sent again at *finish*. A plaintext
+  token is never stored.
+- `begin_login` never reveals whether an email exists. An unknown email gets
+  a fake challenge (webauthn-rs `WebauthnFakeCredentialGenerator`, keyed by
+  `server_secrets.fake_credential_key`), and every login failure is
+  `Error::LoginFailed`.
+- Sessions last 30 days (absolute).
 - The session is an opaque token in the `doris_session` cookie, set with
   `HttpOnly; Secure; SameSite=Strict`. Only a SHA-256 hash of the token is
   stored, and the same goes for invitation tokens.
@@ -98,5 +107,6 @@ Server configuration comes from env vars or CLI flags: `DORIS_DATABASE`,
 `DORIS_LISTEN`, `DORIS_RP_ID`, `DORIS_RP_ORIGIN`, `DORIS_CORS_ORIGINS`,
 `DORIS_SERVE_FRONTEND`.
 
-Requires `protoc` on PATH, plus `trunk` and the `wasm32-unknown-unknown`
-target for the frontend.
+Requires `protoc` on PATH and the system OpenSSL (webauthn-rs links it:
+`brew install openssl@3` on macOS, `libssl-dev` on Debian/Ubuntu), plus
+`trunk` and the `wasm32-unknown-unknown` target for the frontend.

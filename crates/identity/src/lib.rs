@@ -7,6 +7,7 @@ pub mod domain;
 mod projections;
 mod session;
 pub mod token;
+mod webauthn;
 
 use domain::{
     Admission, DisplayName, DomainError, Email, Invitation, InvitationEvent, Passkey, RegisterUser,
@@ -21,6 +22,7 @@ use uuid::Uuid;
 
 pub use projections::rebuild_projections;
 pub use session::{SESSION_TTL, create_session, end_session, session_user};
+pub use webauthn::{Auth, CEREMONY_TTL};
 
 const USER_STREAM: &str = "user-";
 const INVITATION_STREAM: &str = "invitation-";
@@ -36,6 +38,15 @@ pub enum Error {
     InvitationNotFound,
     #[error("user not found")]
     UserNotFound,
+    #[error("ceremony not found")]
+    CeremonyNotFound,
+    #[error("ceremony expired")]
+    CeremonyExpired,
+    /// Deliberately vague: never reveals whether the email exists.
+    #[error("login failed")]
+    LoginFailed,
+    #[error(transparent)]
+    Webauthn(#[from] webauthn_rs::prelude::WebauthnError),
     #[error(transparent)]
     Store(doris_eventstore::Error),
 }
@@ -50,6 +61,12 @@ impl From<doris_eventstore::Error> for Error {
             }
             other => Error::Store(other),
         }
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        Error::Store(err.into())
     }
 }
 

@@ -109,12 +109,16 @@ pub struct Passkey {
 
 impl Passkey {
     pub fn new(credential_id: String, name: &str, passkey: Value) -> Result<Self, DomainError> {
-        let name = bounded_text(name, 64).ok_or(DomainError::InvalidPasskeyName)?;
         Ok(Self {
             credential_id,
-            name,
+            name: Self::validate_name(name)?,
             passkey,
         })
+    }
+
+    /// Trimmed passkey name, 1-64 characters.
+    pub fn validate_name(name: &str) -> Result<String, DomainError> {
+        bounded_text(name, 64).ok_or(DomainError::InvalidPasskeyName)
     }
 }
 
