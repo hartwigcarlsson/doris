@@ -5,6 +5,7 @@ members = ["crates/eventstore", "crates/identity", "crates/proto", "crates/serve
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [workspace.dependencies]
 doris-eventstore = { path = "crates/eventstore" }

@@ -2,6 +2,7 @@
 name = "doris-proto"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [features]
 # Server stubs; the browser client (wasm32) builds without them.
