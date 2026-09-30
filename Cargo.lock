@@ -818,6 +818,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "doris-company"
+version = "0.1.0"
+dependencies = [
+ "doris-eventstore",
+ "jiff",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "doris-eventstore"
 version = "0.1.0"
 dependencies = [
