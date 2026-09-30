@@ -9,6 +9,8 @@ const BUTTON_DEFAULT: &str = "bg-primary text-primary-foreground hover:bg-primar
 const BUTTON_GHOST: &str = "hover:bg-muted hover:text-foreground dark:hover:bg-muted/50";
 const INPUT: &str = "h-7 w-full min-w-0 rounded-md border border-input bg-input/20 px-2 py-0.5 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 read-only:cursor-default read-only:border-dashed read-only:focus-visible:border-input read-only:bg-muted read-only:text-muted-foreground md:text-xs/relaxed dark:bg-input/30";
 const LABEL: &str = "flex items-center gap-2 text-xs/relaxed leading-none font-medium select-none";
+/// shadcn NativeSelectOption: keeps the dropdown readable in dark mode.
+pub const SELECT_OPTION: &str = "bg-[Canvas] text-[CanvasText]";
 const SELECT: &str = "h-7 w-full min-w-0 appearance-none rounded-md border border-input bg-input/20 py-0.5 pr-6 pl-2 text-xs/relaxed transition-colors outline-none select-none selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-not-allowed aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40";
 // Radix's RadioGroupItem classes, with `data-checked` turned into `checked:`
 // for a native input; the indicator dot is drawn with an inset shadow.

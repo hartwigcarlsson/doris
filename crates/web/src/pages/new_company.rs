@@ -1,7 +1,7 @@
 use crate::api::{company_api, cpb};
 use crate::errors::describe;
 use crate::format::{LEGAL_FORMS, current_year, legal_form_label};
-use crate::ui::{Button, Card, ErrorAlert, Field, Radio, Select, Variant};
+use crate::ui::{Button, Card, ErrorAlert, Field, Radio, SELECT_OPTION, Select, Variant};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -94,11 +94,11 @@ pub fn NewCompany() -> impl IntoView {
                 </Button>
                 <Field label="Företagsnamn" id="name" value=name autocomplete="organization" />
                 <Select label="Juridisk form" id="legal_form" value=legal_form>
-                    <option value="">{legal_form_label(cpb::LegalForm::Unspecified)}</option>
+                    <option class=SELECT_OPTION value="">{legal_form_label(cpb::LegalForm::Unspecified)}</option>
                     {LEGAL_FORMS
                         .map(|f| {
                             view! {
-                                <option value=(f as i32).to_string()>{legal_form_label(f)}</option>
+                                <option class=SELECT_OPTION value=(f as i32).to_string()>{legal_form_label(f)}</option>
                             }
                         })
                         .collect_view()}
