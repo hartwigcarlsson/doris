@@ -1,5 +1,6 @@
 //! Routes, the session state and the page shell.
 
+use crate::active_company::{ActiveCompanySelect, Companies};
 use crate::api::{api, pb};
 use crate::pages::{
     Companies, CompanyPage, Home, Invitations, Login, NewCompany, Passkeys, Register,
@@ -40,6 +41,12 @@ pub fn App() -> impl IntoView {
         user: RwSignal::new(None),
     };
     provide_context(session);
+    let companies = Companies::new();
+    provide_context(companies);
+    Effect::new(move |_| match session.user.get() {
+        Some(user) => companies.load(user.id),
+        None => companies.clear(),
+    });
     spawn_local(async move {
         if let Ok(status) = api().get_status(pb::GetStatusRequest {}).await {
             let status = status.into_inner();
@@ -105,6 +112,7 @@ fn Header() -> impl IntoView {
             <nav class="mx-auto flex h-12 max-w-3xl items-center gap-4 px-4 text-xs/relaxed">
                 <A href="/" attr:class="text-sm font-semibold">"Doris"</A>
                 <Show when=move || session.user.get().is_some()>
+                    <ActiveCompanySelect />
                     <A href="/companies" attr:class="text-muted-foreground hover:text-foreground">"Företag"</A>
                     <A href="/settings/passkeys" attr:class="text-muted-foreground hover:text-foreground">"Passkeys"</A>
                     <Show when=move || session.is_admin()>

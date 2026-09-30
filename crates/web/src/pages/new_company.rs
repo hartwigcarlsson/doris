@@ -1,3 +1,4 @@
+use crate::active_company::Companies;
 use crate::api::{company_api, cpb};
 use crate::errors::describe;
 use crate::fiscal_year::default_end;
@@ -49,6 +50,7 @@ pub fn NewCompany() -> impl IntoView {
     let error = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
     let navigate = use_navigate();
+    let companies = expect_context::<Companies>();
 
     let fetch = move |_| {
         busy.set(true);
@@ -98,10 +100,12 @@ pub fn NewCompany() -> impl IntoView {
                 accounting_method: method.get_untracked() as i32,
             };
             match company_api().create_company(request).await {
-                Ok(created) => navigate(
-                    &format!("/companies/{}", created.into_inner().company_id),
-                    Default::default(),
-                ),
+                Ok(created) => {
+                    let id = created.into_inner().company_id;
+                    companies.active.set(id.clone());
+                    companies.reload();
+                    navigate(&format!("/companies/{id}"), Default::default());
+                }
                 Err(status) => error.set(Some(describe(&status))),
             }
             busy.set(false);

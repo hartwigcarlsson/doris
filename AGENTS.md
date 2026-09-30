@@ -138,6 +138,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - Forms use `novalidate`. Validation messages come from the server's error
   codes, so they're always Swedish; browser messages follow the browser's
   language.
+- The active company (`src/active_company.rs`) is chosen in the header and
+  remembered in `localStorage` as `doris.active_company.{user id}`. Pages that
+  work on "the" company read it from the `Companies` context and send its
+  `company_id` with every RPC. It grants nothing: the server checks membership
+  on every call.
 - `src/errors.rs` maps API error codes to Swedish text. Add a line there for
   every new code.
 - `src/ui.rs` holds the preset's components, with class lists copied from

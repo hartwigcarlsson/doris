@@ -130,16 +130,18 @@ pub fn ErrorAlert(message: RwSignal<Option<String>>) -> impl IntoView {
 }
 
 /// A labelled native select bound to `value` (the option's `value`).
+/// `hide_label` keeps the label for screen readers only.
 #[component]
 pub fn Select(
     label: &'static str,
     id: &'static str,
+    #[prop(optional)] hide_label: bool,
     value: RwSignal<String>,
     children: Children,
 ) -> impl IntoView {
     view! {
         <div class="grid gap-2">
-            <label for=id class=LABEL>{label}</label>
+            <label for=id class=if hide_label { "sr-only" } else { LABEL }>{label}</label>
             <div class="relative">
                 <select
                     id=id

@@ -5,7 +5,7 @@ const nav = (page: Page) => page.getByRole("link", { name: "Företag", exact: tr
 
 async function addCompany(page: Page, app: string, orgNr: string, name: string) {
   await page.goto(`${app}/companies`);
-  await page.getByRole("link", { name: "Lägg till företag" }).click();
+  await page.getByRole("main").getByRole("link", { name: "Lägg till företag" }).click();
   await page.getByLabel("Organisationsnummer").fill(orgNr);
   await page.getByLabel("Företagsnamn").fill(name);
   await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
@@ -92,4 +92,28 @@ test("a colleague sees a company only after being added as a member", async ({ p
   await bo.goto(`${app}/companies`);
   await bo.getByRole("link", { name: "Exempel AB" }).click();
   await expect(bo.getByRole("heading", { name: "Exempel AB" })).toBeVisible();
+});
+
+test("the active company is chosen in the header and remembered", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  const header = page.getByRole("banner");
+  await expect(header.getByRole("link", { name: "Lägg till företag" })).toBeVisible();
+  await expect(page.getByLabel("Aktivt företag")).toHaveCount(0);
+  await expect(page.getByText("Du har inga företag än.")).toBeVisible();
+
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await addCompany(page, app, "5560360793", "Bolaget AB");
+  const active = () => page.getByLabel("Aktivt företag");
+  await expect(active().locator("option:checked")).toHaveText("Bolaget AB"); // the new one
+
+  await active().selectOption({ label: "Exempel AB" });
+  await page.reload();
+  await expect(active().locator("option:checked")).toHaveText("Exempel AB");
+  await page.goto(app);
+  const card = page.getByRole("main");
+  await expect(card.getByRole("heading", { name: "Aktivt företag" })).toBeVisible();
+  await expect(card.getByText("Exempel AB")).toBeVisible();
+  await expect(card.getByText("556016-0680")).toBeVisible();
+  await card.getByRole("link", { name: "Visa företaget" }).click();
+  await expect(page.getByRole("heading", { name: "Exempel AB" })).toBeVisible();
 });
