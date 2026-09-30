@@ -112,11 +112,11 @@ Nya felkoder (varje kod läggs också till i `crates/web/src/errors.rs`):
 | `lookup_failed` | `unavailable` | nätverksfel eller felsvar från Bolagsverket (loggas utan orgnr) |
 
 ## Bolagsverket-klienten
-- Ett nytt beroende i `doris-server`: `reqwest` med `native-tls` (samma system-OpenSSL som webauthn-rs redan länkar), `json` och `form`, utan standardfeatures. Det finns ingen HTTP-klient i servern i dag. Klienten används bara av servern och påverkar inte wasm-storleken.
-- Konfigurationen sker med miljövariabler eller CLI-flaggor: `DORIS_BOLAGSVERKET_CLIENT_ID`, `DORIS_BOLAGSVERKET_CLIENT_SECRET` och `DORIS_BOLAGSVERKET_TOKEN_URL` och `DORIS_BOLAGSVERKET_API_URL` (med produktion som standard). Utan id och secret svarar `LookupCompany` med `lookup_unavailable`.
+- Ett nytt beroende i `doris-server`: `reqwest` med `native-tls` (på Linux samma system-OpenSSL som webauthn-rs redan länkar, på macOS Security.framework), `json` och `form`, utan standardfeatures. Det finns ingen HTTP-klient i servern i dag. Klienten används bara av servern och påverkar inte wasm-storleken.
+- Konfigurationen sker med miljövariabler eller CLI-flaggor: `DORIS_BOLAGSVERKET_CLIENT_ID`, `DORIS_BOLAGSVERKET_CLIENT_SECRET`, `DORIS_BOLAGSVERKET_TOKEN_URL` och `DORIS_BOLAGSVERKET_API_URL` (med produktion som standard). Utan id och secret svarar `LookupCompany` med `lookup_unavailable`.
 - Ett organisationsnummer som är ett personnummer skickas aldrig till Bolagsverket (`lookup_personal_number`).
 - En OAuth2-token hämtas med client credentials och cachas i minnet tills 60 sekunder före `expires_in`.
-- Den exakta endpointen, scope och JSON-formen verifieras mot `api.bolagsverket.se` när planen skrivs. Mappningen till `LegalForm` och `Address` hålls i en ren funktion som testas med ett sparat exempelsvar.
+- Endpointen, scope och JSON-formen är verifierade mot en fungerande integration (2026-09-30). Mappningen till `LegalForm` och `Address` hålls i en ren funktion som testas med ett sparat exempelsvar.
 - Testerna startar en falsk Bolagsverket-server (axum) och pekar token- och API-URL:erna på den.
 
 ## Frontend

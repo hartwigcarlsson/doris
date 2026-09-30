@@ -110,8 +110,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   credentials the lookup answers `lookup_unavailable` and details are typed in.
   An org nr can be a personnummer (enskild firma): never log it, and never send
   a personnummer to Bolagsverket.
-- The server's only outbound HTTP is `reqwest` (native-tls, the same OpenSSL as
-  webauthn-rs).
+- The server's only outbound HTTP is `reqwest` (native-tls: on Linux the same OpenSSL
+  as webauthn-rs, on macOS Security.framework).
 - The session cookie is `doris_session` (HttpOnly, Secure, SameSite=Strict,
   Path=/, 30 days).
 - CORS is off unless `DORIS_CORS_ORIGINS` is set. Set it only when the frontend
