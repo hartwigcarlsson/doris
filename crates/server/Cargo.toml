@@ -16,6 +16,7 @@ doris-eventstore.workspace = true
 doris-identity.workspace = true
 doris-proto = { workspace = true, features = ["server"] }
 http.workspace = true
+reqwest.workspace = true
 jiff.workspace = true
 rust-embed = { workspace = true, features = ["mime-guess"] }
 serde.workspace = true

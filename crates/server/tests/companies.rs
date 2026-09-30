@@ -4,6 +4,15 @@ use common::{TestServer, authed, device};
 use doris_proto::company::v1 as pb;
 use tonic::Code;
 
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
+use axum::routing::post;
+use axum::{Json, Router};
+use doris_server::bolagsverket::Bolagsverket;
+use serde_json::{Value, json};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 fn create(org_nr: &str, name: &str) -> pb::CreateCompanyRequest {
     pb::CreateCompanyRequest {
         org_nr: org_nr.into(),
@@ -238,4 +247,188 @@ async fn non_members_and_bad_ids_get_company_not_found() {
         assert_eq!(code_of(members), not_found);
         assert_eq!(code_of(add), not_found);
     }
+}
+
+/// A stand-in for Bolagsverket that knows one company. Tokens are "t1", "t2", …
+/// in the order they are issued; `revoked` tokens get 401.
+struct FakeBolagsverket {
+    base: String,
+    tokens_issued: Arc<AtomicUsize>,
+}
+
+async fn fake_bolagsverket(revoked: &'static [&'static str]) -> FakeBolagsverket {
+    let tokens_issued = Arc::new(AtomicUsize::new(0));
+    let issued = tokens_issued.clone();
+    let app = Router::new()
+        .route(
+            "/oauth2/token",
+            post(move |body: String| {
+                let issued = issued.clone();
+                async move {
+                    assert!(body.contains("grant_type=client_credentials"), "{body}");
+                    assert!(body.contains("scope=vardefulla-datamangder%3Aread"), "{body}");
+                    let n = issued.fetch_add(1, Ordering::SeqCst) + 1;
+                    Json(json!({ "access_token": format!("t{n}"), "token_type": "Bearer", "expires_in": 3600 }))
+                }
+            }),
+        )
+        .route(
+            "/v1/organisationer",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| async move {
+                let auth = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
+                if !auth.starts_with("Bearer t") || revoked.iter().any(|t| auth == format!("Bearer {t}")) {
+                    return StatusCode::UNAUTHORIZED.into_response();
+                }
+                match body["identitetsbeteckning"].as_str() {
+                    Some("5560160680") => Json(json!({ "organisationer": [ {
+                        "organisationsform": { "kod": "AB" },
+                        "organisationsnamn": { "organisationsnamnLista": [
+                            { "namn": "Exempel AB", "organisationsnamntyp": { "kod": "FORETAGSNAMN" } } ] },
+                        "postadressOrganisation": { "postadress": {
+                            "utdelningsadress": "Storgatan 1", "postnummer": "11122", "postort": "STOCKHOLM" } }
+                    } ] }))
+                    .into_response(),
+                    _ => StatusCode::NOT_FOUND.into_response(),
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    FakeBolagsverket {
+        base,
+        tokens_issued,
+    }
+}
+
+fn client_for(fake: &FakeBolagsverket) -> Bolagsverket {
+    Bolagsverket::new(
+        &format!("{}/oauth2/token", fake.base),
+        &format!("{}/v1", fake.base),
+        "id".into(),
+        "secret".into(),
+    )
+}
+
+fn lookup(org_nr: &str) -> pb::LookupCompanyRequest {
+    pb::LookupCompanyRequest {
+        org_nr: org_nr.into(),
+    }
+}
+
+#[tokio::test]
+async fn lookup_prefills_from_bolagsverket_and_reuses_the_token() {
+    let fake = fake_bolagsverket(&[]).await;
+    let server = TestServer::start_with_bolagsverket(client_for(&fake)).await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut api = server.companies();
+
+    let found = api
+        .lookup_company(authed(lookup("556016-0680"), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    let missing = api
+        .lookup_company(authed(lookup("556036-0793"), &anna))
+        .await
+        .unwrap_err();
+
+    assert_eq!(found.org_nr, "556016-0680");
+    assert_eq!(found.name, "Exempel AB");
+    assert_eq!(found.legal_form(), pb::LegalForm::Aktiebolag);
+    assert_eq!(
+        found.address.unwrap(),
+        pb::Address {
+            street: "Storgatan 1".into(),
+            postal_code: "11122".into(),
+            city: "STOCKHOLM".into()
+        }
+    );
+    assert_eq!(
+        code_of(missing),
+        (Code::NotFound, "lookup_not_found".into())
+    );
+    assert_eq!(fake.tokens_issued.load(Ordering::SeqCst), 1);
+    // Nothing was stored.
+    assert!(
+        api.list_companies(authed(pb::ListCompaniesRequest {}, &anna))
+            .await
+            .unwrap()
+            .into_inner()
+            .companies
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_401_clears_the_cached_token() {
+    let fake = fake_bolagsverket(&["t1"]).await;
+    let server = TestServer::start_with_bolagsverket(client_for(&fake)).await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut api = server.companies();
+
+    let first = api
+        .lookup_company(authed(lookup("556016-0680"), &anna))
+        .await
+        .unwrap_err();
+    let second = api
+        .lookup_company(authed(lookup("556016-0680"), &anna))
+        .await
+        .unwrap();
+
+    assert_eq!(code_of(first), (Code::Unavailable, "lookup_failed".into()));
+    assert_eq!(second.into_inner().name, "Exempel AB");
+    assert_eq!(fake.tokens_issued.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn lookup_without_configuration_or_for_a_personnummer_is_refused() {
+    let fake = fake_bolagsverket(&[]).await;
+    let configured = TestServer::start_with_bolagsverket(client_for(&fake)).await;
+    let unconfigured = TestServer::start().await;
+    let anna = configured
+        .sign_up(&mut device(), "anna@example.se", None)
+        .await;
+    let bo = unconfigured
+        .sign_up(&mut device(), "bo@example.se", None)
+        .await;
+
+    let personal = configured
+        .companies()
+        .lookup_company(authed(lookup("19121212-1212"), &anna))
+        .await
+        .unwrap_err();
+    let invalid = configured
+        .companies()
+        .lookup_company(authed(lookup("556016-0681"), &anna))
+        .await
+        .unwrap_err();
+    let off = unconfigured
+        .companies()
+        .lookup_company(authed(lookup("556016-0680"), &bo))
+        .await
+        .unwrap_err();
+    let anonymous = configured
+        .companies()
+        .lookup_company(lookup("556016-0680"))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        code_of(personal),
+        (Code::FailedPrecondition, "lookup_personal_number".into())
+    );
+    assert_eq!(
+        code_of(invalid),
+        (Code::InvalidArgument, "invalid_org_nr".into())
+    );
+    assert_eq!(
+        code_of(off),
+        (Code::FailedPrecondition, "lookup_unavailable".into())
+    );
+    assert_eq!(
+        code_of(anonymous),
+        (Code::Unauthenticated, "not_signed_in".into())
+    );
+    assert_eq!(fake.tokens_issued.load(Ordering::SeqCst), 0); // the personnummer never left
 }

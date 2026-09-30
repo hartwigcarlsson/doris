@@ -1,5 +1,6 @@
 use clap::Parser;
 use doris_identity::Auth;
+use doris_server::bolagsverket::Bolagsverket;
 use doris_server::{AuthApi, CompanyApi, assets::WebDist};
 use http::HeaderValue;
 use std::net::SocketAddr;
@@ -26,6 +27,16 @@ struct Config {
     /// Serve the embedded frontend.
     #[arg(long, env = "DORIS_SERVE_FRONTEND", default_value_t = true, action = clap::ArgAction::Set)]
     serve_frontend: bool,
+    /// Bolagsverket API client (värdefulla datamängder). Without it, company
+    /// details are entered by hand.
+    #[arg(long, env = "DORIS_BOLAGSVERKET_CLIENT_ID")]
+    bolagsverket_client_id: Option<String>,
+    #[arg(long, env = "DORIS_BOLAGSVERKET_CLIENT_SECRET", hide_env_values = true)]
+    bolagsverket_client_secret: Option<String>,
+    #[arg(long, env = "DORIS_BOLAGSVERKET_TOKEN_URL", default_value = doris_server::bolagsverket::TOKEN_URL)]
+    bolagsverket_token_url: String,
+    #[arg(long, env = "DORIS_BOLAGSVERKET_API_URL", default_value = doris_server::bolagsverket::API_URL)]
+    bolagsverket_api_url: String,
 }
 
 #[tokio::main]
@@ -53,9 +64,26 @@ async fn run(config: Config) -> Result<(), String> {
         .into_iter()
         .filter(|o| !o.is_empty())
         .collect();
+    let bolagsverket = match (
+        config.bolagsverket_client_id,
+        config.bolagsverket_client_secret,
+    ) {
+        (Some(id), Some(secret)) if !id.is_empty() && !secret.is_empty() => {
+            Some(Bolagsverket::new(
+                &config.bolagsverket_token_url,
+                &config.bolagsverket_api_url,
+                id,
+                secret,
+            ))
+        }
+        _ => {
+            tracing::info!("Bolagsverket lookup off: DORIS_BOLAGSVERKET_CLIENT_ID/_SECRET not set");
+            None
+        }
+    };
     let app = doris_server::router::<WebDist>(
         AuthApi::new(pool.clone(), auth),
-        CompanyApi::new(pool),
+        CompanyApi::new(pool, bolagsverket),
         cors_origins,
         config.serve_frontend,
     );

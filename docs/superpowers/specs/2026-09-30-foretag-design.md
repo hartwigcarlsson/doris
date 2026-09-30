@@ -99,20 +99,25 @@ Nya felkoder (varje kod läggs också till i `crates/web/src/errors.rs`):
 |---|---|---|
 | `invalid_org_nr` | `invalid_argument` | orgnr har fel format eller fel kontrollsiffra |
 | `invalid_company_name` | `invalid_argument` | tomt namn eller mer än 200 tecken |
+| `invalid_address` | `invalid_argument` | ett adressfält är längre än 200 tecken |
+| `invalid_legal_form` | `invalid_argument` | bolagsform saknas |
+| `invalid_accounting_method` | `invalid_argument` | redovisningsmetod saknas |
 | `invalid_fiscal_year` | `invalid_argument` | räkenskapsåret bryter mot 3 kap. |
 | `company_exists` | `already_exists` | orgnr finns redan |
 | `company_not_found` | `not_found` | företaget saknas eller användaren är inte medlem |
 | `user_not_found` | `not_found` | ingen användare med den e-postadressen |
 | `lookup_unavailable` | `failed_precondition` | Bolagsverket är inte konfigurerat |
+| `lookup_personal_number` | `failed_precondition` | orgnr är ett personnummer (enskild firma) |
 | `lookup_not_found` | `not_found` | Bolagsverket känner inte till orgnr |
 | `lookup_failed` | `unavailable` | nätverksfel eller felsvar från Bolagsverket (loggas utan orgnr) |
 
 ## Bolagsverket-klienten
-- Ett nytt beroende i `doris-server`: `reqwest` med `rustls-tls` och `json`, utan standardfeatures. Det finns ingen HTTP-klient i servern i dag. Klienten används bara av servern och påverkar inte wasm-storleken.
-- Konfigurationen sker med miljövariabler eller CLI-flaggor: `DORIS_BOLAGSVERKET_CLIENT_ID`, `DORIS_BOLAGSVERKET_CLIENT_SECRET` och `DORIS_BOLAGSVERKET_URL` (bas-URL, med produktion som standard). Utan id och secret svarar `LookupCompany` med `lookup_unavailable`.
+- Ett nytt beroende i `doris-server`: `reqwest` med `native-tls` (samma system-OpenSSL som webauthn-rs redan länkar), `json` och `form`, utan standardfeatures. Det finns ingen HTTP-klient i servern i dag. Klienten används bara av servern och påverkar inte wasm-storleken.
+- Konfigurationen sker med miljövariabler eller CLI-flaggor: `DORIS_BOLAGSVERKET_CLIENT_ID`, `DORIS_BOLAGSVERKET_CLIENT_SECRET` och `DORIS_BOLAGSVERKET_TOKEN_URL` och `DORIS_BOLAGSVERKET_API_URL` (med produktion som standard). Utan id och secret svarar `LookupCompany` med `lookup_unavailable`.
+- Ett organisationsnummer som är ett personnummer skickas aldrig till Bolagsverket (`lookup_personal_number`).
 - En OAuth2-token hämtas med client credentials och cachas i minnet tills 60 sekunder före `expires_in`.
 - Den exakta endpointen, scope och JSON-formen verifieras mot `api.bolagsverket.se` när planen skrivs. Mappningen till `LegalForm` och `Address` hålls i en ren funktion som testas med ett sparat exempelsvar.
-- Testerna startar en falsk Bolagsverket-server (axum) och pekar `DORIS_BOLAGSVERKET_URL` på den.
+- Testerna startar en falsk Bolagsverket-server (axum) och pekar token- och API-URL:erna på den.
 
 ## Frontend
 - `/companies` visar en lista med dina företag (namn, orgnr) och knappen **Lägg till företag**. `/` länkar dit.

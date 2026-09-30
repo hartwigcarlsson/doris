@@ -7,6 +7,7 @@ use doris_identity::Auth;
 use doris_proto::auth::v1 as pb;
 use doris_proto::auth::v1::auth_service_client::AuthServiceClient;
 use doris_proto::company::v1::company_service_client::CompanyServiceClient;
+use doris_server::bolagsverket::Bolagsverket;
 use doris_server::{AuthApi, CompanyApi, SESSION_COOKIE};
 use http::HeaderValue;
 use hyper_util::client::legacy::Client;
@@ -42,6 +43,18 @@ impl TestServer {
     }
 
     pub async fn start_with(cors_origins: Vec<HeaderValue>, serve_frontend: bool) -> Self {
+        Self::launch(cors_origins, serve_frontend, None).await
+    }
+
+    pub async fn start_with_bolagsverket(bolagsverket: Bolagsverket) -> Self {
+        Self::launch(vec![], true, Some(bolagsverket)).await
+    }
+
+    async fn launch(
+        cors_origins: Vec<HeaderValue>,
+        serve_frontend: bool,
+        bolagsverket: Option<Bolagsverket>,
+    ) -> Self {
         let pool = doris_eventstore::open("sqlite::memory:").await.unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -49,7 +62,7 @@ impl TestServer {
         let auth = Auth::new(pool.clone(), "localhost", &origin).await.unwrap();
         let app = doris_server::router::<TestDist>(
             AuthApi::new(pool.clone(), auth),
-            CompanyApi::new(pool.clone()),
+            CompanyApi::new(pool.clone(), bolagsverket),
             cors_origins,
             serve_frontend,
         );

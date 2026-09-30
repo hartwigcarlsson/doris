@@ -12,7 +12,7 @@ RUN make dist
 
 # Run: one binary plus one SQLite file in /data.
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends libssl3 \
+RUN apt-get update && apt-get install -y --no-install-recommends libssl3 ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 doris && mkdir /data && chown doris /data
 COPY --from=build /src/target/dist/doris /usr/local/bin/doris

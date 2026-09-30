@@ -12,6 +12,7 @@ doris-eventstore = { path = "crates/eventstore" }
 doris-identity = { path = "crates/identity" }
 doris-proto = { path = "crates/proto" }
 doris-company = { path = "crates/company" }
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json", "form"] }
 base64 = "0.23"
 getrandom = "0.4"
 jiff = { version = "0.2", features = ["serde"] }

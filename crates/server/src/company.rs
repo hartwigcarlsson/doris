@@ -2,8 +2,9 @@
 //! Every call needs a session, and a company the caller isn't a member of
 //! looks exactly like one that doesn't exist.
 
+use crate::bolagsverket::{Bolagsverket, LookupError};
 use crate::grpc::{self, signed_in_user};
-use doris_company::domain::{AccountingMethod, Address, Company, DomainError, LegalForm};
+use doris_company::domain::{AccountingMethod, Address, Company, DomainError, LegalForm, OrgNr};
 use doris_company::{Error, NewCompany};
 use doris_proto::company::v1 as pb;
 use doris_proto::company::v1::company_service_server::CompanyService;
@@ -16,11 +17,13 @@ use uuid::Uuid;
 
 pub struct CompanyApi {
     pool: SqlitePool,
+    /// `None` when no Bolagsverket credentials are configured.
+    bolagsverket: Option<Bolagsverket>,
 }
 
 impl CompanyApi {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: SqlitePool, bolagsverket: Option<Bolagsverket>) -> Self {
+        Self { pool, bolagsverket }
     }
 
     /// The company, if the signed-in user is a member of it.
@@ -45,7 +48,30 @@ impl CompanyService for CompanyApi {
         request: Request<pb::LookupCompanyRequest>,
     ) -> Result<Response<pb::LookupCompanyResponse>, Status> {
         signed_in_user(&self.pool, &request).await?;
-        Err(Status::failed_precondition("lookup_unavailable"))
+        let org_nr = OrgNr::parse(&request.get_ref().org_nr).map_err(domain_status)?;
+        if org_nr.is_personal_identity_number() {
+            return Err(Status::failed_precondition("lookup_personal_number"));
+        }
+        let bolagsverket = self
+            .bolagsverket
+            .as_ref()
+            .ok_or_else(|| Status::failed_precondition("lookup_unavailable"))?;
+        let found = bolagsverket
+            .lookup(&org_nr)
+            .await
+            .map_err(|err| match err {
+                LookupError::NotFound => Status::not_found("lookup_not_found"),
+                LookupError::Failed(reason) => {
+                    tracing::warn!("bolagsverket: {reason}");
+                    Status::unavailable("lookup_failed")
+                }
+            })?;
+        Ok(Response::new(pb::LookupCompanyResponse {
+            org_nr: org_nr.formatted(),
+            name: found.name,
+            legal_form: legal_form_message(found.legal_form) as i32,
+            address: Some(address_message(&found.address)),
+        }))
     }
 
     async fn create_company(
