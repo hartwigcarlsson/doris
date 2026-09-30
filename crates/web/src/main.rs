@@ -1,5 +1,6 @@
 //! Doris web app: Leptos CSR, talking to the server over gRPC-Web.
 
+mod active_company;
 mod api;
 mod app;
 mod errors;

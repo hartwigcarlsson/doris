@@ -16,4 +16,4 @@ tonic-web-wasm-client = "0.9"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 webauthn-rs-proto = { workspace = true, features = ["wasm"] }
-web-sys = { version = "0.3", features = ["CredentialsContainer", "CredentialCreationOptions", "CredentialRequestOptions", "PublicKeyCredential", "Document", "Element", "Location", "Navigator", "Window"] }
+web-sys = { version = "0.3", features = ["CredentialsContainer", "CredentialCreationOptions", "CredentialRequestOptions", "PublicKeyCredential", "Storage", "Document", "Element", "Location", "Navigator", "Window"] }
