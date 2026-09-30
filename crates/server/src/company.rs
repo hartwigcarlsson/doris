@@ -111,7 +111,7 @@ impl CompanyService for CompanyApi {
             .into_iter()
             .map(|c| pb::CompanySummary {
                 id: c.id.to_string(),
-                org_nr: format!("{}-{}", &c.org_nr[..6], &c.org_nr[6..]),
+                org_nr: OrgNr::parse(&c.org_nr).map_or(c.org_nr.clone(), |o| o.formatted()),
                 name: c.name,
             })
             .collect();
