@@ -5,6 +5,8 @@ package doris.company.v1;
 // Companies a user keeps the books for. Every RPC needs a session; a company
 // the caller isn't a member of answers NOT_FOUND "company_not_found".
 service CompanyService {
+  // Whether LookupCompany is configured, so the form can say so up front.
+  rpc GetLookupStatus(GetLookupStatusRequest) returns (GetLookupStatusResponse);
   // Details from Bolagsverket to pre-fill the form. Nothing is stored.
   rpc LookupCompany(LookupCompanyRequest) returns (LookupCompanyResponse);
   rpc CreateCompany(CreateCompanyRequest) returns (CreateCompanyResponse);
@@ -38,6 +40,12 @@ message Address {
   string street = 1;
   string postal_code = 2;
   string city = 3;
+}
+
+message GetLookupStatusRequest {}
+
+message GetLookupStatusResponse {
+  bool available = 1;
 }
 
 message LookupCompanyRequest {

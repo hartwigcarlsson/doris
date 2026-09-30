@@ -128,6 +128,9 @@ async fn every_company_rpc_needs_a_session() {
     let unauthenticated = (Code::Unauthenticated, "not_signed_in".to_string());
     let id = || "00000000-0000-0000-0000-000000000000".to_string();
     let results = [
+        api.get_lookup_status(pb::GetLookupStatusRequest {})
+            .await
+            .map(drop),
         api.lookup_company(pb::LookupCompanyRequest {
             org_nr: "556016-0680".into(),
         })
@@ -401,6 +404,33 @@ async fn a_401_clears_the_cached_token() {
     assert_eq!(code_of(first), (Code::Unavailable, "lookup_failed".into()));
     assert_eq!(second.into_inner().name, "Exempel AB");
     assert_eq!(fake.tokens_issued.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn lookup_status_says_whether_bolagsverket_is_configured() {
+    let fake = fake_bolagsverket(&[]).await;
+    let configured = TestServer::start_with_bolagsverket(client_for(&fake)).await;
+    let unconfigured = TestServer::start().await;
+    let anna = configured
+        .sign_up(&mut device(), "anna@example.se", None)
+        .await;
+    let bo = unconfigured
+        .sign_up(&mut device(), "bo@example.se", None)
+        .await;
+    let status = |server: &TestServer, session: String| {
+        let mut api = server.companies();
+        async move {
+            api.get_lookup_status(authed(pb::GetLookupStatusRequest {}, &session))
+                .await
+                .unwrap()
+                .into_inner()
+                .available
+        }
+    };
+
+    assert!(status(&configured, anna).await);
+    assert!(!status(&unconfigured, bo).await);
+    assert_eq!(fake.tokens_issued.load(Ordering::SeqCst), 0); // no call to Bolagsverket
 }
 
 #[tokio::test]

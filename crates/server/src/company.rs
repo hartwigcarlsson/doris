@@ -43,6 +43,16 @@ impl CompanyApi {
 
 #[tonic::async_trait]
 impl CompanyService for CompanyApi {
+    async fn get_lookup_status(
+        &self,
+        request: Request<pb::GetLookupStatusRequest>,
+    ) -> Result<Response<pb::GetLookupStatusResponse>, Status> {
+        signed_in_user(&self.pool, &request).await?;
+        Ok(Response::new(pb::GetLookupStatusResponse {
+            available: self.bolagsverket.is_some(),
+        }))
+    }
+
     async fn lookup_company(
         &self,
         request: Request<pb::LookupCompanyRequest>,
