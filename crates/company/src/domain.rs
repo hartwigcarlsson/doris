@@ -3,6 +3,7 @@
 use jiff::Span;
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DomainError {
@@ -229,4 +230,125 @@ impl FiscalYear {
         }
         year
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum CompanyEvent {
+    CompanyRegistered {
+        company_id: Uuid,
+        org_nr: OrgNr,
+        name: CompanyName,
+        legal_form: LegalForm,
+        address: Address,
+        first_fiscal_year: FiscalYear,
+        accounting_method: AccountingMethod,
+        created_by: Uuid,
+    },
+    MemberAdded {
+        user_id: Uuid,
+        added_by: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Company {
+    pub id: Uuid,
+    pub org_nr: OrgNr,
+    pub name: CompanyName,
+    pub legal_form: LegalForm,
+    pub address: Address,
+    pub first_fiscal_year: FiscalYear,
+    pub accounting_method: AccountingMethod,
+    pub members: Vec<Uuid>,
+}
+
+impl Company {
+    pub fn from_events(events: &[CompanyEvent]) -> Option<Self> {
+        let mut company = None;
+        for event in events {
+            match event.clone() {
+                CompanyEvent::CompanyRegistered {
+                    company_id,
+                    org_nr,
+                    name,
+                    legal_form,
+                    address,
+                    first_fiscal_year,
+                    accounting_method,
+                    ..
+                } => {
+                    company = Some(Company {
+                        id: company_id,
+                        org_nr,
+                        name,
+                        legal_form,
+                        address,
+                        first_fiscal_year,
+                        accounting_method,
+                        members: vec![],
+                    });
+                }
+                CompanyEvent::MemberAdded { user_id, .. } => {
+                    if let Some(c) = company.as_mut() {
+                        c.members.push(user_id);
+                    }
+                }
+            }
+        }
+        company
+    }
+
+    pub fn is_member(&self, user_id: Uuid) -> bool {
+        self.members.contains(&user_id)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RegisterCompany {
+    pub company_id: Uuid,
+    pub org_nr: OrgNr,
+    pub name: CompanyName,
+    pub legal_form: LegalForm,
+    pub address: Address,
+    pub first_fiscal_year: FiscalYear,
+    pub accounting_method: AccountingMethod,
+}
+
+/// The creator becomes the first member, so membership has one source.
+pub fn register_company(cmd: RegisterCompany, created_by: Uuid) -> Vec<CompanyEvent> {
+    vec![
+        CompanyEvent::CompanyRegistered {
+            company_id: cmd.company_id,
+            org_nr: cmd.org_nr,
+            name: cmd.name,
+            legal_form: cmd.legal_form,
+            address: cmd.address,
+            first_fiscal_year: cmd.first_fiscal_year,
+            accounting_method: cmd.accounting_method,
+            created_by,
+        },
+        CompanyEvent::MemberAdded {
+            user_id: created_by,
+            added_by: created_by,
+        },
+    ]
+}
+
+/// Idempotent: adding an existing member yields no events.
+pub fn add_member(
+    company: &Company,
+    actor: Uuid,
+    user_id: Uuid,
+) -> Result<Vec<CompanyEvent>, DomainError> {
+    if !company.is_member(actor) {
+        return Err(DomainError::NotMember);
+    }
+    if company.is_member(user_id) {
+        return Ok(vec![]);
+    }
+    Ok(vec![CompanyEvent::MemberAdded {
+        user_id,
+        added_by: actor,
+    }])
 }

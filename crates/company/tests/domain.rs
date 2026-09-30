@@ -1,5 +1,6 @@
 use doris_company::domain::*;
 use jiff::civil::Date;
+use uuid::Uuid;
 
 fn d(s: &str) -> Date {
     s.parse().unwrap()
@@ -165,4 +166,88 @@ fn later_fiscal_years_are_12_months_ending_in_the_same_month() {
     assert_eq!(first.containing(d("2026-09-30")), first);
     assert_eq!(first.containing(d("2026-01-15")), first); // before the company existed
     assert_eq!(broken.containing(d("2029-02-28")).start, d("2028-05-01"));
+}
+
+fn registered(creator: Uuid) -> (Company, Vec<CompanyEvent>) {
+    let events = register_company(
+        RegisterCompany {
+            company_id: Uuid::new_v4(),
+            org_nr: OrgNr::parse("556016-0680").unwrap(),
+            name: CompanyName::parse("Exempel AB").unwrap(),
+            legal_form: LegalForm::Aktiebolag,
+            address: Address::default(),
+            first_fiscal_year: FiscalYear::first(
+                d("2026-01-01"),
+                d("2026-12-31"),
+                LegalForm::Aktiebolag,
+            )
+            .unwrap(),
+            accounting_method: AccountingMethod::Invoice,
+        },
+        creator,
+    );
+    (Company::from_events(&events).unwrap(), events)
+}
+
+#[test]
+fn registering_a_company_makes_the_creator_its_first_member() {
+    let anna = Uuid::new_v4();
+    let (company, events) = registered(anna);
+
+    assert!(
+        matches!(events[0], CompanyEvent::CompanyRegistered { created_by, .. } if created_by == anna)
+    );
+    assert_eq!(
+        events[1],
+        CompanyEvent::MemberAdded {
+            user_id: anna,
+            added_by: anna
+        }
+    );
+    assert_eq!(company.members, vec![anna]);
+    assert_eq!(company.name.as_str(), "Exempel AB");
+}
+
+#[test]
+fn a_member_adds_another_user_once() {
+    let (anna, bo) = (Uuid::new_v4(), Uuid::new_v4());
+    let (company, mut events) = registered(anna);
+
+    let added = add_member(&company, anna, bo).unwrap();
+    events.extend(added.clone());
+    let company = Company::from_events(&events).unwrap();
+
+    assert_eq!(
+        added,
+        vec![CompanyEvent::MemberAdded {
+            user_id: bo,
+            added_by: anna
+        }]
+    );
+    assert!(company.is_member(bo));
+    assert_eq!(add_member(&company, anna, bo).unwrap(), vec![]);
+}
+
+#[test]
+fn a_non_member_cannot_add_members() {
+    let (company, _) = registered(Uuid::new_v4());
+    let stranger = Uuid::new_v4();
+    assert_eq!(
+        add_member(&company, stranger, stranger),
+        Err(DomainError::NotMember)
+    );
+}
+
+#[test]
+fn events_round_trip_through_json_with_readable_dates() {
+    let (_, events) = registered(Uuid::new_v4());
+    let json = serde_json::to_value(&events[0]).unwrap();
+    assert_eq!(json["type"], "CompanyRegistered");
+    assert_eq!(json["org_nr"], "5560160680");
+    assert_eq!(json["first_fiscal_year"]["start"], "2026-01-01");
+    assert_eq!(json["accounting_method"], "invoice");
+    assert_eq!(
+        serde_json::from_value::<CompanyEvent>(json).unwrap(),
+        events[0]
+    );
 }
