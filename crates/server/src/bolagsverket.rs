@@ -140,15 +140,17 @@ fn first(response: Organisationer) -> Result<Found, LookupError> {
         .organisationsnamn
         .and_then(|n| n.organisationsnamn_lista)
         .unwrap_or_default();
+    let named = |n: &&Name| n.namn.as_deref().is_some_and(|s| !s.is_empty());
     let name = names
         .iter()
+        .filter(named)
         .find(|n| {
             n.organisationsnamntyp
                 .as_ref()
-                .is_some_and(|t| t.kod == "FORETAGSNAMN")
+                .is_some_and(|t| t.kod.as_deref() == Some("FORETAGSNAMN"))
         })
-        .or(names.first())
-        .map(|n| n.namn.clone())
+        .or(names.iter().find(named))
+        .and_then(|n| n.namn.clone())
         .unwrap_or_default();
     let postal = org
         .postadress_organisation
@@ -165,7 +167,8 @@ fn first(response: Organisationer) -> Result<Found, LookupError> {
         name,
         legal_form: org
             .organisationsform
-            .map_or(LegalForm::Other, |f| legal_form(&f.kod)),
+            .and_then(|f| f.kod)
+            .map_or(LegalForm::Other, |kod| legal_form(&kod)),
         address,
     })
 }
@@ -197,13 +200,13 @@ struct Names {
 
 #[derive(Deserialize)]
 struct Name {
-    namn: String,
+    namn: Option<String>,
     organisationsnamntyp: Option<Code>,
 }
 
 #[derive(Deserialize)]
 struct Code {
-    kod: String,
+    kod: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -259,6 +262,19 @@ mod tests {
                 address: Address::default()
             }
         );
+    }
+
+    #[test]
+    fn null_leaves_do_not_fail_the_lookup() {
+        let json = r#"{ "organisationer": [ {
+            "organisationsform": { "kod": null },
+            "organisationsnamn": { "organisationsnamnLista": [
+                { "namn": null, "organisationsnamntyp": { "kod": "FORETAGSNAMN" } },
+                { "namn": "Exempel AB", "organisationsnamntyp": { "kod": null } }
+            ] } } ] }"#;
+        let found = first(serde_json::from_str(json).unwrap()).unwrap();
+        assert_eq!(found.name, "Exempel AB");
+        assert_eq!(found.legal_form, LegalForm::Other);
     }
 
     #[test]
