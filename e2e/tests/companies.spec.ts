@@ -1,0 +1,73 @@
+import { expect, register, test } from "./fixtures";
+import type { Page } from "@playwright/test";
+
+const nav = (page: Page) => page.getByRole("link", { name: "Företag", exact: true });
+
+async function addCompany(page: Page, app: string, orgNr: string, name: string) {
+  await page.goto(`${app}/companies`);
+  await page.getByRole("link", { name: "Lägg till företag" }).click();
+  await page.getByLabel("Organisationsnummer").fill(orgNr);
+  await page.getByLabel("Företagsnamn").fill(name);
+  await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
+  await page.getByLabel("Postort").fill("Stockholm");
+  await page.getByLabel("Räkenskapsåret börjar").fill("2026-01-01");
+  await page.getByLabel("Räkenskapsåret slutar").fill("2026-12-31");
+  await page.getByLabel("Faktureringsmetoden").check();
+  await page.getByRole("button", { name: "Spara företag" }).click();
+  await expect(page.getByRole("heading", { name })).toBeVisible();
+}
+
+test("a user adds a company by hand and finds it in the list", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await nav(page).click();
+  await expect(page.getByText("Inga företag än.")).toBeVisible();
+
+  await addCompany(page, app, "5560160680", "Exempel AB");
+
+  await expect(page.getByText("556016-0680")).toBeVisible();
+  await expect(page.getByText("Faktureringsmetoden")).toBeVisible();
+  await expect(page.getByText(/^\d{4}-01-01 – \d{4}-12-31$/)).toBeVisible();
+  await nav(page).click();
+  await expect(page.getByRole("link", { name: "Exempel AB" })).toBeVisible();
+});
+
+test("the form explains invalid input and a missing Bolagsverket setup in Swedish", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.goto(`${app}/companies/new`);
+
+  await page.getByLabel("Organisationsnummer").fill("556016-0680");
+  await page.getByRole("button", { name: "Hämta från Bolagsverket" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Hämtning från Bolagsverket är inte konfigurerad. Fyll i uppgifterna själv.");
+
+  // Everything else valid, so the org nr is the error reported (the server
+  // checks legal form and method before the org nr).
+  await page.getByLabel("Organisationsnummer").fill("556016-0681");
+  await page.getByLabel("Företagsnamn").fill("Exempel AB");
+  await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
+  await page.getByLabel("Faktureringsmetoden").check();
+  await page.getByRole("button", { name: "Spara företag" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Ange ett giltigt organisationsnummer (10 siffror).");
+});
+
+test("a colleague sees a company only after being added as a member", async ({ page, app, newPerson }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.getByRole("link", { name: "Inbjudningar" }).click();
+  await page.getByLabel("E-post").fill("bo@example.se");
+  await page.getByRole("button", { name: "Skapa inbjudan" }).click();
+  const link = await page.getByLabel("Inbjudningslänk").inputValue();
+  const bo = await newPerson();
+  await register(bo, app, { email: "bo@example.se", name: "Bo", invitationLink: link });
+
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  const companyUrl = page.url();
+  await bo.goto(companyUrl);
+  await expect(bo.getByRole("alert")).toHaveText("Företaget finns inte eller så saknar du tillgång.");
+
+  await page.getByLabel("E-post").fill("bo@example.se");
+  await page.getByRole("button", { name: "Lägg till medlem" }).click();
+  await expect(page.getByText("bo@example.se")).toBeVisible();
+
+  await bo.goto(`${app}/companies`);
+  await bo.getByRole("link", { name: "Exempel AB" }).click();
+  await expect(bo.getByRole("heading", { name: "Exempel AB" })).toBeVisible();
+});
