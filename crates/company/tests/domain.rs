@@ -41,3 +41,14 @@ fn org_nr_rejects_bad_check_digits_and_formats() {
         assert_eq!(OrgNr::parse(raw), Err(DomainError::InvalidOrgNr), "{raw:?}");
     }
 }
+
+#[test]
+fn org_nr_debug_output_hides_the_digits() {
+    let org_nr = OrgNr::parse("556016-0680").unwrap();
+    let debug_str = format!("{:?}", org_nr);
+    assert!(
+        !debug_str.contains("5560160680"),
+        "debug output should not contain the digits"
+    );
+    assert_eq!(debug_str, "OrgNr(<redacted>)");
+}

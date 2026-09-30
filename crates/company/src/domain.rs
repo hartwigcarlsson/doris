@@ -18,9 +18,16 @@ pub enum DomainError {
 
 /// Organisationsnummer: 10 digits, no hyphen. For an enskild firma it is the
 /// owner's personnummer, so it is personal data and must never be logged.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct OrgNr(String);
+
+/// Redacted: the number may be a personnummer and must never reach a log.
+impl std::fmt::Debug for OrgNr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OrgNr(<redacted>)")
+    }
+}
 
 impl OrgNr {
     /// Accepts `NNNNNN-NNNN`, spaces, and the 12-digit form with a century
