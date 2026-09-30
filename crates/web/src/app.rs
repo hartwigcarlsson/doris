@@ -1,7 +1,9 @@
 //! Routes, the session state and the page shell.
 
 use crate::api::{api, pb};
-use crate::pages::{Home, Invitations, Login, Passkeys, Register};
+use crate::pages::{
+    Companies, CompanyPage, Home, Invitations, Login, NewCompany, Passkeys, Register,
+};
 use crate::ui::{Button, Variant};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -56,6 +58,9 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/register") view=Register />
                         <Route path=path!("/login") view=Login />
                         <Route path=path!("/") view=|| view! { <SignedIn><Home /></SignedIn> } />
+                        <Route path=path!("/companies") view=|| view! { <SignedIn><Companies /></SignedIn> } />
+                        <Route path=path!("/companies/new") view=|| view! { <SignedIn><NewCompany /></SignedIn> } />
+                        <Route path=path!("/companies/:id") view=|| view! { <SignedIn><CompanyPage /></SignedIn> } />
                         <Route path=path!("/settings/passkeys") view=|| view! { <SignedIn><Passkeys /></SignedIn> } />
                         <Route path=path!("/admin/invitations") view=|| view! { <SignedIn admin=true><Invitations /></SignedIn> } />
                     </Routes>
@@ -100,6 +105,7 @@ fn Header() -> impl IntoView {
             <nav class="mx-auto flex h-12 max-w-3xl items-center gap-4 px-4 text-xs/relaxed">
                 <A href="/" attr:class="text-sm font-semibold">"Doris"</A>
                 <Show when=move || session.user.get().is_some()>
+                    <A href="/companies" attr:class="text-muted-foreground hover:text-foreground">"Företag"</A>
                     <A href="/settings/passkeys" attr:class="text-muted-foreground hover:text-foreground">"Passkeys"</A>
                     <Show when=move || session.is_admin()>
                         <A href="/admin/invitations" attr:class="text-muted-foreground hover:text-foreground">"Inbjudningar"</A>

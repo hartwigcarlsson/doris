@@ -9,6 +9,10 @@ const BUTTON_DEFAULT: &str = "bg-primary text-primary-foreground hover:bg-primar
 const BUTTON_GHOST: &str = "hover:bg-muted hover:text-foreground dark:hover:bg-muted/50";
 const INPUT: &str = "h-7 w-full min-w-0 rounded-md border border-input bg-input/20 px-2 py-0.5 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 read-only:cursor-default read-only:border-dashed read-only:focus-visible:border-input read-only:bg-muted read-only:text-muted-foreground md:text-xs/relaxed dark:bg-input/30";
 const LABEL: &str = "flex items-center gap-2 text-xs/relaxed leading-none font-medium select-none";
+const SELECT: &str = "h-7 w-full min-w-0 appearance-none rounded-md border border-input bg-input/20 py-0.5 pr-6 pl-2 text-xs/relaxed transition-colors outline-none select-none selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-not-allowed aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40";
+// Radix's RadioGroupItem classes, with `data-checked` turned into `checked:`
+// for a native input; the indicator dot is drawn with an inset shadow.
+const RADIO: &str = "relative flex aspect-square size-4 shrink-0 appearance-none rounded-full border border-input outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:bg-input/30 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 checked:border-primary checked:bg-primary-foreground checked:shadow-[inset_0_0_0_3px_var(--color-primary)] dark:checked:bg-primary-foreground";
 const CARD: &str = "flex flex-col gap-4 overflow-hidden rounded-lg bg-card py-4 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10";
 const ALERT: &str =
     "relative grid w-full gap-0.5 rounded-lg border px-2 py-1.5 text-left text-xs/relaxed";
@@ -117,5 +121,66 @@ pub fn ErrorAlert(message: RwSignal<Option<String>>) -> impl IntoView {
                 </div>
             }
         })
+    }
+}
+
+/// A labelled native select bound to `value` (the option's `value`).
+#[component]
+pub fn Select(
+    label: &'static str,
+    id: &'static str,
+    value: RwSignal<String>,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <div class="grid gap-2">
+            <label for=id class=LABEL>{label}</label>
+            <div class="relative">
+                <select
+                    id=id
+                    name=id
+                    class=SELECT
+                    prop:value=move || value.get()
+                    on:change=move |ev| value.set(event_target_value(&ev))
+                >
+                    {children()}
+                </select>
+                <svg
+                    class="pointer-events-none absolute top-1/2 right-1.5 size-3.5 -translate-y-1/2 text-muted-foreground select-none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                >
+                    <path d="m6 9 6 6 6-6" />
+                </svg>
+            </div>
+        </div>
+    }
+}
+
+/// One labelled radio button; `on_select` runs when it is chosen.
+#[component]
+pub fn Radio(
+    label: &'static str,
+    name: &'static str,
+    #[prop(into)] checked: Signal<bool>,
+    on_select: impl Fn() + 'static,
+) -> impl IntoView {
+    view! {
+        <label class=LABEL>
+            <input
+                type="radio"
+                name=name
+                class=RADIO
+                prop:checked=checked
+                on:change=move |_| on_select()
+            />
+            {label}
+        </label>
     }
 }

@@ -929,6 +929,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "doris-proto",
+ "js-sys",
  "leptos",
  "leptos_router",
  "serde_json",
