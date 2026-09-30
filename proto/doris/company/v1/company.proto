@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package doris.company.v1;
+
+// Companies a user keeps the books for. Every RPC needs a session; a company
+// the caller isn't a member of answers NOT_FOUND "company_not_found".
+service CompanyService {
+  // Details from Bolagsverket to pre-fill the form. Nothing is stored.
+  rpc LookupCompany(LookupCompanyRequest) returns (LookupCompanyResponse);
+  rpc CreateCompany(CreateCompanyRequest) returns (CreateCompanyResponse);
+  rpc ListCompanies(ListCompaniesRequest) returns (ListCompaniesResponse);
+  rpc GetCompany(GetCompanyRequest) returns (Company);
+  // Adds an existing user, by email, as a member.
+  rpc AddMember(AddMemberRequest) returns (AddMemberResponse);
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
+}
+
+enum LegalForm {
+  LEGAL_FORM_UNSPECIFIED = 0;
+  LEGAL_FORM_AKTIEBOLAG = 1;
+  LEGAL_FORM_HANDELSBOLAG = 2;
+  LEGAL_FORM_KOMMANDITBOLAG = 3;
+  LEGAL_FORM_ENSKILD_FIRMA = 4;
+  LEGAL_FORM_EKONOMISK_FORENING = 5;
+  LEGAL_FORM_IDEELL_FORENING = 6;
+  LEGAL_FORM_STIFTELSE = 7;
+  LEGAL_FORM_OTHER = 8;
+}
+
+enum AccountingMethod {
+  ACCOUNTING_METHOD_UNSPECIFIED = 0;
+  ACCOUNTING_METHOD_CASH = 1;     // kontantmetoden
+  ACCOUNTING_METHOD_INVOICE = 2;  // faktureringsmetoden
+}
+
+// Empty strings mean "not known".
+message Address {
+  string street = 1;
+  string postal_code = 2;
+  string city = 3;
+}
+
+message LookupCompanyRequest {
+  string org_nr = 1;
+}
+
+message LookupCompanyResponse {
+  string org_nr = 1;  // NNNNNN-NNNN
+  string name = 2;
+  LegalForm legal_form = 3;
+  Address address = 4;
+}
+
+message CreateCompanyRequest {
+  string org_nr = 1;
+  string name = 2;
+  LegalForm legal_form = 3;
+  Address address = 4;
+  string fiscal_year_start = 5;  // YYYY-MM-DD, first räkenskapsår
+  string fiscal_year_end = 6;    // YYYY-MM-DD
+  AccountingMethod accounting_method = 7;
+}
+
+message CreateCompanyResponse {
+  string company_id = 1;
+}
+
+message ListCompaniesRequest {}
+
+message CompanySummary {
+  string id = 1;
+  string org_nr = 2;  // NNNNNN-NNNN
+  string name = 3;
+}
+
+message ListCompaniesResponse {
+  repeated CompanySummary companies = 1;
+}
+
+message GetCompanyRequest {
+  string company_id = 1;
+}
+
+message Company {
+  string id = 1;
+  string org_nr = 2;  // NNNNNN-NNNN
+  string name = 3;
+  LegalForm legal_form = 4;
+  Address address = 5;
+  AccountingMethod accounting_method = 6;
+  // The räkenskapsår that contains today, YYYY-MM-DD.
+  string fiscal_year_start = 7;
+  string fiscal_year_end = 8;
+}
+
+message AddMemberRequest {
+  string company_id = 1;
+  string email = 2;
+}
+
+message AddMemberResponse {}
+
+message ListMembersRequest {
+  string company_id = 1;
+}
+
+message Member {
+  string display_name = 1;
+  string email = 2;
+}
+
+message ListMembersResponse {
+  repeated Member members = 1;
+}

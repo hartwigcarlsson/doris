@@ -5,3 +5,9 @@ pub mod auth {
         tonic::include_proto!("doris.auth.v1");
     }
 }
+
+pub mod company {
+    pub mod v1 {
+        tonic::include_proto!("doris.company.v1");
+    }
+}
