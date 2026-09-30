@@ -38,6 +38,9 @@ dist:
 		{ echo "dist: $$wasm is $$size bytes, over the $(WASM_BUDGET) byte budget"; exit 1; }
 	cargo build --release -p doris-server
 	mkdir -p $(DIST)
+	@# rm first: on macOS, overwriting a binary that has run keeps its old
+	@# code signature cached, and the new one is killed on start (SIGKILL).
+	rm -f $(DIST)/doris
 	cp target/release/doris $(DIST)/doris
 	tar -czf $(DIST)/doris-web-$(VERSION).tar.gz -C crates/web/dist .
 	@tar -tzf $(DIST)/doris-web-$(VERSION).tar.gz | grep -qx './index.html' || \
