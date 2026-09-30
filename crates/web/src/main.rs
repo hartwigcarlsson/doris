@@ -3,6 +3,7 @@
 mod api;
 mod app;
 mod errors;
+mod fiscal_year;
 mod format;
 mod pages;
 mod passkey;

@@ -11,7 +11,7 @@ async function addCompany(page: Page, app: string, orgNr: string, name: string) 
   await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
   await page.getByLabel("Postort").fill("Stockholm");
   await page.getByLabel("Räkenskapsåret börjar").fill("2026-01-01");
-  await page.getByLabel("Räkenskapsåret slutar").fill("2026-12-31");
+  await expect(page.getByText("Räkenskapsåret slutar 2026-12-31.")).toBeVisible();
   await page.getByLabel("Faktureringsmetoden").check();
   await page.getByRole("button", { name: "Spara företag" }).click();
   await expect(page.getByRole("heading", { name })).toBeVisible();
@@ -35,9 +35,9 @@ test("the form explains invalid input and a missing Bolagsverket setup in Swedis
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await page.goto(`${app}/companies/new`);
 
-  await page.getByLabel("Organisationsnummer").fill("556016-0680");
-  await page.getByRole("button", { name: "Hämta från Bolagsverket" }).click();
-  await expect(page.getByRole("alert")).toHaveText("Hämtning från Bolagsverket är inte konfigurerad. Fyll i uppgifterna själv.");
+  // Without Bolagsverket credentials the form says so instead of offering a button.
+  await expect(page.getByText("Hämtning från Bolagsverket är inte konfigurerad. Fyll i uppgifterna själv.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Hämta från Bolagsverket" })).toHaveCount(0);
 
   // Everything else valid, so the org nr is the error reported (the server
   // checks legal form and method before the org nr).
@@ -47,6 +47,28 @@ test("the form explains invalid input and a missing Bolagsverket setup in Swedis
   await page.getByLabel("Faktureringsmetoden").check();
   await page.getByRole("button", { name: "Spara företag" }).click();
   await expect(page.getByRole("alert")).toHaveText("Ange ett giltigt organisationsnummer (10 siffror).");
+});
+
+test("the end of the first räkenskapsår follows from its start, unless it is shortened or extended", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.goto(`${app}/companies/new`);
+  await page.getByLabel("Organisationsnummer").fill("5560160680");
+  await page.getByLabel("Företagsnamn").fill("Exempel AB");
+  await page.getByLabel("Faktureringsmetoden").check();
+
+  await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
+  await page.getByLabel("Räkenskapsåret börjar").fill("2026-07-01");
+  await expect(page.getByText("Räkenskapsåret slutar 2027-06-30.")).toBeVisible();
+  await page.getByLabel("Juridisk form").selectOption({ label: "Enskild firma" });
+  await expect(page.getByText("Räkenskapsåret slutar 2026-12-31.")).toBeVisible();
+  await expect(page.getByLabel("Räkenskapsåret slutar")).toHaveCount(0);
+
+  await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
+  await page.getByLabel("Första räkenskapsåret är förkortat eller förlängt").check();
+  await expect(page.getByLabel("Räkenskapsåret slutar")).toHaveValue("2027-06-30");
+  await page.getByLabel("Räkenskapsåret slutar").fill("2027-12-31"); // 18 months
+  await page.getByRole("button", { name: "Spara företag" }).click();
+  await expect(page.getByRole("heading", { name: "Exempel AB" })).toBeVisible();
 });
 
 test("a colleague sees a company only after being added as a member", async ({ page, app, newPerson }) => {

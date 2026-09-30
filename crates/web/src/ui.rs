@@ -15,6 +15,9 @@ const SELECT: &str = "h-7 w-full min-w-0 appearance-none rounded-md border borde
 // Radix's RadioGroupItem classes, with `data-checked` turned into `checked:`
 // for a native input; the indicator dot is drawn with an inset shadow.
 const RADIO: &str = "relative flex aspect-square size-4 shrink-0 appearance-none rounded-full border border-input outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:bg-input/30 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 checked:border-primary checked:bg-primary-foreground checked:shadow-[inset_0_0_0_3px_var(--color-primary)] dark:checked:bg-primary-foreground";
+// Radix's Checkbox classes, likewise on a native input; the lucide check is
+// drawn over it while checked.
+const CHECKBOX: &str = "peer relative flex size-4 shrink-0 appearance-none items-center justify-center rounded-[4px] border border-input transition-shadow outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 aria-invalid:checked:border-primary dark:bg-input/30 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 checked:border-primary checked:bg-primary checked:text-primary-foreground dark:checked:bg-primary";
 const CARD: &str = "flex flex-col gap-4 overflow-hidden rounded-lg bg-card py-4 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10";
 const ALERT: &str =
     "relative grid w-full gap-0.5 rounded-lg border px-2 py-1.5 text-left text-xs/relaxed";
@@ -182,6 +185,39 @@ pub fn Radio(
                 prop:checked=checked
                 on:change=move |_| on_select()
             />
+            {label}
+        </label>
+    }
+}
+
+/// A labelled checkbox bound to `checked`.
+#[component]
+pub fn Checkbox(label: &'static str, id: &'static str, checked: RwSignal<bool>) -> impl IntoView {
+    view! {
+        <label class=LABEL>
+            <span class="relative flex size-4 shrink-0">
+                <input
+                    type="checkbox"
+                    id=id
+                    name=id
+                    class=CHECKBOX
+                    prop:checked=move || checked.get()
+                    on:change=move |ev| checked.set(event_target_checked(&ev))
+                />
+                <svg
+                    class="pointer-events-none absolute inset-0 m-auto hidden size-3.5 text-primary-foreground peer-checked:block"
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                >
+                    <path d="M20 6 9 17l-5-5" />
+                </svg>
+            </span>
             {label}
         </label>
     }

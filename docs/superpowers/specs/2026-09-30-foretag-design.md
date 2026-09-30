@@ -86,6 +86,7 @@ Varje anrop kräver en session och använder samma mönster som `AuthApi::user()
 
 | RPC | In | Ut |
 |---|---|---|
+| `GetLookupStatus` | – | om hämtningen från Bolagsverket är konfigurerad |
 | `LookupCompany` | `org_nr` | namn, juridisk form, adress (förslag, sparas inte) |
 | `CreateCompany` | `org_nr`, namn, juridisk form, adress, räkenskapsår, metod | `company_id` |
 | `ListCompanies` | – | företagen där användaren är medlem |
@@ -122,8 +123,8 @@ Nya felkoder (varje kod läggs också till i `crates/web/src/errors.rs`):
 ## Frontend
 - `/companies` visar en lista med dina företag (namn, orgnr) och knappen **Lägg till företag**. `/` länkar dit.
 - `/companies/new` har följande:
-  - ett fält för organisationsnummer och knappen **Hämta**, som fyller i namn, juridisk form och adress. Om hämtningen misslyckas visas felet, och fälten går ändå att fylla i för hand.
-  - fälten för räkenskapsårets början och slut (`<input type="date">`). Standard är innevarande kalenderår.
+  - ett fält för organisationsnummer och knappen **Hämta från Bolagsverket**, som fyller i namn, juridisk form och adress. Om hämtningen misslyckas visas felet, och fälten går ändå att fylla i för hand. Är hämtningen inte konfigurerad (`GetLookupStatus`) visas en informationstext i stället för knappen.
+  - fältet för räkenskapsårets början (`<input type="date">`), med innevarande kalenderår som standard. Slutet räknas fram och visas som text: tolv månader efter starten, eller 31 december samma år för enskild firma, handelsbolag och kommanditbolag. Kryssrutan **Första räkenskapsåret är förkortat eller förlängt** visar ett fält där slutet anges för hand. Servern validerar som förut.
   - valet av bokföringsmetod (radioknappar) med en upplysning om gränsen på 3 MSEK.
   - knappen **Spara**. Därefter kommer man till `/companies/{id}`.
 - `/companies/{id}` visar uppgifterna, det pågående räkenskapsåret och en lista över medlemmar. Där finns ett formulär för att lägga till en medlem med e-postadress.
