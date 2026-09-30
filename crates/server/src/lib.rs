@@ -1,11 +1,13 @@
 //! The Doris server: gRPC-Web API and the embedded frontend on one port.
 
 pub mod assets;
+mod company;
 mod grpc;
 
 use axum::Router;
 use axum::routing::get;
 use doris_proto::auth::v1::auth_service_server::AuthServiceServer;
+use doris_proto::company::v1::company_service_server::CompanyServiceServer;
 use http::header::CONTENT_TYPE;
 use http::{HeaderName, HeaderValue, Method, StatusCode};
 use rust_embed::RustEmbed;
@@ -15,16 +17,19 @@ use tonic_web::GrpcWebLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+pub use company::CompanyApi;
 pub use grpc::{AuthApi, SESSION_COOKIE};
 
 /// Builds the app. `E` is the embedded frontend (see [`assets::WebDist`]).
 /// With no `cors_origins`, only same-origin browsers can call the API.
 pub fn router<E: RustEmbed + Send + Sync + 'static>(
     api: AuthApi,
+    companies: CompanyApi,
     cors_origins: Vec<HeaderValue>,
     serve_frontend: bool,
 ) -> Router {
     let mut app = Routes::new(AuthServiceServer::new(api))
+        .add_service(CompanyServiceServer::new(companies))
         .into_axum_router()
         .layer(GrpcWebLayer::new())
         .layer(axum::middleware::map_response(hide_internal_messages));

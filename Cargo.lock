@@ -880,6 +880,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "doris-company",
  "doris-eventstore",
  "doris-identity",
  "doris-proto",

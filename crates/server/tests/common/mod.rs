@@ -6,7 +6,8 @@
 use doris_identity::Auth;
 use doris_proto::auth::v1 as pb;
 use doris_proto::auth::v1::auth_service_client::AuthServiceClient;
-use doris_server::{AuthApi, SESSION_COOKIE};
+use doris_proto::company::v1::company_service_client::CompanyServiceClient;
+use doris_server::{AuthApi, CompanyApi, SESSION_COOKIE};
 use http::HeaderValue;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -20,8 +21,9 @@ use webauthn_authenticator_rs::WebauthnAuthenticator;
 use webauthn_authenticator_rs::softpasskey::SoftPasskey;
 use webauthn_rs::prelude::{CreationChallengeResponse, RequestChallengeResponse};
 
-pub type Grpc =
-    AuthServiceClient<GrpcWebClientService<Client<HttpConnector, GrpcWebCall<tonic::body::Body>>>>;
+type Transport = GrpcWebClientService<Client<HttpConnector, GrpcWebCall<tonic::body::Body>>>;
+pub type Grpc = AuthServiceClient<Transport>;
+pub type Companies = CompanyServiceClient<Transport>;
 pub type Device = WebauthnAuthenticator<SoftPasskey>;
 
 #[derive(RustEmbed)]
@@ -47,6 +49,7 @@ impl TestServer {
         let auth = Auth::new(pool.clone(), "localhost", &origin).await.unwrap();
         let app = doris_server::router::<TestDist>(
             AuthApi::new(pool.clone(), auth),
+            CompanyApi::new(pool.clone()),
             cors_origins,
             serve_frontend,
         );
@@ -58,12 +61,36 @@ impl TestServer {
         }
     }
 
-    pub fn grpc(&self) -> Grpc {
+    fn transport(&self) -> Transport {
         let client = Client::builder(TokioExecutor::new()).build_http();
-        let service = tower::ServiceBuilder::new()
+        tower::ServiceBuilder::new()
             .layer(GrpcWebClientLayer::new())
-            .service(client);
-        AuthServiceClient::with_origin(service, self.base.parse().unwrap())
+            .service(client)
+    }
+
+    pub fn grpc(&self) -> Grpc {
+        AuthServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
+    }
+
+    pub fn companies(&self) -> Companies {
+        CompanyServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
+    }
+
+    /// An admin invites `email`, who registers; returns the new user's session.
+    pub async fn invite(&self, admin: &str, email: &str) -> String {
+        let invite = self
+            .grpc()
+            .create_invitation(authed(
+                pb::CreateInvitationRequest {
+                    email: email.into(),
+                },
+                admin,
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        self.sign_up(&mut device(), email, Some(&invite.token))
+            .await
     }
 
     /// Registers through the API and returns the session cookie's token.

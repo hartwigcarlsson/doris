@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 axum.workspace = true
 clap.workspace = true
+doris-company.workspace = true
 doris-eventstore.workspace = true
 doris-identity.workspace = true
 doris-proto = { workspace = true, features = ["server"] }
