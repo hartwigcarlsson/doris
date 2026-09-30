@@ -124,15 +124,37 @@ async fn create_rejects_invalid_input_with_stable_codes() {
 #[tokio::test]
 async fn every_company_rpc_needs_a_session() {
     let server = TestServer::start().await;
-    let err = server
-        .companies()
-        .list_companies(pb::ListCompaniesRequest {})
+    let mut api = server.companies();
+    let unauthenticated = (Code::Unauthenticated, "not_signed_in".to_string());
+    let id = || "00000000-0000-0000-0000-000000000000".to_string();
+    let results = [
+        api.lookup_company(pb::LookupCompanyRequest {
+            org_nr: "556016-0680".into(),
+        })
         .await
-        .unwrap_err();
-    assert_eq!(
-        code_of(err),
-        (Code::Unauthenticated, "not_signed_in".into())
-    );
+        .map(drop),
+        api.create_company(create("556016-0680", "Exempel AB"))
+            .await
+            .map(drop),
+        api.list_companies(pb::ListCompaniesRequest {})
+            .await
+            .map(drop),
+        api.get_company(pb::GetCompanyRequest { company_id: id() })
+            .await
+            .map(drop),
+        api.add_member(pb::AddMemberRequest {
+            company_id: id(),
+            email: "bo@example.se".into(),
+        })
+        .await
+        .map(drop),
+        api.list_members(pb::ListMembersRequest { company_id: id() })
+            .await
+            .map(drop),
+    ];
+    for result in results {
+        assert_eq!(code_of(result.unwrap_err()), unauthenticated);
+    }
 }
 
 #[tokio::test]
