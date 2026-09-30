@@ -1,5 +1,7 @@
 //! Pure company rules: value types, events, state and decisions. No I/O.
 
+use jiff::Span;
+use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -74,4 +76,157 @@ fn luhn(digits: &str) -> bool {
         })
         .sum();
     sum.is_multiple_of(10)
+}
+
+fn bounded_text(raw: &str, max_chars: usize) -> Option<String> {
+    let text = raw.trim();
+    (!text.is_empty() && text.chars().count() <= max_chars).then(|| text.to_owned())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CompanyName(String);
+
+impl CompanyName {
+    pub fn parse(raw: &str) -> Result<Self, DomainError> {
+        bounded_text(raw, 200)
+            .map(Self)
+            .ok_or(DomainError::InvalidCompanyName)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Postal address. Every part is optional: Bolagsverket often has only
+/// postnummer and postort.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Address {
+    pub street: Option<String>,
+    pub postal_code: Option<String>,
+    pub city: Option<String>,
+}
+
+impl Address {
+    pub fn parse(street: &str, postal_code: &str, city: &str) -> Result<Self, DomainError> {
+        let part = |raw: &str| {
+            let text = raw.trim();
+            match text.chars().count() {
+                0 => Ok(None),
+                1..=200 => Ok(Some(text.to_owned())),
+                _ => Err(DomainError::InvalidAddress),
+            }
+        };
+        Ok(Self {
+            street: part(street)?,
+            postal_code: part(postal_code)?,
+            city: part(city)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegalForm {
+    Aktiebolag,
+    Handelsbolag,
+    Kommanditbolag,
+    EnskildFirma,
+    EkonomiskForening,
+    IdeellForening,
+    Stiftelse,
+    Other,
+}
+
+impl LegalForm {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LegalForm::Aktiebolag => "aktiebolag",
+            LegalForm::Handelsbolag => "handelsbolag",
+            LegalForm::Kommanditbolag => "kommanditbolag",
+            LegalForm::EnskildFirma => "enskild_firma",
+            LegalForm::EkonomiskForening => "ekonomisk_forening",
+            LegalForm::IdeellForening => "ideell_forening",
+            LegalForm::Stiftelse => "stiftelse",
+            LegalForm::Other => "other",
+        }
+    }
+
+    /// BFL 3 kap. 1 §: a natural person and a handelsbolag must use the
+    /// calendar year. (The exception for handelsbolag owned by legal persons
+    /// is not supported yet.)
+    fn requires_calendar_year(self) -> bool {
+        matches!(
+            self,
+            LegalForm::EnskildFirma | LegalForm::Handelsbolag | LegalForm::Kommanditbolag
+        )
+    }
+}
+
+/// Kontantmetoden (BFL 5 kap. 2 §, net sales up to 3 MSEK) or faktureringsmetoden.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountingMethod {
+    Cash,
+    Invoice,
+}
+
+impl AccountingMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AccountingMethod::Cash => "cash",
+            AccountingMethod::Invoice => "invoice",
+        }
+    }
+}
+
+/// A räkenskapsår: from the first day of a month to the last day of a month.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FiscalYear {
+    pub start: Date,
+    pub end: Date,
+}
+
+impl FiscalYear {
+    /// The company's first räkenskapsår (BFL 3 kap. 1 och 3 §§): 1-18
+    /// months, whole months, and ending 31 December where the legal form
+    /// requires the calendar year.
+    pub fn first(start: Date, end: Date, legal_form: LegalForm) -> Result<Self, DomainError> {
+        let months = (i32::from(end.year()) * 12 + i32::from(end.month()))
+            - (i32::from(start.year()) * 12 + i32::from(start.month()))
+            + 1;
+        let valid = start == start.first_of_month()
+            && end == end.last_of_month()
+            && (1..=18).contains(&months)
+            && (!legal_form.requires_calendar_year() || end.month() == 12);
+        if valid {
+            Ok(Self { start, end })
+        } else {
+            Err(DomainError::InvalidFiscalYear)
+        }
+    }
+
+    /// The following räkenskapsår: 12 months, ending in the same month.
+    pub fn next(&self) -> Self {
+        let start = self
+            .end
+            .tomorrow()
+            .expect("fiscal years are far from the date limits");
+        let end = start
+            .checked_add(Span::new().months(11))
+            .expect("fiscal years are far from the date limits")
+            .last_of_month();
+        Self { start, end }
+    }
+
+    /// The räkenskapsår `day` falls in, counting from this (first) one.
+    /// Days before the first year give the first year.
+    pub fn containing(&self, day: Date) -> Self {
+        let mut year = *self;
+        while day > year.end {
+            year = year.next();
+        }
+        year
+    }
 }
