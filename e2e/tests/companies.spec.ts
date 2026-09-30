@@ -101,14 +101,19 @@ test("the active company is chosen in the header and remembered", async ({ page,
   await expect(page.getByLabel("Aktivt företag")).toHaveCount(0);
   await expect(page.getByText("Du har inga företag än.")).toBeVisible();
 
-  await addCompany(page, app, "5560160680", "Exempel AB");
+  // Exempel AB is added last but sorts last, so only "a new company becomes
+  // active" can make it the active one; the fallback would pick Bolaget AB.
   await addCompany(page, app, "5560360793", "Bolaget AB");
+  await addCompany(page, app, "5560160680", "Exempel AB");
   const active = () => page.getByLabel("Aktivt företag");
-  await expect(active().locator("option:checked")).toHaveText("Bolaget AB"); // the new one
-
-  await active().selectOption({ label: "Exempel AB" });
+  await expect(active().locator("option:checked")).toHaveText("Exempel AB");
   await page.reload();
   await expect(active().locator("option:checked")).toHaveText("Exempel AB");
+
+  await active().selectOption({ label: "Bolaget AB" });
+  await page.reload();
+  await expect(active().locator("option:checked")).toHaveText("Bolaget AB");
+  await active().selectOption({ label: "Exempel AB" });
   await page.goto(app);
   const card = page.getByRole("main");
   await expect(card.getByRole("heading", { name: "Aktivt företag" })).toBeVisible();

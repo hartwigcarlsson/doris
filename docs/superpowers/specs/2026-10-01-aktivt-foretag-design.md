@@ -6,7 +6,7 @@ En användare som sköter bokföringen åt flera företag arbetar med ett av dem
 ### Fattade beslut
 | Område | Beslut |
 |---|---|
-| Lagring | Valet sparas i webbläsarens `localStorage` och gäller den webbläsaren. Alla flikar delar samma aktiva företag. Inga ändringar görs på servern. |
+| Lagring | Valet sparas i webbläsarens `localStorage` och gäller den webbläsaren. Alla flikar utgår från samma sparade val, men en redan öppen flik byter först när den laddas om. Inga ändringar görs på servern. |
 | Nyckel | `doris.active_company.{användar-id}`, så att två personer som delar webbläsare får var sitt val. Värdet är företagets UUID och ingen personuppgift. |
 | Automatiskt val | Det sparade företaget blir aktivt om användaren fortfarande är medlem. Annars blir det första företaget i listan aktivt, i den ordning `ListCompanies` ger (bokstavsordning). Utan företag är inget företag aktivt. |
 | Nytt företag | Ett företag som användaren just har lagt till blir aktivt direkt. |
@@ -38,4 +38,4 @@ En användare som sköter bokföringen åt flera företag arbetar med ett av dem
   - Utan företag visas länken "Lägg till företag" i sidhuvudet och ingen rullista.
 
 ## Utanför omfattningen
-Val av aktivt företag på servern eller i URL:en, delning av valet mellan enheter, samt bokföringsfunktioner som använder det aktiva företaget. Sådana kommer i senare steg.
+Att öppna flikar byter direkt när valet ändras i en annan flik (via `storage`-händelsen). Det behövs när bokföringen börjar använda det aktiva företaget, så att en gammal flik inte bokför i fel företag. Val av aktivt företag på servern eller i URL:en, delning av valet mellan enheter, samt bokföringsfunktioner som använder det aktiva företaget. Sådana kommer i senare steg.
