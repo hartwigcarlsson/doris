@@ -17,7 +17,7 @@ pub async fn list_companies(pool: &SqlitePool, user_id: Uuid) -> Result<Vec<Comp
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT c.company_id, c.org_nr, c.name
          FROM companies c JOIN company_members m ON m.company_id = c.company_id
-         WHERE m.user_id = ? ORDER BY c.name, c.org_nr",
+         WHERE m.user_id = ? ORDER BY lower(c.name), c.org_nr",
     )
     .bind(user_id.to_string())
     .fetch_all(pool)

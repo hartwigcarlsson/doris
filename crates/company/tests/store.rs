@@ -160,3 +160,25 @@ async fn projections_rebuild_from_the_event_log() {
     assert_eq!(dump(pool.clone()).await, before);
     assert_eq!(before.1.len(), 3);
 }
+
+#[tokio::test]
+async fn companies_are_listed_alphabetically_ignoring_case() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    for (org_nr, name) in [
+        ("556016-0680", "beta AB"),
+        ("556036-0793", "Alfa AB"),
+        ("556703-7485", "Ceta AB"),
+    ] {
+        register_company(&pool, anna, input(org_nr, name))
+            .await
+            .unwrap();
+    }
+    let names: Vec<_> = list_companies(&pool, anna)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    assert_eq!(names, ["Alfa AB", "beta AB", "Ceta AB"]);
+}
