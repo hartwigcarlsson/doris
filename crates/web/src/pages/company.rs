@@ -15,6 +15,7 @@ pub fn CompanyPage() -> impl IntoView {
     let members = RwSignal::new(Vec::<cpb::Member>::new());
     let email = RwSignal::new(String::new());
     let error = RwSignal::new(None::<String>);
+    let member_error = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
 
     let load = move || {
@@ -44,7 +45,7 @@ pub fn CompanyPage() -> impl IntoView {
     let add = move |ev: SubmitEvent| {
         ev.prevent_default();
         busy.set(true);
-        error.set(None);
+        member_error.set(None);
         spawn_local(async move {
             let request = cpb::AddMemberRequest {
                 company_id: id(),
@@ -55,7 +56,7 @@ pub fn CompanyPage() -> impl IntoView {
                     email.set(String::new());
                     load();
                 }
-                Err(status) => error.set(Some(describe(&status))),
+                Err(status) => member_error.set(Some(describe(&status))),
             }
             busy.set(false);
         });
@@ -102,6 +103,7 @@ pub fn CompanyPage() -> impl IntoView {
                         </For>
                     </ul>
                     <form class="grid gap-4" novalidate on:submit=add>
+                        <ErrorAlert message=member_error />
                         <Field label="E-post" id="member_email" kind="email" value=email />
                         <Button disabled=busy>"Lägg till medlem"</Button>
                     </form>
