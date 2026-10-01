@@ -1,19 +1,30 @@
-//! gRPC-Web client for `doris.auth.v1.AuthService`.
+//! gRPC-Web clients for the Doris API.
 
 use doris_proto::auth::v1::auth_service_client::AuthServiceClient;
+use doris_proto::company::v1::company_service_client::CompanyServiceClient;
 use leptos::prelude::window;
 use tonic_web_wasm_client::Client;
 use tonic_web_wasm_client::options::{Credentials, FetchOptions};
 
 pub use doris_proto::auth::v1 as pb;
+pub use doris_proto::company::v1 as cpb;
 
 pub type Api = AuthServiceClient<Client>;
+pub type CompanyApi = CompanyServiceClient<Client>;
 
-/// A client for the API. Cookies are always sent, so the session also works
-/// when the frontend is served from another origin (CDN) on the same site.
 pub fn api() -> Api {
+    AuthServiceClient::new(client())
+}
+
+pub fn company_api() -> CompanyApi {
+    CompanyServiceClient::new(client())
+}
+
+/// Cookies are always sent, so the session also works when the frontend is
+/// served from another origin (CDN) on the same site.
+fn client() -> Client {
     let options = FetchOptions::new().credentials(Credentials::Include);
-    AuthServiceClient::new(Client::new_with_options(base_url(), options))
+    Client::new_with_options(base_url(), options)
 }
 
 /// `<meta name="doris-api" content="…">` when set, otherwise this page's origin.

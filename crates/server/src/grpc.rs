@@ -24,11 +24,7 @@ impl AuthApi {
 
     /// The signed-in user, or `Unauthenticated`.
     async fn user<T>(&self, request: &Request<T>) -> Result<User, Status> {
-        let token = session_token(request).ok_or_else(not_signed_in)?;
-        doris_identity::session_user(&self.pool, &token, Timestamp::now())
-            .await
-            .map_err(status)?
-            .ok_or_else(not_signed_in)
+        signed_in_user(&self.pool, request).await
     }
 
     async fn admin<T>(&self, request: &Request<T>) -> Result<User, Status> {
@@ -244,6 +240,18 @@ impl AuthService for AuthApi {
     }
 }
 
+/// The signed-in user, or `Unauthenticated`. Shared by every service.
+pub(crate) async fn signed_in_user<T>(
+    pool: &SqlitePool,
+    request: &Request<T>,
+) -> Result<User, Status> {
+    let token = session_token(request).ok_or_else(not_signed_in)?;
+    doris_identity::session_user(pool, &token, Timestamp::now())
+        .await
+        .map_err(status)?
+        .ok_or_else(not_signed_in)
+}
+
 fn user_message(user: &User) -> pb::User {
     pb::User {
         id: user.id.to_string(),
@@ -323,7 +331,7 @@ fn finish_status(err: Error) -> Status {
 
 /// Maps identity errors to gRPC statuses. Messages are stable codes the
 /// frontend translates; they never contain personal data.
-fn status(err: Error) -> Status {
+pub(crate) fn status(err: Error) -> Status {
     match err {
         Error::Domain(DomainError::NotAdmin) => Status::permission_denied("not_admin"),
         Error::Domain(err) => Status::invalid_argument(domain_code(err)),

@@ -32,6 +32,7 @@ spec in `docs/superpowers/specs/` and an implementation plan in
 ```
 proto/              .proto files (package doris.<area>.v1)
 migrations/         sqlx migrations, NNNN_name.sql, shared by all crates
+crates/company      doris-company: companies, members, fiscal year and accounting method
 crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
 crates/identity     doris-identity: users, passkeys, invitations, sessions
 crates/proto        doris-proto: generated code (feature `server` for stubs)
@@ -91,7 +92,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - Email is personal data: never log it.
 
 ## API
-- The contract lives in `proto/doris/auth/v1/auth.proto`. `doris-proto` generates
+- The contract lives in `proto/doris/auth/v1/auth.proto` and
+  `proto/doris/company/v1/company.proto`. `doris-proto` generates
   the client; its `server` feature adds the server stubs. The client builds for
   wasm32 because no transport is generated.
 - gRPC-Web over HTTP/1.1 (`tonic_web::GrpcWebLayer`) shares one port with the
@@ -101,7 +103,15 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `invalid_email`, `not_signed_in`, `not_admin`, `login_failed` and
   `ceremony_expired`. The frontend translates them. They never contain
   personal data. The mapping is in `crates/server/src/grpc.rs` (`status`,
-  `domain_code`).
+  `domain_code`). Company codes are mapped in `crates/server/src/company.rs`
+  (`status`, `domain_status`).
+- Company lookup uses Bolagsverket's free "värdefulla datamängder" API (OAuth2
+  client credentials, register at portal.api.bolagsverket.se). Without
+  credentials the lookup answers `lookup_unavailable` and details are typed in.
+  An org nr can be a personnummer (enskild firma): never log it, and never send
+  a personnummer to Bolagsverket.
+- The server's only outbound HTTP is `reqwest` (native-tls: on Linux the same OpenSSL
+  as webauthn-rs, on macOS Security.framework).
 - The session cookie is `doris_session` (HttpOnly, Secure, SameSite=Strict,
   Path=/, 30 days).
 - CORS is off unless `DORIS_CORS_ORIGINS` is set. Set it only when the frontend
@@ -128,6 +138,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - Forms use `novalidate`. Validation messages come from the server's error
   codes, so they're always Swedish; browser messages follow the browser's
   language.
+- The active company (`src/active_company.rs`) is chosen in the header and
+  remembered in `localStorage` as `doris.active_company.{user id}`. Pages that
+  work on "the" company read it from the `Companies` context and send its
+  `company_id` with every RPC. It grants nothing: the server checks membership
+  on every call.
 - `src/errors.rs` maps API error codes to Swedish text. Add a line there for
   every new code.
 - `src/ui.rs` holds the preset's components, with class lists copied from
@@ -164,7 +179,9 @@ docker compose up --build  # the image on :3000, data in the `doris-data` volume
 ```
 Server configuration comes from env vars or CLI flags: `DORIS_DATABASE`,
 `DORIS_LISTEN`, `DORIS_RP_ID`, `DORIS_RP_ORIGIN`, `DORIS_CORS_ORIGINS`,
-`DORIS_SERVE_FRONTEND`.
+`DORIS_SERVE_FRONTEND`, `DORIS_BOLAGSVERKET_CLIENT_ID`,
+`DORIS_BOLAGSVERKET_CLIENT_SECRET`, `DORIS_BOLAGSVERKET_TOKEN_URL`,
+`DORIS_BOLAGSVERKET_API_URL`.
 
 Every push runs `cargo test --workspace` in GitHub Actions
 (`.github/workflows/ci.yml`). If it passes, the `Dockerfile` is built and
