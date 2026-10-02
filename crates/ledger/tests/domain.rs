@@ -658,3 +658,231 @@ fn closing_events_are_readable_json() {
         serde_json::json!({"type": "FiscalYearReopened", "reason": "Glömd faktura"})
     );
 }
+
+const AFTER_2025: &str = "2026-10-02";
+
+fn rent(date: &str, ore: i64) -> RecordVoucher {
+    RecordVoucher {
+        date: d(date),
+        text: "Hyra".into(),
+        lines: vec![line(5010, ore, 0), line(1930, 0, ore)],
+    }
+}
+
+/// The 2025 events after booking each command in turn.
+fn year_with(cmds: Vec<RecordVoucher>) -> Vec<LedgerEvent> {
+    let chart = seeded();
+    let mut events = Vec::new();
+    for cmd in cmds {
+        let event = record(&events, &chart, cmd).unwrap();
+        events.push(event);
+    }
+    events
+}
+
+fn close_2025(given: &[LedgerEvent], form: LegalForm) -> Vec<LedgerEvent> {
+    close_fiscal_year(
+        &Ledger::from_events(first_year(), given),
+        None,
+        form,
+        d(AFTER_2025),
+    )
+    .unwrap()
+}
+
+#[test]
+fn closing_a_profitable_year_books_8999_against_2099_on_its_last_day() {
+    let given = year_with(vec![sale("2025-03-01", 1_000), rent("2025-04-01", 300)]);
+    assert_eq!(
+        result_of(&Ledger::from_events(first_year(), &given)),
+        Some(-700)
+    );
+
+    let events = close_2025(&given, LegalForm::Aktiebolag);
+
+    assert_eq!(
+        events,
+        vec![
+            LedgerEvent::VoucherRecorded {
+                number: 3,
+                date: d("2025-12-31"),
+                text: "Årets resultat".into(),
+                lines: vec![line(8999, 700, 0), line(2099, 0, 700)],
+                corrects: None,
+            },
+            LedgerEvent::FiscalYearClosed {
+                result_voucher: Some(3)
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_loss_is_booked_the_other_way_and_owners_taxed_personally_use_2019() {
+    let given = year_with(vec![rent("2025-04-01", 300)]);
+    for (form, equity) in [
+        (LegalForm::Aktiebolag, 2099),
+        (LegalForm::EkonomiskForening, 2099),
+        (LegalForm::EnskildFirma, 2019),
+        (LegalForm::Handelsbolag, 2019),
+        (LegalForm::Kommanditbolag, 2019),
+    ] {
+        let events = close_2025(&given, form);
+        let LedgerEvent::VoucherRecorded { lines, .. } = &events[0] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(
+            lines,
+            &vec![line(8999, 0, 300), line(equity, 300, 0)],
+            "{form:?}"
+        );
+    }
+}
+
+#[test]
+fn a_year_whose_result_is_already_on_equity_closes_without_a_voucher() {
+    let booked_by_hand = year_with(vec![
+        sale("2025-03-01", 1_000),
+        RecordVoucher {
+            date: d("2025-12-31"),
+            text: "Årets resultat".into(),
+            lines: vec![line(8999, 1_000, 0), line(2099, 0, 1_000)],
+        },
+    ]);
+    let closed = vec![LedgerEvent::FiscalYearClosed {
+        result_voucher: None,
+    }];
+
+    assert_eq!(close_2025(&booked_by_hand, LegalForm::Aktiebolag), closed);
+    assert_eq!(close_2025(&[], LegalForm::Aktiebolag), closed);
+}
+
+#[test]
+fn a_year_closes_once_after_it_has_ended_and_after_the_year_before() {
+    let open = Ledger::new(first_year());
+    let close = |ledger: &Ledger, previous: Option<bool>, today: &str| {
+        close_fiscal_year(ledger, previous, LegalForm::Aktiebolag, d(today))
+    };
+
+    assert_eq!(
+        close(&open, None, "2025-12-31"),
+        Err(DomainError::FiscalYearNotEnded)
+    );
+    assert!(close(&open, None, "2026-01-01").is_ok());
+    assert_eq!(
+        close(&open, Some(false), AFTER_2025),
+        Err(DomainError::PreviousFiscalYearOpen)
+    );
+    assert!(close(&open, Some(true), AFTER_2025).is_ok());
+    assert_eq!(
+        close(&closed_year(Vec::new()), Some(true), AFTER_2025),
+        Err(DomainError::FiscalYearClosed)
+    );
+}
+
+#[test]
+fn an_overflowing_result_is_an_error_not_a_wrong_voucher() {
+    let huge = LedgerEvent::VoucherRecorded {
+        number: 1,
+        date: d("2025-03-01"),
+        text: "x".into(),
+        lines: vec![line(3001, 0, i64::MAX), line(3002, 0, i64::MAX)],
+        corrects: None,
+    };
+    let ledger = Ledger::from_events(first_year(), &[huge]);
+
+    assert_eq!(result_of(&ledger), None);
+    assert_eq!(
+        close_fiscal_year(&ledger, None, LegalForm::Aktiebolag, d(AFTER_2025)),
+        Err(DomainError::Overflow)
+    );
+}
+
+#[test]
+fn reopening_comes_first_and_then_reverses_the_result_voucher() {
+    let mut given = year_with(vec![sale("2025-03-01", 1_000)]);
+    given.extend(close_2025(&given, LegalForm::Aktiebolag));
+    let ledger = Ledger::from_events(first_year(), &given);
+
+    let events = reopen_fiscal_year(&ledger, false, "  Glömd faktura ").unwrap();
+
+    assert_eq!(
+        events,
+        vec![
+            LedgerEvent::FiscalYearReopened {
+                reason: "Glömd faktura".into()
+            },
+            LedgerEvent::VoucherRecorded {
+                number: 3,
+                date: d("2025-12-31"),
+                text: "Rättelse av ver 2".into(),
+                lines: vec![line(8999, 0, 1_000), line(2099, 1_000, 0)],
+                corrects: Some(2),
+            },
+        ]
+    );
+}
+
+#[test]
+fn reopening_without_a_result_voucher_reverses_nothing() {
+    assert_eq!(
+        reopen_fiscal_year(&closed_year(Vec::new()), false, "Fel"),
+        Ok(vec![LedgerEvent::FiscalYearReopened {
+            reason: "Fel".into()
+        }])
+    );
+}
+
+#[test]
+fn only_a_closed_year_without_a_closed_successor_reopens_and_only_with_a_reason() {
+    assert_eq!(
+        reopen_fiscal_year(&Ledger::new(first_year()), false, "Fel"),
+        Err(DomainError::FiscalYearOpen)
+    );
+    assert_eq!(
+        reopen_fiscal_year(&closed_year(Vec::new()), true, "Fel"),
+        Err(DomainError::LaterFiscalYearClosed)
+    );
+    for bad in ["", "   ", &"å".repeat(201)] {
+        assert_eq!(
+            reopen_fiscal_year(&closed_year(Vec::new()), false, bad),
+            Err(DomainError::InvalidReason),
+            "{bad:?}"
+        );
+    }
+    assert!(reopen_fiscal_year(&closed_year(Vec::new()), false, &"å".repeat(200)).is_ok());
+}
+
+#[test]
+fn closing_again_after_a_reopen_books_the_new_result_without_gaps() {
+    let chart = seeded();
+    let mut given = year_with(vec![sale("2025-03-01", 1_000)]);
+    given.extend(close_2025(&given, LegalForm::Aktiebolag)); // ver 2
+    given.extend(
+        reopen_fiscal_year(
+            &Ledger::from_events(first_year(), &given),
+            false,
+            "Glömd hyra",
+        )
+        .unwrap(),
+    ); // ver 3 reverses ver 2
+    let forgotten = record(&given, &chart, rent("2025-12-15", 400)).unwrap(); // ver 4
+    given.push(forgotten);
+    given.extend(close_2025(&given, LegalForm::Aktiebolag)); // ver 5
+
+    let ledger = Ledger::from_events(first_year(), &given);
+    assert!(ledger.is_closed());
+    assert_eq!(
+        ledger
+            .vouchers()
+            .iter()
+            .map(|v| v.number)
+            .collect::<Vec<_>>(),
+        [1, 2, 3, 4, 5]
+    );
+    assert_eq!(
+        ledger.voucher(5).unwrap().lines,
+        vec![line(8999, 600, 0), line(2099, 0, 600)]
+    );
+    assert_eq!(result_of(&ledger), Some(0));
+}

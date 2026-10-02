@@ -1,6 +1,6 @@
 //! Pure ledger rules: the chart of accounts and vouchers. No I/O, no clock.
 
-use doris_company::domain::FiscalYear;
+use doris_company::domain::{FiscalYear, LegalForm};
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -535,21 +535,7 @@ pub fn correct_voucher(
     if date < ledger.fiscal_year.start || date > ledger.fiscal_year.end {
         return Err(DomainError::CorrectionDateOutsideFiscalYear);
     }
-    Ok(LedgerEvent::VoucherRecorded {
-        number: ledger.last_number() + 1,
-        date,
-        text: format!("Rättelse av ver {number}"),
-        lines: original
-            .lines
-            .iter()
-            .map(|l| VoucherLine {
-                account: l.account,
-                debit: l.credit,
-                credit: l.debit,
-            })
-            .collect(),
-        corrects: Some(number),
-    })
+    Ok(reversal(ledger, original, date))
 }
 
 /// The most lines the first year's opening balances may have.
@@ -591,4 +577,129 @@ pub fn set_opening_balances(
         return Err(DomainError::OpeningBalancesUnbalanced);
     }
     Ok(LedgerEvent::OpeningBalancesSet { lines })
+}
+
+/// The rättelse of `original`: the next voucher in `ledger`, with debit and
+/// credit swapped on every line.
+fn reversal(ledger: &Ledger, original: &Voucher, date: Date) -> LedgerEvent {
+    LedgerEvent::VoucherRecorded {
+        number: ledger.last_number() + 1,
+        date,
+        text: format!("Rättelse av ver {}", original.number),
+        lines: original
+            .lines
+            .iter()
+            .map(|l| VoucherLine {
+                account: l.account,
+                debit: l.credit,
+                credit: l.debit,
+            })
+            .collect(),
+        corrects: Some(original.number),
+    }
+}
+
+/// Debit minus credit over the resultaträkning (accounts 3000–8999), so a
+/// profit is negative. `None` if it outgrows `i64`; a wrong figure would be
+/// worse than an error.
+pub fn result_of(ledger: &Ledger) -> Option<i64> {
+    ledger
+        .vouchers
+        .iter()
+        .flat_map(|v| &v.lines)
+        .filter(|l| l.account.get() >= 3000)
+        .try_fold(0_i64, |sum, l| {
+            sum.checked_add(l.debit)?.checked_sub(l.credit)
+        })
+}
+
+/// Where the year's result goes: 2019 for an enskild firma and partnerships,
+/// whose owners are taxed on it personally, and 2099 for everyone else.
+fn result_account(legal_form: LegalForm) -> AccountNumber {
+    match legal_form {
+        LegalForm::EnskildFirma | LegalForm::Handelsbolag | LegalForm::Kommanditbolag => {
+            AccountNumber(2019)
+        }
+        _ => AccountNumber(2099),
+    }
+}
+
+/// Closes a fiscal year that has ended, once the year before it (if any,
+/// `previous_closed`) is closed. Unless the result is already on equity, a
+/// voucher "Årets resultat" moves it there first: 8999 against 2099 or 2019,
+/// dated the year's last day. Accounts aren't checked for being active, as
+/// with a rättelse.
+pub fn close_fiscal_year(
+    ledger: &Ledger,
+    previous_closed: Option<bool>,
+    legal_form: LegalForm,
+    today: Date,
+) -> Result<Vec<LedgerEvent>, DomainError> {
+    if ledger.closed {
+        return Err(DomainError::FiscalYearClosed);
+    }
+    if ledger.fiscal_year.end >= today {
+        return Err(DomainError::FiscalYearNotEnded);
+    }
+    if previous_closed == Some(false) {
+        return Err(DomainError::PreviousFiscalYearOpen);
+    }
+    let result = result_of(ledger).ok_or(DomainError::Overflow)?;
+    let amount = result.checked_abs().ok_or(DomainError::Overflow)?;
+    let mut events = Vec::new();
+    let mut result_voucher = None;
+    if amount != 0 {
+        let number = ledger.last_number() + 1;
+        // A profit (a credit balance, result < 0) is debited to 8999.
+        let (debit, credit) = if result < 0 { (amount, 0) } else { (0, amount) };
+        events.push(LedgerEvent::VoucherRecorded {
+            number,
+            date: ledger.fiscal_year.end,
+            text: "Årets resultat".into(),
+            lines: vec![
+                VoucherLine {
+                    account: AccountNumber(8999),
+                    debit,
+                    credit,
+                },
+                VoucherLine {
+                    account: result_account(legal_form),
+                    debit: credit,
+                    credit: debit,
+                },
+            ],
+            corrects: None,
+        });
+        result_voucher = Some(number);
+    }
+    events.push(LedgerEvent::FiscalYearClosed { result_voucher });
+    Ok(events)
+}
+
+/// Reopens a closed fiscal year whose next year (`next_closed`) is open.
+/// The reopening comes first, so no voucher is ever recorded while the year
+/// is closed; then the result voucher, if there was one, is reversed on the
+/// year's last day.
+pub fn reopen_fiscal_year(
+    ledger: &Ledger,
+    next_closed: bool,
+    reason: &str,
+) -> Result<Vec<LedgerEvent>, DomainError> {
+    if !ledger.closed {
+        return Err(DomainError::FiscalYearOpen);
+    }
+    if next_closed {
+        return Err(DomainError::LaterFiscalYearClosed);
+    }
+    let reason = reason.trim();
+    if !(1..=200).contains(&reason.chars().count()) {
+        return Err(DomainError::InvalidReason);
+    }
+    let mut events = vec![LedgerEvent::FiscalYearReopened {
+        reason: reason.to_owned(),
+    }];
+    if let Some(original) = ledger.result_voucher.and_then(|n| ledger.voucher(n)) {
+        events.push(reversal(ledger, original, ledger.fiscal_year.end));
+    }
+    Ok(events)
 }
