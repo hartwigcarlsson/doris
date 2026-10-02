@@ -169,3 +169,30 @@ test("switching company clears the forms so nothing is booked in the wrong compa
   await expect(page.getByLabel("Räkenskapsår")).not.toHaveValue("");
   await expect(page.getByRole("row", { name: /^1 / })).toHaveCount(0);
 });
+
+test("choosing another fiscal year clears an old error", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.goto(`${app}/companies`);
+  await page.getByRole("main").getByRole("link", { name: "Lägg till företag" }).click();
+  await page.getByLabel("Organisationsnummer").fill("5560160680");
+  await page.getByLabel("Företagsnamn").fill("Exempel AB");
+  await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
+  await page.getByLabel("Postort").fill("Stockholm");
+  await page.getByLabel("Räkenskapsåret börjar").fill("2025-01-01");
+  await page.getByLabel("Faktureringsmetoden").check();
+  await page.getByRole("button", { name: "Spara företag" }).click();
+  await expect(page.getByRole("heading", { name: "Exempel AB" })).toBeVisible();
+  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await bookSale(page, "Försäljning", "100");
+  await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
+
+  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  const first = page.getByRole("row", { name: /^1 / });
+  await first.getByRole("button", { name: "Rätta" }).click();
+  await page.getByLabel("Datum för rättelse av ver 1").fill("2025-06-01");
+  await page.getByRole("button", { name: "Bekräfta rättelse" }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+
+  await page.getByLabel("Räkenskapsår").selectOption({ label: "2025-01-01 – 2025-12-31" });
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});

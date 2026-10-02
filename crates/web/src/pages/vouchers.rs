@@ -100,6 +100,7 @@ pub fn Vouchers() -> impl IntoView {
     Effect::new(move |_| {
         year.track();
         vouchers.set((String::new(), None, Vec::new()));
+        error.set(None);
         load();
     });
     let changed = Callback::new(move |()| load());
