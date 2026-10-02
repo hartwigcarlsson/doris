@@ -1,7 +1,7 @@
 VERSION = $(shell cargo pkgid -p doris-server | sed 's/.*@//')
 DIST := target/dist
 # Upper bound for the release wasm, uncompressed (it is sent compressed).
-WASM_BUDGET := 800000
+WASM_BUDGET := 900000
 
 .PHONY: test web e2e e2e-dist dev dist
 

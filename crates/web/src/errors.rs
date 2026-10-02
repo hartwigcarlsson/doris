@@ -43,6 +43,30 @@ fn message(code: &str) -> &'static str {
         }
         "lookup_not_found" => "Bolagsverket hittade inget företag med det numret.",
         "lookup_failed" => "Bolagsverket svarade inte. Försök igen eller fyll i uppgifterna själv.",
+        "invalid_account_number" => "Kontonumret ska vara fyra siffror, 1000–8999.",
+        "invalid_account_name" => "Kontonamnet måste vara 1–100 tecken.",
+        "account_exists" => "Kontot finns redan i kontoplanen.",
+        "account_not_found" => "Kontot finns inte i kontoplanen.",
+        "account_inactive" => {
+            "Kontot är inaktivt. Aktivera det i kontoplanen eller välj ett annat."
+        }
+        "invalid_voucher_text" => "Texten måste vara 1–200 tecken.",
+        "invalid_voucher_lines" => "En verifikation har 2–100 rader.",
+        "invalid_amount" => "Varje rad ska ha ett belopp i antingen debet eller kredit.",
+        "voucher_unbalanced" => "Debet och kredit måste vara lika stora.",
+        "voucher_date_in_future" => "Datumet kan inte vara i framtiden.",
+        "voucher_date_before_first_fiscal_year" => {
+            "Datumet ligger före företagets första räkenskapsår."
+        }
+        "correction_date_outside_fiscal_year" => {
+            "Rättelsen ska dateras inom samma räkenskapsår som verifikationen."
+        }
+        "voucher_not_found" => "Verifikationen finns inte.",
+        "already_corrected" => "Verifikationen är redan rättad.",
+        "cannot_correct_correction" => {
+            "En rättelse kan inte rättas. Bokför en ny verifikation i stället."
+        }
+        "invalid_date" => "Ange ett giltigt datum.",
         _ => "Något gick fel. Försök igen.",
     }
 }
@@ -50,6 +74,29 @@ fn message(code: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::message;
+    #[test]
+    fn ledger_codes_have_swedish_messages() {
+        for code in [
+            "invalid_account_number",
+            "invalid_account_name",
+            "account_exists",
+            "account_not_found",
+            "account_inactive",
+            "invalid_voucher_text",
+            "invalid_voucher_lines",
+            "invalid_amount",
+            "voucher_unbalanced",
+            "voucher_date_in_future",
+            "voucher_date_before_first_fiscal_year",
+            "correction_date_outside_fiscal_year",
+            "voucher_not_found",
+            "already_corrected",
+            "cannot_correct_correction",
+            "invalid_date",
+        ] {
+            assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
+        }
+    }
 
     #[test]
     fn known_codes_have_their_own_message_and_unknown_ones_a_generic_one() {

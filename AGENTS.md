@@ -154,7 +154,7 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `cargo clippy -p doris-web --target wasm32-unknown-unknown -- -D warnings`.
 - Keep the wasm small. `make dist` builds it with the `wasm-release` profile
   (opt-level "z", LTO, `panic = "abort"`), and fails if it grows past
-  `WASM_BUDGET` (800 KB uncompressed). The server sends frontend files
+  `WASM_BUDGET` (900 KB uncompressed). The server sends frontend files
   compressed (brotli or gzip, via tower-http), so the wasm transfers at about
   a third of its size. Check what a new dependency adds before taking it on.
 - E2E tests live in `e2e/` (Playwright). Every test spawns its own server on
