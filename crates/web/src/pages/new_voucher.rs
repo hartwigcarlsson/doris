@@ -181,7 +181,7 @@ pub fn NewVoucher() -> impl IntoView {
                         <span>"Kredit"</span>
                         <span></span>
                     </div>
-                    <For each=move || { lines.get().into_iter().enumerate().collect::<Vec<_>>() } key=|(_, l)| l.id let((index, line))>
+                    <For each=move || { lines.get().into_iter().enumerate().collect::<Vec<_>>() } key=|(i, l)| (*i, l.id) let((index, line))>
                         <div class="grid grid-cols-[1fr_8rem_8rem_auto] gap-2">
                             <TextInput label=format!("Konto, rad {}", index + 1) value=line.account list="accounts" />
                             <TextInput label=format!("Debet, rad {}", index + 1) value=line.debit inputmode="decimal" />

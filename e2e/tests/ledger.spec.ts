@@ -117,3 +117,18 @@ test("an added account can be used in a voucher", async ({ page, app }) => {
   await page.getByRole("button", { name: "Bokför" }).click();
   await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
 });
+
+test("voucher line labels renumber after a row is removed", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.goto(`${app}/vouchers/new`);
+
+  await page.getByLabel("Konto, rad 1").fill("1930");
+  await page.getByRole("button", { name: "Ta bort" }).first().click();
+  await page.getByRole("button", { name: "Lägg till rad" }).click();
+  for (const field of ["Konto", "Debet", "Kredit"]) {
+    await expect(page.getByLabel(`${field}, rad 1`)).toHaveCount(1);
+    await expect(page.getByLabel(`${field}, rad 2`)).toHaveCount(1);
+  }
+  await expect(page.getByLabel("Konto, rad 1")).toHaveValue("");
+});
