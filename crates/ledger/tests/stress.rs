@@ -7,8 +7,9 @@ use doris_company::NewCompany;
 use doris_company::domain::{AccountingMethod, LegalForm};
 use doris_ledger::domain::{DomainError, LedgerEvent, RecordVoucher, Voucher, VoucherLine};
 use doris_ledger::{
-    Error, correct_voucher, list_vouchers, rebuild_projections, record_voucher, record_voucher_in,
-    set_account_active,
+    Error, close_fiscal_year, correct_voucher, list_fiscal_years, list_vouchers,
+    rebuild_projections, record_voucher, record_voucher_in, reopen_fiscal_year, set_account_active,
+    trial_balance,
 };
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -265,4 +266,107 @@ async fn voucher_numbers_never_gap_or_repeat_under_concurrent_writers() {
     assert_consistent(&pool, company, anna, &committed, &corrections).await;
     rebuild_projections(&pool).await.unwrap();
     assert_consistent(&pool, company, anna, &committed, &corrections).await;
+}
+
+/// After closers and writers raced on 2024: no voucher sits between a close
+/// and the next reopen, numbers run 1..=n, and the projections agree.
+async fn assert_closing_consistent(pool: &SqlitePool, company: Uuid, anna: Uuid, start: Date) {
+    let mut conn = pool.acquire().await.unwrap();
+    let (mut closed, mut numbers) = (false, Vec::new());
+    for event in doris_eventstore::read_all(&mut conn, 0).await.unwrap() {
+        if !event.stream_id.starts_with("ledger-") {
+            continue;
+        }
+        match event.decode().unwrap() {
+            LedgerEvent::VoucherRecorded { number, text, .. } => {
+                assert!(!closed, "ver {number} ({text}) recorded in a closed year");
+                numbers.push(number);
+            }
+            LedgerEvent::FiscalYearClosed { .. } => {
+                assert!(!closed, "closed twice");
+                closed = true;
+            }
+            LedgerEvent::FiscalYearReopened { .. } => {
+                assert!(closed, "reopened an open year");
+                closed = false;
+            }
+            LedgerEvent::OpeningBalancesSet { .. } => {}
+        }
+    }
+    drop(conn);
+    let expected: Vec<u32> = (1..=numbers.len() as u32).collect();
+    assert_eq!(numbers, expected);
+    let vouchers = list_vouchers(pool, company, anna, start).await.unwrap();
+    assert_eq!(
+        vouchers.iter().map(|v| v.number).collect::<Vec<_>>(),
+        numbers
+    );
+    let years = list_fiscal_years(pool, company, anna, d(TODAY))
+        .await
+        .unwrap();
+    let status = years.iter().find(|y| y.fiscal_year.start == start).unwrap();
+    assert_eq!(status.closed, closed);
+    // A closed year's result is on equity, so its resultaträkning nets to 0.
+    if closed {
+        let rows = trial_balance(pool, company, anna, start).await.unwrap();
+        let result: i64 = rows
+            .iter()
+            .filter(|r| r.account >= 3000)
+            .map(|r| r.debit - r.credit)
+            .sum();
+        assert_eq!(result, 0);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn no_voucher_lands_in_a_closed_year() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", dir.path().join("closing.db").display());
+    let pool = doris_eventstore::open(&url).await.unwrap();
+    let anna = Uuid::new_v4();
+    let company = setup(&pool, anna).await;
+    let start = d("2024-01-01");
+
+    let tasks: Vec<_> = (0..16)
+        .map(|task| {
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                let today = d(TODAY);
+                for op in 0..20 {
+                    if task % 4 == 0 {
+                        // Closers: close on even ops, reopen on odd ones.
+                        let result = if op % 2 == 0 {
+                            close_fiscal_year(&pool, company, anna, start, today)
+                                .await
+                                .map(|_| ())
+                        } else {
+                            reopen_fiscal_year(&pool, company, anna, start, "Stress", today)
+                                .await
+                                .map(|_| ())
+                        };
+                        match result {
+                            Ok(())
+                            | Err(Error::Domain(
+                                DomainError::FiscalYearClosed | DomainError::FiscalYearOpen,
+                            )) => {}
+                            Err(other) => panic!("closer {task}/{op}: {other:?}"),
+                        }
+                    } else {
+                        let cmd = voucher(d("2024-06-15"), 100 + op as i64, 3001);
+                        match record_voucher(&pool, company, anna, cmd, today).await {
+                            Ok(_) | Err(Error::Domain(DomainError::FiscalYearClosed)) => {}
+                            Err(other) => panic!("writer {task}/{op}: {other:?}"),
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+    for task in tasks {
+        task.await.unwrap();
+    }
+
+    assert_closing_consistent(&pool, company, anna, start).await;
+    rebuild_projections(&pool).await.unwrap();
+    assert_closing_consistent(&pool, company, anna, start).await;
 }
