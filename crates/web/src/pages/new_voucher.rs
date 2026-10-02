@@ -64,13 +64,24 @@ pub fn NewVoucher() -> impl IntoView {
     let error = RwSignal::new(None::<String>);
     let booked = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
+    // The company this form was filled for; a submit only ever goes there.
+    let form_company = StoredValue::new(String::new());
+    let clear = move || {
+        text.set(String::new());
+        let id = next_id.get_value();
+        next_id.set_value(id + 2);
+        lines.set(vec![Line::new(id), Line::new(id + 1)]);
+    };
 
     Effect::new(move |_| {
         let company_id = companies.active.get();
-        // The list must be the active company's: never offer another's accounts.
+        // The list must be the active company's: never offer another's
+        // accounts, nor keep lines typed for it.
         accounts.set(Vec::new());
         error.set(None);
         booked.set(None);
+        clear();
+        form_company.set_value(company_id.clone());
         if company_id.is_empty() {
             return;
         }
@@ -125,7 +136,7 @@ pub fn NewVoucher() -> impl IntoView {
             });
         }
         busy.set(true);
-        let company_id = companies.active.get_untracked();
+        let company_id = form_company.get_value();
         spawn_local(async move {
             let request = lpb::RecordVoucherRequest {
                 company_id: company_id.clone(),
@@ -145,10 +156,7 @@ pub fn NewVoucher() -> impl IntoView {
                         "Verifikation {} bokförd",
                         response.into_inner().number
                     )));
-                    text.set(String::new());
-                    let id = next_id.get_value();
-                    next_id.set_value(id + 2);
-                    lines.set(vec![Line::new(id), Line::new(id + 1)]);
+                    clear();
                 }
                 Err(status) => error.set(Some(describe(&status))),
             }

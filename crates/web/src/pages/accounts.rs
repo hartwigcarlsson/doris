@@ -48,6 +48,8 @@ pub fn Accounts() -> impl IntoView {
         // Never leave the previous company's rows (or forms) on screen.
         accounts.set((String::new(), Vec::new()));
         error.set(None);
+        number.set(String::new());
+        name.set(String::new());
         load();
     });
     let changed = Callback::new(move |()| load());
@@ -56,9 +58,11 @@ pub fn Accounts() -> impl IntoView {
         ev.prevent_default();
         busy.set(true);
         error.set(None);
+        // The company whose chart is on screen, not whatever is active now.
+        let company_id = accounts.with_untracked(|(id, _)| id.clone());
         spawn_local(async move {
             let request = lpb::AddAccountRequest {
-                company_id: companies.active.get_untracked(),
+                company_id,
                 // Not a number: 0, which the server refuses with its own message.
                 number: number.get_untracked().trim().parse().unwrap_or(0),
                 name: name.get_untracked(),

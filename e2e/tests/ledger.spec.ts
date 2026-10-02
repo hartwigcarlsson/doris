@@ -132,3 +132,40 @@ test("voucher line labels renumber after a row is removed", async ({ page, app }
   }
   await expect(page.getByLabel("Konto, rad 1")).toHaveValue("");
 });
+
+test("switching company clears the forms so nothing is booked in the wrong company", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560360793", "Bolaget AB");
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  const company = page.getByLabel("Aktivt företag");
+  await expect(company.locator("option:checked")).toHaveText("Exempel AB");
+
+  await page.goto(`${app}/accounts`);
+  await page.getByLabel("Nummer").fill("1931");
+  await page.getByLabel("Namn").fill("Sparkonto");
+  await company.selectOption({ label: "Bolaget AB" });
+  await expect(page.getByLabel("Nummer")).toHaveValue("");
+  await expect(page.getByLabel("Namn")).toHaveValue("");
+
+  await company.selectOption({ label: "Exempel AB" });
+  await page.goto(`${app}/vouchers/new`);
+  await page.getByLabel("Text").fill("Försäljning");
+  await page.getByLabel("Konto, rad 1").fill("1930");
+  await page.getByLabel("Debet, rad 1").fill("100");
+  await page.getByLabel("Konto, rad 2").fill("3001");
+  await page.getByLabel("Kredit, rad 2").fill("100");
+  await company.selectOption({ label: "Bolaget AB" });
+
+  await expect(page.getByLabel("Text")).toHaveValue("");
+  for (const field of ["Konto", "Debet", "Kredit"]) {
+    await expect(page.getByLabel(`${field}, rad 1`)).toHaveValue("");
+    await expect(page.getByLabel(`${field}, rad 2`)).toHaveValue("");
+  }
+  await page.getByRole("button", { name: "Bokför" }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+
+  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await expect(company.locator("option:checked")).toHaveText("Bolaget AB");
+  await expect(page.getByLabel("Räkenskapsår")).not.toHaveValue("");
+  await expect(page.getByRole("row", { name: /^1 / })).toHaveCount(0);
+});
