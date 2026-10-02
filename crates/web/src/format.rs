@@ -48,7 +48,6 @@ pub fn current_year() -> i32 {
     js_sys::Date::new_0().get_full_year() as i32
 }
 
-#[allow(dead_code)]
 /// Kronor as typed in Sweden ("1 234,50", "1234.5", "12") to öre. Spaces,
 /// no-break spaces and narrow no-break spaces group thousands; comma or
 /// point marks the decimals, of which there are at most two. Anything else,
@@ -71,7 +70,6 @@ pub fn parse_amount(raw: &str) -> Option<i64> {
         .checked_add(ore)
 }
 
-#[allow(dead_code)]
 /// Öre as kronor, thousands grouped with no-break spaces: 123450 → "1 234,50".
 pub fn amount(ore: i64) -> String {
     let sign = if ore < 0 { "-" } else { "" };
@@ -87,7 +85,6 @@ pub fn amount(ore: i64) -> String {
     format!("{sign}{grouped},{:02}", ore % 100)
 }
 
-#[allow(dead_code)]
 /// Today by the browser's clock and time zone, as `YYYY-MM-DD`.
 pub fn today() -> String {
     let now = js_sys::Date::new_0();

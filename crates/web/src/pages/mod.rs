@@ -5,8 +5,10 @@ mod home;
 mod invitations;
 mod login;
 mod new_company;
+mod new_voucher;
 mod passkeys;
 mod register;
+mod vouchers;
 
 pub use accounts::Accounts;
 pub use companies::Companies;
@@ -15,5 +17,7 @@ pub use home::Home;
 pub use invitations::Invitations;
 pub use login::Login;
 pub use new_company::NewCompany;
+pub use new_voucher::NewVoucher;
 pub use passkeys::Passkeys;
 pub use register::Register;
+pub use vouchers::Vouchers;
