@@ -232,6 +232,9 @@ pub const TABLE_BODY: &str = "[&_tr:last-child]:border-0";
 pub const TABLE_ROW: &str = "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted";
 pub const TABLE_HEADER_CELL: &str = "h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0";
 pub const TABLE_CELL: &str = "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0";
+/// `TABLE_CELL` for amounts: right-aligned with tabular digits.
+pub const TABLE_AMOUNT_CELL: &str =
+    "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 text-right tabular-nums";
 
 /// A table in the preset's style. Children are `<thead class=TABLE_HEAD>`
 /// and `<tbody class=TABLE_BODY>` with `TABLE_ROW` rows and
