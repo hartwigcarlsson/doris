@@ -283,6 +283,48 @@ pub struct Voucher {
     pub corrected_by: Option<u32>,
 }
 
+/// One account's totals in a fiscal year (saldobalans). Its balance is
+/// `debit - credit`; positive is a debit balance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrialBalanceRow {
+    pub account: u32,
+    pub name: String,
+    pub debit: i64,
+    pub credit: i64,
+}
+
+/// One line in an account's huvudbok, with the balance after it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerEntry {
+    pub date: Date,
+    pub number: u32,
+    pub text: String,
+    pub debit: i64,
+    pub credit: i64,
+    pub balance: i64,
+}
+
+/// Adds the running balance to `(date, number, text, debit, credit)` lines,
+/// in the order given. `None` if it outgrows `i64`, which no real ledger
+/// reaches; a wrong figure would be worse than an error.
+pub fn running_balance(lines: Vec<(Date, u32, String, i64, i64)>) -> Option<Vec<LedgerEntry>> {
+    let mut balance = 0i64;
+    lines
+        .into_iter()
+        .map(|(date, number, text, debit, credit)| {
+            balance = balance.checked_add(debit)?.checked_sub(credit)?;
+            Some(LedgerEntry {
+                date,
+                number,
+                text,
+                debit,
+                credit,
+                balance,
+            })
+        })
+        .collect()
+}
+
 /// One fiscal year's vouchers, in number order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ledger {

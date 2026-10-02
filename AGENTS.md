@@ -64,6 +64,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   trigger back that up. `crates/ledger/tests/stress.rs` must keep passing.
 - A voucher is never changed or removed. A rättelse is a new voucher with
   every line reversed and `corrects` pointing at the original.
+- The saldobalans and huvudbok (`trial_balance`, `account_ledger` in
+  `crates/ledger/src/queries.rs`) are plain queries over the voucher
+  projections, one fiscal year at a time. There are no opening balances
+  yet, so from the second year on balance-sheet accounts show only that
+  year's movements.
 
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.
@@ -165,10 +170,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   include it. Also lint the wasm build:
   `cargo clippy -p doris-web --target wasm32-unknown-unknown -- -D warnings`.
 - Keep the wasm small. `make dist` builds it with the `wasm-release` profile
-  (opt-level "z", LTO, `panic = "abort"`), and fails if it grows past
-  `WASM_BUDGET` (900 KB uncompressed). The server sends frontend files
-  compressed (brotli or gzip, via tower-http), so the wasm transfers at about
-  a third of its size. Check what a new dependency adds before taking it on.
+  (opt-level "z", LTO, `panic = "abort"`), and fails if the gzipped wasm
+  grows past `WASM_BUDGET` (500 KB). That is what crosses the wire: the server
+  sends frontend files compressed (brotli or gzip, via tower-http), and gzip
+  is the larger of the two. Check what a new dependency adds before taking it
+  on.
 - The wasm is built with `--cfg erase_components` (set in `.cargo/config.toml`
   for `wasm32-unknown-unknown`), which type-erases Leptos views and keeps the
   wasm under budget; an env `RUSTFLAGS` overrides it, so don't set one for wasm

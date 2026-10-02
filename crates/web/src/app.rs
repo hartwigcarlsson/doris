@@ -3,8 +3,8 @@
 use crate::active_company::{ActiveCompanySelect, Companies};
 use crate::api::{api, pb};
 use crate::pages::{
-    Accounts, Companies, CompanyPage, Home, Invitations, Login, NewCompany, NewVoucher, Passkeys,
-    Register, Vouchers,
+    AccountLedger, Accounts, Companies, CompanyPage, Home, Invitations, Login, NewCompany,
+    NewVoucher, Passkeys, Register, TrialBalance, Vouchers,
 };
 use crate::ui::{Button, Variant};
 use leptos::prelude::*;
@@ -74,6 +74,8 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/accounts") view=|| view! { <SignedIn><Accounts /></SignedIn> } />
                         <Route path=path!("/vouchers") view=|| view! { <SignedIn><Vouchers /></SignedIn> } />
                         <Route path=path!("/vouchers/new") view=|| view! { <SignedIn><NewVoucher /></SignedIn> } />
+                        <Route path=path!("/trial-balance") view=|| view! { <SignedIn><TrialBalance /></SignedIn> } />
+                        <Route path=path!("/trial-balance/:account") view=|| view! { <SignedIn><AccountLedger /></SignedIn> } />
                         <Route path=path!("/settings/passkeys") view=|| view! { <SignedIn><Passkeys /></SignedIn> } />
                         <Route path=path!("/admin/invitations") view=|| view! { <SignedIn admin=true><Invitations /></SignedIn> } />
                     </Routes>
@@ -122,6 +124,7 @@ fn Header() -> impl IntoView {
                     <ActiveCompanySelect />
                     <Show when=move || !companies.active.get().is_empty()>
                         <A href="/vouchers" attr:class="text-muted-foreground hover:text-foreground">"Verifikationer"</A>
+                        <A href="/trial-balance" attr:class="text-muted-foreground hover:text-foreground">"Saldobalans"</A>
                         <A href="/accounts" attr:class="text-muted-foreground hover:text-foreground">"Kontoplan"</A>
                     </Show>
                     <A href="/companies" attr:class="text-muted-foreground hover:text-foreground">"Företag"</A>

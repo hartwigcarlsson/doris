@@ -439,3 +439,136 @@ async fn others_get_company_not_found_and_strangers_not_signed_in() {
         assert_eq!(code_of(result.unwrap_err()), unauthenticated);
     }
 }
+
+fn trial_balance_of(company_id: &str, fiscal_year_start: &str) -> pb::GetTrialBalanceRequest {
+    pb::GetTrialBalanceRequest {
+        company_id: company_id.into(),
+        fiscal_year_start: fiscal_year_start.into(),
+    }
+}
+
+fn ledger_of(
+    company_id: &str,
+    fiscal_year_start: &str,
+    account: u32,
+) -> pb::GetAccountLedgerRequest {
+    pb::GetAccountLedgerRequest {
+        company_id: company_id.into(),
+        fiscal_year_start: fiscal_year_start.into(),
+        account,
+    }
+}
+
+#[tokio::test]
+async fn the_trial_balance_and_an_accounts_ledger_follow_the_vouchers() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.ledger();
+    for ore in [125_000, 5_000] {
+        api.record_voucher(authed(sale(&id, ore), &anna))
+            .await
+            .unwrap();
+    }
+
+    let rows = api
+        .get_trial_balance(authed(trial_balance_of(&id, "2026-01-01"), &anna))
+        .await
+        .unwrap()
+        .into_inner()
+        .rows;
+    let entries = api
+        .get_account_ledger(authed(ledger_of(&id, "2026-01-01", 1930), &anna))
+        .await
+        .unwrap()
+        .into_inner()
+        .entries;
+
+    assert_eq!(
+        rows,
+        vec![
+            pb::TrialBalanceRow {
+                account: 1930,
+                name: "Företagskonto/checkkonto/affärskonto".into(),
+                debit: 130_000,
+                credit: 0,
+            },
+            pb::TrialBalanceRow {
+                account: 3001,
+                name: "Försäljning inom Sverige, 25 % moms".into(),
+                debit: 0,
+                credit: 130_000,
+            },
+        ]
+    );
+    assert_eq!(
+        entries,
+        vec![
+            pb::LedgerEntry {
+                date: "2026-01-15".into(),
+                number: 1,
+                text: "Försäljning".into(),
+                debit: 125_000,
+                credit: 0,
+                balance: 125_000,
+            },
+            pb::LedgerEntry {
+                date: "2026-01-15".into(),
+                number: 2,
+                text: "Försäljning".into(),
+                debit: 5_000,
+                credit: 0,
+                balance: 130_000,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_reports_refuse_bad_input_and_non_members() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let bo = server.invite(&anna, "bo@example.se").await;
+    let id = company(&server, &anna).await;
+    let mut api = server.ledger();
+    let invalid_date = (Code::InvalidArgument, "invalid_date".to_owned());
+    let not_found = (Code::NotFound, "company_not_found".to_owned());
+
+    let err = api
+        .get_trial_balance(authed(trial_balance_of(&id, "2026-13-01"), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(err), invalid_date);
+    let err = api
+        .get_account_ledger(authed(ledger_of(&id, "nonsense", 1930), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(err), invalid_date);
+    let err = api
+        .get_account_ledger(authed(ledger_of(&id, "2026-01-01", 99), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(err),
+        (Code::InvalidArgument, "invalid_account_number".to_owned())
+    );
+
+    let err = api
+        .get_trial_balance(authed(trial_balance_of(&id, "2026-01-01"), &bo))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(err), not_found);
+    let err = api
+        .get_account_ledger(authed(ledger_of(&id, "2026-01-01", 1930), &bo))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(err), not_found);
+    let err = api
+        .get_trial_balance(trial_balance_of(&id, "2026-01-01"))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(err),
+        (Code::Unauthenticated, "not_signed_in".to_owned())
+    );
+}

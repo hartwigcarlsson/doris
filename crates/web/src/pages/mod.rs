@@ -1,3 +1,4 @@
+mod account_ledger;
 mod accounts;
 mod companies;
 mod company;
@@ -8,8 +9,10 @@ mod new_company;
 mod new_voucher;
 mod passkeys;
 mod register;
+mod trial_balance;
 mod vouchers;
 
+pub use account_ledger::AccountLedger;
 pub use accounts::Accounts;
 pub use companies::Companies;
 pub use company::CompanyPage;
@@ -20,4 +23,5 @@ pub use new_company::NewCompany;
 pub use new_voucher::NewVoucher;
 pub use passkeys::Passkeys;
 pub use register::Register;
+pub use trial_balance::TrialBalance;
 pub use vouchers::Vouchers;

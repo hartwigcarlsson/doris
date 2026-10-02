@@ -448,3 +448,53 @@ fn voucher_events_are_readable_json() {
         })
     );
 }
+
+#[test]
+fn the_running_balance_adds_debit_and_subtracts_credit_in_the_given_order() {
+    let entries = running_balance(vec![
+        (d("2026-01-05"), 1, "Försäljning".into(), 1000, 0),
+        (d("2026-01-09"), 3, "Hyra".into(), 0, 1500),
+        (d("2026-01-20"), 2, "Insättning".into(), 200, 0),
+    ])
+    .unwrap();
+
+    assert_eq!(
+        entries.iter().map(|e| e.balance).collect::<Vec<_>>(),
+        [1000, -500, -300]
+    );
+    assert_eq!(
+        entries[1],
+        LedgerEntry {
+            date: d("2026-01-09"),
+            number: 3,
+            text: "Hyra".into(),
+            debit: 0,
+            credit: 1500,
+            balance: -500,
+        }
+    );
+}
+
+#[test]
+fn no_lines_give_no_entries() {
+    assert_eq!(running_balance(Vec::new()), Some(Vec::new()));
+}
+
+#[test]
+fn an_overflowing_running_balance_is_none_not_a_panic() {
+    let t = d("2026-01-01");
+    assert_eq!(
+        running_balance(vec![
+            (t, 1, "a".into(), i64::MAX, 0),
+            (t, 2, "b".into(), 1, 0)
+        ]),
+        None
+    );
+    assert_eq!(
+        running_balance(vec![
+            (t, 1, "a".into(), 0, i64::MAX),
+            (t, 2, "b".into(), 0, 2)
+        ]),
+        None
+    );
+}

@@ -1,7 +1,8 @@
 VERSION = $(shell cargo pkgid -p doris-server | sed 's/.*@//')
 DIST := target/dist
-# Upper bound for the release wasm, uncompressed (it is sent compressed).
-WASM_BUDGET := 900000
+# Upper bound for the release wasm, gzipped: that is what crosses the wire
+# (the server sends brotli or gzip; gzip is the larger of the two).
+WASM_BUDGET := 500000
 
 .PHONY: test web e2e e2e-dist dev dist
 
@@ -33,9 +34,11 @@ dev:
 # tarball for serving from a CDN or nginx.
 dist:
 	cd crates/web && trunk build --release --cargo-profile wasm-release
-	@wasm=$$(ls crates/web/dist/*_bg.wasm); size=$$(wc -c < $$wasm); \
+	@wasm=$$(ls crates/web/dist/*_bg.wasm); size=$$(gzip -c $$wasm | wc -c); \
+		test $$size -gt 0 || { echo "dist: could not gzip $$wasm"; exit 1; }; \
+		echo "dist: $$wasm is $$size bytes gzipped (budget $(WASM_BUDGET))"; \
 		test $$size -le $(WASM_BUDGET) || \
-		{ echo "dist: $$wasm is $$size bytes, over the $(WASM_BUDGET) byte budget"; exit 1; }
+		{ echo "dist: over the $(WASM_BUDGET) byte budget"; exit 1; }
 	cargo build --release -p doris-server
 	mkdir -p $(DIST)
 	@# rm first: on macOS, overwriting a binary that has run keeps its old
