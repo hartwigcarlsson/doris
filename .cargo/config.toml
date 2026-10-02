@@ -1,0 +1,3 @@
+# Type-erase Leptos component views: much smaller wasm (about 50 KB).
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "erase_components"]
