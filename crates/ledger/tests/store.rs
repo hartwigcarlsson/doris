@@ -3,8 +3,8 @@ use doris_company::domain::{AccountingMethod, LegalForm};
 use doris_ledger::domain::{DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
 use doris_ledger::{
     Error, VoucherRef, account_ledger, add_account, close_fiscal_year, correct_voucher,
-    list_accounts, list_fiscal_years, list_vouchers, rebuild_projections, record_voucher,
-    record_voucher_in, rename_account, reopen_fiscal_year, set_account_active,
+    list_accounts, list_fiscal_years, list_vouchers, opening_balances, rebuild_projections,
+    record_voucher, record_voucher_in, rename_account, reopen_fiscal_year, set_account_active,
     set_opening_balances, trial_balance,
 };
 use jiff::civil::Date;
@@ -423,11 +423,17 @@ async fn fiscal_years_run_from_the_first_to_the_current_newest_first() {
         .unwrap();
 
     assert_eq!(
-        years.iter().map(|y| y.start).collect::<Vec<_>>(),
+        years
+            .iter()
+            .map(|y| y.fiscal_year.start)
+            .collect::<Vec<_>>(),
         [d("2026-01-01"), d("2025-01-01")]
     );
     assert_eq!(
-        before_start.iter().map(|y| y.start).collect::<Vec<_>>(),
+        before_start
+            .iter()
+            .map(|y| y.fiscal_year.start)
+            .collect::<Vec<_>>(),
         [d("2025-01-01")]
     );
 }
@@ -603,18 +609,21 @@ async fn the_trial_balance_sums_each_account_in_one_fiscal_year() {
             TrialBalanceRow {
                 account: 1930,
                 name: "Företagskonto/checkkonto/affärskonto".into(),
+                opening: 0,
                 debit: 350,
                 credit: 400,
             },
             TrialBalanceRow {
                 account: 3001,
                 name: "Försäljning inom Sverige, 25 % moms".into(),
+                opening: 0,
                 debit: 100,
                 credit: 350,
             },
             TrialBalanceRow {
                 account: 5010,
                 name: "Lokalhyra".into(),
+                opening: 0,
                 debit: 300,
                 credit: 0,
             },
@@ -647,7 +656,8 @@ async fn an_accounts_ledger_runs_in_date_order_with_its_balance() {
 
     let entries = account_ledger(&pool, id, anna, d("2025-01-01"), 1930)
         .await
-        .unwrap();
+        .unwrap()
+        .entries;
 
     assert_eq!(
         entries
@@ -667,6 +677,7 @@ async fn an_accounts_ledger_runs_in_date_order_with_its_balance() {
         account_ledger(&pool, id, anna, d("2025-01-01"), 1931)
             .await
             .unwrap()
+            .entries
             .is_empty()
     );
     assert!(matches!(
@@ -917,4 +928,177 @@ async fn opening_balances_and_closings_rebuild_from_the_events() {
     assert_eq!(table(&pool, ib_sql).await, ib_rows);
     assert_eq!(table(&pool, closed_sql).await, closed);
     assert_eq!(table(&pool, lines_sql).await, lines);
+}
+
+/// (account, opening, debit, credit) per row.
+fn figures(rows: &[TrialBalanceRow]) -> Vec<(u32, i64, i64, i64)> {
+    rows.iter()
+        .map(|r| (r.account, r.opening, r.debit, r.credit))
+        .collect()
+}
+
+#[tokio::test]
+async fn later_years_open_with_the_balance_sheet_carried_forward() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    let (y2025, y2026) = (d("2025-01-01"), d("2026-01-01"));
+    set_opening_balances(&pool, id, anna, ib(&[(1930, 10_000, 0), (2081, 0, 10_000)]))
+        .await
+        .unwrap();
+    for cmd in [
+        sale("2025-03-01", 1_000),
+        booking("2025-04-01", "Hyra", &[(5010, 300, 0), (1930, 0, 300)]),
+        sale("2026-02-01", 50),
+    ] {
+        record_voucher(&pool, id, anna, cmd, today).await.unwrap();
+    }
+
+    assert_eq!(
+        figures(&trial_balance(&pool, id, anna, y2025).await.unwrap()),
+        vec![
+            (1930, 10_000, 1_000, 300),
+            (2081, -10_000, 0, 0),
+            (3001, 0, 0, 1_000),
+            (5010, 0, 300, 0),
+        ]
+    );
+    // 2025 is open, so its result (a 700 profit) isn't on 2099 yet and
+    // 2026 opens off by exactly that.
+    let open = trial_balance(&pool, id, anna, y2026).await.unwrap();
+    assert_eq!(
+        figures(&open),
+        vec![
+            (1930, 10_700, 50, 0),
+            (2081, -10_000, 0, 0),
+            (3001, 0, 0, 50)
+        ]
+    );
+    assert_eq!(open.iter().map(|r| r.opening).sum::<i64>(), 700);
+
+    close_fiscal_year(&pool, id, anna, y2025, today)
+        .await
+        .unwrap();
+    let closed = trial_balance(&pool, id, anna, y2026).await.unwrap();
+    assert_eq!(
+        figures(&closed),
+        vec![
+            (1930, 10_700, 50, 0),
+            (2081, -10_000, 0, 0),
+            (2099, -700, 0, 0),
+            (3001, 0, 0, 50),
+        ]
+    );
+    assert_eq!(closed.iter().map(|r| r.opening).sum::<i64>(), 0);
+    assert_eq!(closed[2].name, "Årets resultat");
+
+    // Reopening reverses the result voucher: 2099 nets to 0 and drops out.
+    reopen_fiscal_year(&pool, id, anna, y2025, "Glömd faktura", today)
+        .await
+        .unwrap();
+    assert_eq!(
+        figures(&trial_balance(&pool, id, anna, y2026).await.unwrap()),
+        figures(&open)
+    );
+    // A year before the first has nothing, not even the opening balances.
+    assert!(
+        trial_balance(&pool, id, anna, d("2024-01-01"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn an_accounts_ledger_starts_from_its_opening_balance() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    let y2026 = d("2026-01-01");
+    set_opening_balances(&pool, id, anna, ib(&[(1930, 10_000, 0), (2081, 0, 10_000)]))
+        .await
+        .unwrap();
+    record_voucher(&pool, id, anna, sale("2025-03-01", 1_000), today)
+        .await
+        .unwrap();
+    record_voucher(&pool, id, anna, sale("2026-02-01", 50), today)
+        .await
+        .unwrap();
+
+    let bank = account_ledger(&pool, id, anna, y2026, 1930).await.unwrap();
+    assert_eq!(bank.opening, 11_000);
+    assert_eq!(
+        bank.entries.iter().map(|e| e.balance).collect::<Vec<_>>(),
+        [11_050]
+    );
+    // Income accounts start every year at 0.
+    assert_eq!(
+        account_ledger(&pool, id, anna, y2026, 3001)
+            .await
+            .unwrap()
+            .opening,
+        0
+    );
+    // An account with only an opening balance has no entries.
+    let capital = account_ledger(&pool, id, anna, y2026, 2081).await.unwrap();
+    assert_eq!((capital.opening, capital.entries.len()), (-10_000, 0));
+    let first_year = account_ledger(&pool, id, anna, d("2025-01-01"), 2081)
+        .await
+        .unwrap();
+    assert_eq!(first_year.opening, -10_000);
+}
+
+#[tokio::test]
+async fn fiscal_years_say_whether_they_are_closed() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    let states = || async {
+        list_fiscal_years(&pool, id, anna, today)
+            .await
+            .unwrap()
+            .iter()
+            .map(|y| (y.fiscal_year.start, y.closed))
+            .collect::<Vec<_>>()
+    };
+
+    close_fiscal_year(&pool, id, anna, d("2025-01-01"), today)
+        .await
+        .unwrap();
+    assert_eq!(
+        states().await,
+        [(d("2026-01-01"), false), (d("2025-01-01"), true)]
+    );
+
+    reopen_fiscal_year(&pool, id, anna, d("2025-01-01"), "Fel", today)
+        .await
+        .unwrap();
+    assert_eq!(
+        states().await,
+        [(d("2026-01-01"), false), (d("2025-01-01"), false)]
+    );
+}
+
+#[tokio::test]
+async fn the_first_years_opening_balances_are_read_back_by_account() {
+    let pool = db().await;
+    let (anna, bo) = (Uuid::new_v4(), Uuid::new_v4());
+    let id = company(&pool, anna).await;
+    assert!(opening_balances(&pool, id, anna).await.unwrap().is_empty());
+
+    set_opening_balances(&pool, id, anna, ib(&[(2081, 0, 10_000), (1930, 10_000, 0)]))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        opening_balances(&pool, id, anna).await.unwrap(),
+        ib(&[(1930, 10_000, 0), (2081, 0, 10_000)])
+    );
+    assert!(matches!(
+        opening_balances(&pool, id, bo).await,
+        Err(Error::NotFound)
+    ));
 }

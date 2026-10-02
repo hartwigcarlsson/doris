@@ -1,11 +1,10 @@
 //! Read-only views over the ledger projections. Each checks membership first.
 
 use crate::domain::{
-    Account, AccountName, AccountNumber, Chart, LedgerEntry, TrialBalanceRow, Voucher, VoucherLine,
-    running_balance,
+    Account, AccountLedger, AccountName, AccountNumber, Chart, FiscalYearStatus, TrialBalanceRow,
+    Voucher, VoucherLine, running_balance,
 };
 use crate::{Error, Result};
-use doris_company::domain::FiscalYear;
 use jiff::civil::Date;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -41,22 +40,34 @@ pub async fn list_accounts(
 }
 
 /// The company's räkenskapsår from the first up to the one containing
-/// `today`, newest first.
+/// `today`, newest first, each with whether it is closed.
 pub async fn list_fiscal_years(
     pool: &SqlitePool,
     company_id: Uuid,
     user_id: Uuid,
     today: Date,
-) -> Result<Vec<FiscalYear>> {
+) -> Result<Vec<FiscalYearStatus>> {
     let company = doris_company::get_company(pool, company_id, user_id).await?;
+    let closed: Vec<String> = sqlx::query_scalar(
+        "SELECT fiscal_year_start FROM closed_fiscal_years WHERE company_id = ?",
+    )
+    .bind(company_id.to_string())
+    .fetch_all(pool)
+    .await?;
     let mut years = vec![company.first_fiscal_year];
     while let Some(last) = years.last().copied()
         && last.end < today
     {
         years.push(last.next());
     }
-    years.reverse();
-    Ok(years)
+    Ok(years
+        .into_iter()
+        .rev()
+        .map(|fiscal_year| FiscalYearStatus {
+            closed: closed.contains(&fiscal_year.start.to_string()),
+            fiscal_year,
+        })
+        .collect())
 }
 
 /// The grundbok for one fiscal year: every voucher with its lines, by number.
@@ -104,8 +115,10 @@ pub async fn list_vouchers(
     Ok(vouchers)
 }
 
-/// The saldobalans for one fiscal year: every account with lines in it,
-/// by number, with its debit and credit totals.
+/// The saldobalans for one fiscal year, by account number: every account
+/// with lines in the year or a non-zero ingående balans. The ingående balans
+/// is the first year's opening balances plus every earlier year's lines on
+/// accounts 1000–2999.
 // ponytail: whole year in one response; paginate when a year gets large.
 pub async fn trial_balance(
     pool: &SqlitePool,
@@ -113,35 +126,53 @@ pub async fn trial_balance(
     user_id: Uuid,
     fiscal_year_start: Date,
 ) -> Result<Vec<TrialBalanceRow>> {
-    doris_company::get_company(pool, company_id, user_id).await?;
-    // The chart is always seeded once there are vouchers; LEFT JOIN keeps an
-    // account in the saldobalans even if it somehow weren't. SQLite's SUM
-    // fails on integer overflow rather than wrapping.
-    let rows: Vec<(u32, String, i64, i64)> = sqlx::query_as(
-        "SELECT l.account, COALESCE(a.name, ''), SUM(l.debit), SUM(l.credit)
-         FROM voucher_lines l
-         LEFT JOIN accounts a ON a.company_id = l.company_id AND a.number = l.account
-         WHERE l.company_id = ? AND l.fiscal_year_start = ?
-         GROUP BY l.account
-         ORDER BY l.account",
+    let company = doris_company::get_company(pool, company_id, user_id).await?;
+    // A year before the first has no opening balances either.
+    let has_opening = fiscal_year_start >= company.first_fiscal_year.start;
+    let (company_id, start) = (company_id.to_string(), fiscal_year_start.to_string());
+    // One statement, so one snapshot. LEFT JOIN keeps an account even if the
+    // chart somehow lacked it. SQLite's SUM fails on overflow, never wraps.
+    let rows: Vec<(u32, String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT t.account, COALESCE(a.name, ''), SUM(t.opening), SUM(t.debit), SUM(t.credit)
+         FROM (
+             SELECT account, debit - credit AS opening, 0 AS debit, 0 AS credit, 0 AS in_year
+             FROM opening_balances WHERE company_id = ? AND ?
+             UNION ALL
+             SELECT account, debit - credit, 0, 0, 0 FROM voucher_lines
+             WHERE company_id = ? AND fiscal_year_start < ? AND account < 3000
+             UNION ALL
+             SELECT account, 0, debit, credit, 1 FROM voucher_lines
+             WHERE company_id = ? AND fiscal_year_start = ?
+         ) t
+         LEFT JOIN accounts a ON a.company_id = ? AND a.number = t.account
+         GROUP BY t.account
+         HAVING MAX(t.in_year) = 1 OR SUM(t.opening) != 0
+         ORDER BY t.account",
     )
-    .bind(company_id.to_string())
-    .bind(fiscal_year_start.to_string())
+    .bind(&company_id)
+    .bind(has_opening)
+    .bind(&company_id)
+    .bind(&start)
+    .bind(&company_id)
+    .bind(&start)
+    .bind(&company_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(account, name, debit, credit)| TrialBalanceRow {
+        .map(|(account, name, opening, debit, credit)| TrialBalanceRow {
             account,
             name,
+            opening,
             debit,
             credit,
         })
         .collect())
 }
 
-/// One account's huvudbok for one fiscal year: its lines by date, then
-/// voucher number, then line, each with the balance after it.
+/// One account's huvudbok for one fiscal year: its ingående balans, then its
+/// lines by date, then voucher number, then line, each with the balance
+/// after it.
 // ponytail: whole year in one response; paginate when a year gets large.
 pub async fn account_ledger(
     pool: &SqlitePool,
@@ -149,9 +180,36 @@ pub async fn account_ledger(
     user_id: Uuid,
     fiscal_year_start: Date,
     account: u32,
-) -> Result<Vec<LedgerEntry>> {
-    doris_company::get_company(pool, company_id, user_id).await?;
+) -> Result<AccountLedger> {
+    let company = doris_company::get_company(pool, company_id, user_id).await?;
     let account = AccountNumber::parse(account)?;
+    let has_opening = fiscal_year_start >= company.first_fiscal_year.start;
+    let (company_id, start) = (company_id.to_string(), fiscal_year_start.to_string());
+    let number = i64::from(account.get());
+    // One read transaction: the opening balance and the lines from the same
+    // snapshot (WAL).
+    let mut tx = pool.begin().await?;
+    let opening: i64 = if account.get() < 3000 {
+        sqlx::query_scalar(
+            "SELECT COALESCE(SUM(debit - credit), 0) FROM (
+                 SELECT debit, credit FROM opening_balances
+                 WHERE company_id = ? AND account = ? AND ?
+                 UNION ALL
+                 SELECT debit, credit FROM voucher_lines
+                 WHERE company_id = ? AND fiscal_year_start < ? AND account = ?
+             )",
+        )
+        .bind(&company_id)
+        .bind(number)
+        .bind(has_opening)
+        .bind(&company_id)
+        .bind(&start)
+        .bind(number)
+        .fetch_one(&mut *tx)
+        .await?
+    } else {
+        0
+    };
     let lines: Vec<(String, u32, String, i64, i64)> = sqlx::query_as(
         "SELECT v.date, v.number, v.text, l.debit, l.credit
          FROM voucher_lines l
@@ -160,12 +218,14 @@ pub async fn account_ledger(
          WHERE l.company_id = ? AND l.fiscal_year_start = ? AND l.account = ?
          ORDER BY v.date, v.number, l.line_no",
     )
-    .bind(company_id.to_string())
-    .bind(fiscal_year_start.to_string())
-    .bind(i64::from(account.get()))
-    .fetch_all(pool)
+    .bind(&company_id)
+    .bind(&start)
+    .bind(number)
+    .fetch_all(&mut *tx)
     .await?;
-    running_balance(
+    tx.commit().await?;
+    let entries = running_balance(
+        opening,
         lines
             .into_iter()
             .map(|(date, number, text, debit, credit)| {
@@ -174,7 +234,29 @@ pub async fn account_ledger(
             })
             .collect(),
     )
-    .ok_or(Error::Overflow)
+    .ok_or(Error::Overflow)?;
+    Ok(AccountLedger { opening, entries })
+}
+
+/// The first fiscal year's ingående balanser, by account.
+pub async fn opening_balances(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    user_id: Uuid,
+) -> Result<Vec<VoucherLine>> {
+    doris_company::get_company(pool, company_id, user_id).await?;
+    let rows: Vec<(u32, i64, i64)> = sqlx::query_as(
+        "SELECT account, debit, credit FROM opening_balances WHERE company_id = ? ORDER BY account",
+    )
+    .bind(company_id.to_string())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(account, debit, credit)| {
+            VoucherLine::new(account, debit, credit).expect("projected accounts are valid")
+        })
+        .collect())
 }
 
 /// Puts each `(number, account, debit, credit)` line on its voucher.

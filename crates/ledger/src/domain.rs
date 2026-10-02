@@ -314,12 +314,14 @@ pub struct Voucher {
     pub corrected_by: Option<u32>,
 }
 
-/// One account's totals in a fiscal year (saldobalans). Its balance is
-/// `debit - credit`; positive is a debit balance.
+/// One account's figures in a fiscal year (saldobalans). `opening` is its
+/// ingående balans; the utgående balans is `opening + debit - credit`.
+/// Balances are debit − credit; positive is a debit balance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrialBalanceRow {
     pub account: u32,
     pub name: String,
+    pub opening: i64,
     pub debit: i64,
     pub credit: i64,
 }
@@ -335,11 +337,30 @@ pub struct LedgerEntry {
     pub balance: i64,
 }
 
-/// Adds the running balance to `(date, number, text, debit, credit)` lines,
-/// in the order given. `None` if it outgrows `i64`, which no real ledger
-/// reaches; a wrong figure would be worse than an error.
-pub fn running_balance(lines: Vec<(Date, u32, String, i64, i64)>) -> Option<Vec<LedgerEntry>> {
-    let mut balance = 0i64;
+/// One account's huvudbok for a fiscal year: its ingående balans and its
+/// lines, each with the balance after it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountLedger {
+    pub opening: i64,
+    pub entries: Vec<LedgerEntry>,
+}
+
+/// A fiscal year and whether it is closed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FiscalYearStatus {
+    pub fiscal_year: FiscalYear,
+    pub closed: bool,
+}
+
+/// Adds the running balance, starting from `opening`, to
+/// `(date, number, text, debit, credit)` lines in the order given. `None` if
+/// it outgrows `i64`, which no real ledger reaches; a wrong figure would be
+/// worse than an error.
+pub fn running_balance(
+    opening: i64,
+    lines: Vec<(Date, u32, String, i64, i64)>,
+) -> Option<Vec<LedgerEntry>> {
+    let mut balance = opening;
     lines
         .into_iter()
         .map(|(date, number, text, debit, credit)| {

@@ -455,11 +455,14 @@ fn voucher_events_are_readable_json() {
 
 #[test]
 fn the_running_balance_adds_debit_and_subtracts_credit_in_the_given_order() {
-    let entries = running_balance(vec![
-        (d("2026-01-05"), 1, "Försäljning".into(), 1000, 0),
-        (d("2026-01-09"), 3, "Hyra".into(), 0, 1500),
-        (d("2026-01-20"), 2, "Insättning".into(), 200, 0),
-    ])
+    let entries = running_balance(
+        0,
+        vec![
+            (d("2026-01-05"), 1, "Försäljning".into(), 1000, 0),
+            (d("2026-01-09"), 3, "Hyra".into(), 0, 1500),
+            (d("2026-01-20"), 2, "Insättning".into(), 200, 0),
+        ],
+    )
     .unwrap();
 
     assert_eq!(
@@ -481,24 +484,24 @@ fn the_running_balance_adds_debit_and_subtracts_credit_in_the_given_order() {
 
 #[test]
 fn no_lines_give_no_entries() {
-    assert_eq!(running_balance(Vec::new()), Some(Vec::new()));
+    assert_eq!(running_balance(0, Vec::new()), Some(Vec::new()));
 }
 
 #[test]
 fn an_overflowing_running_balance_is_none_not_a_panic() {
     let t = d("2026-01-01");
     assert_eq!(
-        running_balance(vec![
-            (t, 1, "a".into(), i64::MAX, 0),
-            (t, 2, "b".into(), 1, 0)
-        ]),
+        running_balance(
+            0,
+            vec![(t, 1, "a".into(), i64::MAX, 0), (t, 2, "b".into(), 1, 0)]
+        ),
         None
     );
     assert_eq!(
-        running_balance(vec![
-            (t, 1, "a".into(), 0, i64::MAX),
-            (t, 2, "b".into(), 0, 2)
-        ]),
+        running_balance(
+            0,
+            vec![(t, 1, "a".into(), 0, i64::MAX), (t, 2, "b".into(), 0, 2)]
+        ),
         None
     );
 }
@@ -885,4 +888,14 @@ fn closing_again_after_a_reopen_books_the_new_result_without_gaps() {
         vec![line(8999, 600, 0), line(2099, 0, 600)]
     );
     assert_eq!(result_of(&ledger), Some(0));
+}
+
+#[test]
+fn the_running_balance_continues_from_the_opening_balance() {
+    let entries = running_balance(500, vec![(d("2026-01-05"), 1, "a".into(), 0, 200)]).unwrap();
+    assert_eq!(entries[0].balance, 300);
+    assert_eq!(
+        running_balance(i64::MAX, vec![(d("2026-01-05"), 1, "a".into(), 1, 0)]),
+        None
+    );
 }

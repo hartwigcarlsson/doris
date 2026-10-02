@@ -100,8 +100,8 @@ impl LedgerService for LedgerApi {
             .map_err(status)?
             .into_iter()
             .map(|y| pb::FiscalYear {
-                start: y.start.to_string(),
-                end: y.end.to_string(),
+                start: y.fiscal_year.start.to_string(),
+                end: y.fiscal_year.end.to_string(),
             })
             .collect();
         Ok(Response::new(pb::ListFiscalYearsResponse { fiscal_years }))
@@ -200,6 +200,7 @@ impl LedgerService for LedgerApi {
             doris_ledger::account_ledger(&self.pool, company, user, fiscal_year_start, req.account)
                 .await
                 .map_err(status)?
+                .entries
                 .into_iter()
                 .map(|e| pb::LedgerEntry {
                     date: e.date.to_string(),

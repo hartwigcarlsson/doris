@@ -22,7 +22,10 @@ use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 pub use projections::rebuild_projections;
-pub use queries::{account_ledger, list_accounts, list_fiscal_years, list_vouchers, trial_balance};
+pub use queries::{
+    account_ledger, list_accounts, list_fiscal_years, list_vouchers, opening_balances,
+    trial_balance,
+};
 
 const ACCOUNTS_STREAM: &str = "accounts-";
 const LEDGER_STREAM: &str = "ledger-";
