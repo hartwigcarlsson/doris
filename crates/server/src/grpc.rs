@@ -6,6 +6,8 @@ use doris_identity::{Auth, Error, SESSION_TTL};
 use doris_proto::auth::v1 as pb;
 use doris_proto::auth::v1::auth_service_server::AuthService;
 use jiff::Timestamp;
+use jiff::civil::Date;
+use jiff::tz::TimeZone;
 use sqlx::SqlitePool;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
@@ -366,4 +368,11 @@ fn domain_code(err: DomainError) -> &'static str {
         DomainError::UnknownPasskey => "unknown_passkey",
         DomainError::NotAdmin => "not_admin",
     }
+}
+
+/// Today's date for date rules.
+// ponytail: "today" in UTC, so the date flips up to 2 hours late in Sweden;
+// use Europe/Stockholm once the image ships tzdata.
+pub(crate) fn today() -> Date {
+    Timestamp::now().to_zoned(TimeZone::UTC).date()
 }

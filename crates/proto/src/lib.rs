@@ -11,3 +11,9 @@ pub mod company {
         tonic::include_proto!("doris.company.v1");
     }
 }
+
+pub mod ledger {
+    pub mod v1 {
+        tonic::include_proto!("doris.ledger.v1");
+    }
+}

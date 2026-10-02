@@ -916,6 +916,7 @@ dependencies = [
  "doris-company",
  "doris-eventstore",
  "doris-identity",
+ "doris-ledger",
  "doris-proto",
  "http",
  "http-body-util",
