@@ -83,7 +83,6 @@ pub fn is_closed(years: &[lpb::FiscalYear], start: &str) -> bool {
 
 /// The year that can be closed next: the oldest open one, once it has ended
 /// (`end < today`, both `YYYY-MM-DD`).
-#[allow(dead_code)] // ponytail: used from Tasks 8-10, drop then
 pub fn closable(years: &[lpb::FiscalYear], today: &str) -> Option<String> {
     years
         .iter()
@@ -94,7 +93,6 @@ pub fn closable(years: &[lpb::FiscalYear], today: &str) -> Option<String> {
 }
 
 /// The year that can be reopened: the newest closed one.
-#[allow(dead_code)] // ponytail: used from Tasks 8-10, drop then
 pub fn reopenable(years: &[lpb::FiscalYear]) -> Option<String> {
     years.iter().find(|y| y.closed).map(|y| y.start.clone())
 }
