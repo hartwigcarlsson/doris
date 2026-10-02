@@ -35,7 +35,7 @@ migrations/         sqlx migrations, NNNN_name.sql, shared by all crates
 crates/company      doris-company: companies, members, fiscal year and accounting method
 crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
 crates/identity     doris-identity: users, passkeys, invitations, sessions
-crates/ledger       doris-ledger: chart of accounts and vouchers (verifikationer)
+crates/ledger       doris-ledger: chart of accounts, vouchers, opening balances and year closing
 crates/proto        doris-proto: generated code (feature `server` for stubs)
 crates/server       doris-server: binary, gRPC services, embedded frontend
 crates/web          doris-web: Leptos CSR app, UI components
@@ -66,9 +66,15 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   every line reversed and `corrects` pointing at the original.
 - The saldobalans and huvudbok (`trial_balance`, `account_ledger` in
   `crates/ledger/src/queries.rs`) are plain queries over the voucher
-  projections, one fiscal year at a time. There are no opening balances
-  yet, so from the second year on balance-sheet accounts show only that
-  year's movements.
+  projections, one fiscal year at a time. Ingående balanser are never
+  stored for later years: they are the first year's typed-in
+  `opening_balances` plus every earlier year's lines on accounts 1000–2999.
+- Closing a year (`FiscalYearClosed`) first books "Årets resultat", 8999
+  against 2099 (2019 for enskild firma, HB and KB), then locks the year:
+  no voucher or rättelse goes into a closed year. Years close oldest first,
+  once they have ended. Reopening (`FiscalYearReopened`, with a reason)
+  comes before the reversal of that voucher and goes newest first, so no
+  voucher is ever recorded while its year is closed.
 
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.

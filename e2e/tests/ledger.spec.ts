@@ -227,8 +227,8 @@ test("the trial balance and an account's ledger show what was booked", async ({ 
   await expect(page.getByRole("row", { name: /^3001 / })).toContainText("-1 250,00");
   await expect(page.getByText("Beräknat resultat 1 250,00")).toBeVisible();
   await expect(page.getByText("Summa saldo 0,00")).toBeVisible();
-  // The company's first year has no opening balances to miss.
-  await expect(page.getByText(/Ingående balanser saknas/)).toHaveCount(0);
+  // The company's first year has no year before it to be preliminary about.
+  await expect(page.getByText(/preliminära/)).toHaveCount(0);
 
   await page.getByRole("link", { name: "1930", exact: true }).click();
   await expect(page.getByRole("heading", { name: "1930 Företagskonto/checkkonto/affärskonto" })).toBeVisible();
@@ -266,23 +266,13 @@ test("a junk account in the URL shows a Swedish error", async ({ page, app }) =>
 test("the chosen fiscal year stays in the URL and survives a reload", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   // A company whose first räkenskapsår is 2025, so it has two years by now.
-  await page.goto(`${app}/companies`);
-  await page.getByRole("main").getByRole("link", { name: "Lägg till företag" }).click();
-  await page.getByLabel("Organisationsnummer").fill("5560160680");
-  await page.getByLabel("Företagsnamn").fill("Exempel AB");
-  await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
-  await page.getByLabel("Postort").fill("Stockholm");
-  await page.getByLabel("Räkenskapsåret börjar").fill("2025-01-01");
-  await expect(page.getByText("Räkenskapsåret slutar 2025-12-31.")).toBeVisible();
-  await page.getByLabel("Faktureringsmetoden").check();
-  await page.getByRole("button", { name: "Spara företag" }).click();
-  await expect(page.getByRole("heading", { name: "Exempel AB" })).toBeVisible();
+  await addCompany(page, app, "5560160680", "Exempel AB", "2025-01-01");
 
   await page.getByRole("banner").getByRole("link", { name: "Saldobalans" }).click();
-  // The newest year is the second, which has no opening balances yet.
-  await expect(page.getByText(/Ingående balanser saknas/)).toBeVisible();
+  // The newest year is the second, and the first is still open.
+  await expect(page.getByText(/preliminära/)).toBeVisible();
   await page.getByLabel("Räkenskapsår").selectOption("2025-01-01");
-  await expect(page.getByText(/Ingående balanser saknas/)).toHaveCount(0);
+  await expect(page.getByText(/preliminära/)).toHaveCount(0);
   await expect(page).toHaveURL(/[?&]fy=2025-01-01/);
 
   await page.reload();
