@@ -4,7 +4,9 @@
 use crate::active_company::Companies;
 use crate::api::{ledger_api, lpb};
 use crate::errors::describe;
-use crate::fiscal_year::{FiscalYearSelect, opening_balances_missing, use_fiscal_years};
+use crate::fiscal_year::{
+    FiscalYearSelect, keep_year_in_url, opening_balances_missing, use_fiscal_years,
+};
 use crate::format::amount;
 use crate::ui::{
     ErrorAlert, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL,
@@ -53,6 +55,7 @@ pub fn TrialBalance() -> impl IntoView {
     let error = RwSignal::new(None::<String>);
     let preferred = query.read_untracked().get("fy").unwrap_or_default();
     let (years, year) = use_fiscal_years(preferred, error);
+    keep_year_in_url("/trial-balance".into(), year);
     // None until the chosen year's rows have arrived.
     let rows = RwSignal::new(None::<Vec<lpb::TrialBalanceRow>>);
 

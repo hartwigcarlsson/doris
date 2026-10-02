@@ -262,3 +262,30 @@ test("a junk account in the URL shows a Swedish error", async ({ page, app }) =>
 
   await expect(page.getByRole("alert")).toHaveText("Kontonumret ska vara fyra siffror, 1000–8999.");
 });
+
+test("the chosen fiscal year stays in the URL and survives a reload", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  // A company whose first räkenskapsår is 2025, so it has two years by now.
+  await page.goto(`${app}/companies`);
+  await page.getByRole("main").getByRole("link", { name: "Lägg till företag" }).click();
+  await page.getByLabel("Organisationsnummer").fill("5560160680");
+  await page.getByLabel("Företagsnamn").fill("Exempel AB");
+  await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
+  await page.getByLabel("Postort").fill("Stockholm");
+  await page.getByLabel("Räkenskapsåret börjar").fill("2025-01-01");
+  await expect(page.getByText("Räkenskapsåret slutar 2025-12-31.")).toBeVisible();
+  await page.getByLabel("Faktureringsmetoden").check();
+  await page.getByRole("button", { name: "Spara företag" }).click();
+  await expect(page.getByRole("heading", { name: "Exempel AB" })).toBeVisible();
+
+  await page.getByRole("banner").getByRole("link", { name: "Saldobalans" }).click();
+  // The newest year is the second, which has no opening balances yet.
+  await expect(page.getByText(/Ingående balanser saknas/)).toBeVisible();
+  await page.getByLabel("Räkenskapsår").selectOption("2025-01-01");
+  await expect(page.getByText(/Ingående balanser saknas/)).toHaveCount(0);
+  await expect(page).toHaveURL(/[?&]fy=2025-01-01/);
+
+  await page.reload();
+
+  await expect(page.getByLabel("Räkenskapsår")).toHaveValue("2025-01-01");
+});

@@ -4,7 +4,7 @@
 use crate::active_company::Companies;
 use crate::api::{ledger_api, lpb};
 use crate::errors::describe;
-use crate::fiscal_year::{FiscalYearSelect, use_fiscal_years};
+use crate::fiscal_year::{FiscalYearSelect, keep_year_in_url, use_fiscal_years};
 use crate::format::amount;
 use crate::ui::{
     ErrorAlert, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL,
@@ -31,6 +31,9 @@ pub fn AccountLedger() -> impl IntoView {
         .get("fy")
         .unwrap_or_default();
     let (years, year) = use_fiscal_years(preferred, error);
+    if account != 0 {
+        keep_year_in_url(format!("/trial-balance/{account}"), year);
+    }
     let name = RwSignal::new(String::new());
     // None until the chosen year's entries have arrived.
     let entries = RwSignal::new(None::<Vec<lpb::LedgerEntry>>);

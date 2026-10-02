@@ -10,6 +10,8 @@ use crate::errors::describe;
 use crate::ui::{SELECT_OPTION, Select};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::use_navigate;
 
 /// The end of a 12-month räkenskapsår starting on `start` (`YYYY-MM-DD`,
 /// the 1st of a month). Enskild firma and handelsbolag must follow the
@@ -102,6 +104,25 @@ pub fn use_fiscal_years(
         });
     });
     (years, year)
+}
+
+/// Keeps the chosen year in the URL as `{path}?fy={year}`, replacing the
+/// history entry, so Back and reload return to the same year.
+pub fn keep_year_in_url(path: String, year: RwSignal<String>) {
+    let navigate = use_navigate();
+    Effect::new(move |_| {
+        let start = year.get();
+        if !start.is_empty() {
+            navigate(
+                &format!("{path}?fy={start}"),
+                NavigateOptions {
+                    replace: true,
+                    scroll: false,
+                    ..Default::default()
+                },
+            );
+        }
+    });
 }
 
 /// The "Räkenskapsår" select over `years`, bound to `year`.
