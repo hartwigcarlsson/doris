@@ -35,6 +35,7 @@ dev:
 dist:
 	cd crates/web && trunk build --release --cargo-profile wasm-release
 	@wasm=$$(ls crates/web/dist/*_bg.wasm); size=$$(gzip -c $$wasm | wc -c); \
+		test $$size -gt 0 || { echo "dist: could not gzip $$wasm"; exit 1; }; \
 		echo "dist: $$wasm is $$size bytes gzipped (budget $(WASM_BUDGET))"; \
 		test $$size -le $(WASM_BUDGET) || \
 		{ echo "dist: over the $(WASM_BUDGET) byte budget"; exit 1; }

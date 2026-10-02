@@ -56,7 +56,7 @@ Båda funktionerna kontrollerar medlemskap först med `doris_company::get_compan
   - Räkenskapsåret kommer från `?fy=`, med samma Select som på saldobalansen. Länken "Tillbaka till saldobalansen" behåller `?fy=`.
 - **Byte av aktivt företag:** båda sidorna läser in på nytt när det aktiva företaget byts, precis som `/vouchers`. Om kontot inte finns hos det nya företaget visas en tom huvudbok.
 - **Ren logik med enhetstester i `doris-web`:** uppdelning i balans- och resultaträkning och summering per avsnitt, i en funktion som tar raderna och returnerar avsnitten med summor.
-- **Komponenter:** `Table`, `Select` och `amount` från `format.rs` finns redan. Inga nya beroenden tillkommer, och wasm-budgeten (900 KB) gäller.
+- **Komponenter:** `Table`, `Select` och `amount` från `format.rs` finns redan. Inga nya beroenden tillkommer, och wasm-budgeten (500 KB komprimerad med gzip) gäller.
 
 ## Tester
 - **Ren funktion** (`running_balance`): saldot ackumuleras över debet- och kreditrader, och överflöd ger ett fel i stället för panik.
