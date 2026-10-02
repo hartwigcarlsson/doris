@@ -12,6 +12,7 @@ mod queries;
 
 use domain::{
     AccountName, AccountNumber, Chart, ChartEvent, DomainError, Ledger, LedgerEvent, RecordVoucher,
+    VoucherLine,
 };
 use doris_company::domain::{Company, FiscalYear};
 use doris_eventstore::{Metadata, NewEvent};
@@ -257,18 +258,22 @@ pub async fn correct_voucher_in(
     today: Date,
 ) -> Result<VoucherRef> {
     let company = member_company(conn, company_id, actor).await?;
-    // A year that starts after today has no vouchers; checked first so a
-    // far-future start never steps fiscal years past the date limits.
-    if fiscal_year_start > today {
-        return Err(DomainError::VoucherNotFound.into());
-    }
-    let fiscal_year = company.first_fiscal_year.containing(fiscal_year_start);
-    if fiscal_year.start != fiscal_year_start {
-        return Err(DomainError::VoucherNotFound.into());
-    }
+    let fiscal_year =
+        fiscal_year_at(&company, fiscal_year_start, today).ok_or(DomainError::VoucherNotFound)?;
     let (ledger, version) = load_ledger(conn, company_id, fiscal_year).await?;
     let event = domain::correct_voucher(&ledger, number, date, today)?;
     commit_voucher(conn, company_id, fiscal_year, version, event, actor).await
+}
+
+/// The company's fiscal year starting on `start`, if there is one by
+/// `today`. Checked against `today` first, so a far-future start never
+/// steps fiscal years past the date limits.
+fn fiscal_year_at(company: &Company, start: Date, today: Date) -> Option<FiscalYear> {
+    if start > today {
+        return None;
+    }
+    let fiscal_year = company.first_fiscal_year.containing(start);
+    (fiscal_year.start == start).then_some(fiscal_year)
 }
 
 async fn commit_voucher(
@@ -314,4 +319,94 @@ async fn load_ledger(
         .map(|e| e.decode::<LedgerEvent>())
         .collect::<Result<Vec<_>, _>>()?;
     Ok((Ledger::from_events(fiscal_year, &events), version))
+}
+
+/// Replaces the first fiscal year's ingående balanser.
+pub async fn set_opening_balances(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    lines: Vec<VoucherLine>,
+) -> Result<()> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let company = member_company(&mut tx, company_id, actor).await?;
+    let chart = seeded_chart(&mut tx, company_id, actor).await?;
+    let fiscal_year = company.first_fiscal_year;
+    let (ledger, version) = load_ledger(&mut tx, company_id, fiscal_year).await?;
+    let event = domain::set_opening_balances(&ledger, &chart, lines)?;
+    let stream = ledger_stream(company_id, fiscal_year.start);
+    append(&mut tx, &stream, version, &[event], actor).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Closes the fiscal year starting on `fiscal_year_start`. Returns the
+/// number of the "Årets resultat" voucher, if one was booked.
+pub async fn close_fiscal_year(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    today: Date,
+) -> Result<Option<u32>> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let company = member_company(&mut tx, company_id, actor).await?;
+    let fiscal_year = fiscal_year_at(&company, fiscal_year_start, today)
+        .ok_or(DomainError::FiscalYearNotFound)?;
+    let (ledger, version) = load_ledger(&mut tx, company_id, fiscal_year).await?;
+    let previous_closed = if fiscal_year == company.first_fiscal_year {
+        None
+    } else {
+        let day_before = fiscal_year
+            .start
+            .yesterday()
+            .expect("fiscal years are far from the date limits");
+        let previous = company.first_fiscal_year.containing(day_before);
+        Some(
+            load_ledger(&mut tx, company_id, previous)
+                .await?
+                .0
+                .is_closed(),
+        )
+    };
+    let events = domain::close_fiscal_year(&ledger, previous_closed, company.legal_form, today)?;
+    let stream = ledger_stream(company_id, fiscal_year.start);
+    append(&mut tx, &stream, version, &events, actor).await?;
+    tx.commit().await?;
+    Ok(voucher_number(&events))
+}
+
+/// Reopens the fiscal year starting on `fiscal_year_start`. Returns the
+/// number of the result voucher's reversal, if one was booked.
+pub async fn reopen_fiscal_year(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    reason: &str,
+    today: Date,
+) -> Result<Option<u32>> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let company = member_company(&mut tx, company_id, actor).await?;
+    let fiscal_year = fiscal_year_at(&company, fiscal_year_start, today)
+        .ok_or(DomainError::FiscalYearNotFound)?;
+    let (ledger, version) = load_ledger(&mut tx, company_id, fiscal_year).await?;
+    // A next year without events is open.
+    let next_closed = load_ledger(&mut tx, company_id, fiscal_year.next())
+        .await?
+        .0
+        .is_closed();
+    let events = domain::reopen_fiscal_year(&ledger, next_closed, reason)?;
+    let stream = ledger_stream(company_id, fiscal_year.start);
+    append(&mut tx, &stream, version, &events, actor).await?;
+    tx.commit().await?;
+    Ok(voucher_number(&events))
+}
+
+/// The number of the voucher among `events`, if there is one.
+fn voucher_number(events: &[LedgerEvent]) -> Option<u32> {
+    events.iter().find_map(|e| match e {
+        LedgerEvent::VoucherRecorded { number, .. } => Some(*number),
+        _ => None,
+    })
 }

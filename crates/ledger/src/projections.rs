@@ -136,10 +136,45 @@ async fn apply_ledger(
                 .await?;
             }
         }
-        // Projected in Task 3.
-        LedgerEvent::OpeningBalancesSet { .. }
-        | LedgerEvent::FiscalYearClosed { .. }
-        | LedgerEvent::FiscalYearReopened { .. } => {}
+        LedgerEvent::OpeningBalancesSet { lines } => {
+            sqlx::query("DELETE FROM opening_balances WHERE company_id = ?")
+                .bind(company_id)
+                .execute(&mut *conn)
+                .await?;
+            for line in &lines {
+                sqlx::query(
+                    "INSERT INTO opening_balances (company_id, account, debit, credit)
+                     VALUES (?, ?, ?, ?)",
+                )
+                .bind(company_id)
+                .bind(line.account.get())
+                .bind(line.debit)
+                .bind(line.credit)
+                .execute(&mut *conn)
+                .await?;
+            }
+        }
+        LedgerEvent::FiscalYearClosed { .. } => {
+            sqlx::query(
+                "INSERT INTO closed_fiscal_years (company_id, fiscal_year_start, closed_at, closed_by)
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(company_id)
+            .bind(fiscal_year_start)
+            .bind(&event.recorded_at)
+            .bind(event.metadata.actor.as_deref().unwrap_or_default())
+            .execute(&mut *conn)
+            .await?;
+        }
+        LedgerEvent::FiscalYearReopened { .. } => {
+            sqlx::query(
+                "DELETE FROM closed_fiscal_years WHERE company_id = ? AND fiscal_year_start = ?",
+            )
+            .bind(company_id)
+            .bind(fiscal_year_start)
+            .execute(&mut *conn)
+            .await?;
+        }
     }
     Ok(())
 }
@@ -148,6 +183,8 @@ async fn apply_ledger(
 pub async fn rebuild_projections(pool: &sqlx::SqlitePool) -> crate::Result<()> {
     let mut tx = doris_eventstore::begin(pool).await?;
     for statement in [
+        "DELETE FROM opening_balances",
+        "DELETE FROM closed_fiscal_years",
         "DELETE FROM voucher_lines",
         "DELETE FROM vouchers",
         "DELETE FROM accounts",

@@ -2,9 +2,10 @@ use doris_company::NewCompany;
 use doris_company::domain::{AccountingMethod, LegalForm};
 use doris_ledger::domain::{DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
 use doris_ledger::{
-    Error, VoucherRef, account_ledger, add_account, correct_voucher, list_accounts,
-    list_fiscal_years, list_vouchers, rebuild_projections, record_voucher, record_voucher_in,
-    rename_account, set_account_active, trial_balance,
+    Error, VoucherRef, account_ledger, add_account, close_fiscal_year, correct_voucher,
+    list_accounts, list_fiscal_years, list_vouchers, rebuild_projections, record_voucher,
+    record_voucher_in, rename_account, reopen_fiscal_year, set_account_active,
+    set_opening_balances, trial_balance,
 };
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -696,4 +697,224 @@ async fn non_members_cannot_read_the_reports() {
         account_ledger(&pool, id, bo, d("2025-01-01"), 999).await,
         Err(Error::NotFound)
     ));
+}
+
+fn ib(lines: &[(u32, i64, i64)]) -> Vec<VoucherLine> {
+    lines
+        .iter()
+        .map(|&(account, debit, credit)| VoucherLine::new(account, debit, credit).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn opening_balances_are_set_and_replaced_in_the_first_year() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+
+    set_opening_balances(&pool, id, anna, ib(&[(1930, 10_000, 0), (2081, 0, 10_000)]))
+        .await
+        .unwrap();
+    set_opening_balances(&pool, id, anna, ib(&[(1930, 5_000, 0), (2081, 0, 5_000)]))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        events_of(&pool, "ledger-").await,
+        ["OpeningBalancesSet", "OpeningBalancesSet"]
+    );
+    assert_eq!(
+        table(
+            &pool,
+            "SELECT account || ':' || debit || ':' || credit FROM opening_balances ORDER BY account"
+        )
+        .await,
+        ["1930:5000:0", "2081:0:5000"]
+    );
+    assert!(matches!(
+        set_opening_balances(&pool, id, anna, ib(&[(1930, 1, 0)])).await,
+        Err(Error::Domain(DomainError::OpeningBalancesUnbalanced))
+    ));
+}
+
+#[tokio::test]
+async fn closing_books_the_result_and_locks_the_year_until_it_is_reopened() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let (start, today) = (d("2025-01-01"), d(TODAY));
+    record_voucher(&pool, id, anna, sale("2025-03-01", 1_000), today)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        close_fiscal_year(&pool, id, anna, start, today)
+            .await
+            .unwrap(),
+        Some(2)
+    );
+    assert!(matches!(
+        record_voucher(&pool, id, anna, sale("2025-03-02", 1), today).await,
+        Err(Error::Domain(DomainError::FiscalYearClosed))
+    ));
+    assert!(matches!(
+        correct_voucher(&pool, id, anna, start, 1, d("2025-03-02"), today).await,
+        Err(Error::Domain(DomainError::FiscalYearClosed))
+    ));
+    assert_eq!(
+        table(
+            &pool,
+            "SELECT fiscal_year_start || ':' || closed_by FROM closed_fiscal_years"
+        )
+        .await,
+        [format!("2025-01-01:{anna}")]
+    );
+
+    assert_eq!(
+        reopen_fiscal_year(&pool, id, anna, start, "Glömd faktura", today)
+            .await
+            .unwrap(),
+        Some(3)
+    );
+    assert!(
+        table(&pool, "SELECT fiscal_year_start FROM closed_fiscal_years")
+            .await
+            .is_empty()
+    );
+    let vouchers = list_vouchers(&pool, id, anna, start).await.unwrap();
+    assert_eq!(
+        vouchers
+            .iter()
+            .map(|v| (v.number, v.text.as_str(), v.corrects))
+            .collect::<Vec<_>>(),
+        vec![
+            (1, "Försäljning", None),
+            (2, "Årets resultat", None),
+            (3, "Rättelse av ver 2", Some(2)),
+        ]
+    );
+    record_voucher(&pool, id, anna, sale("2025-03-02", 1), today)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn years_close_oldest_first_and_reopen_newest_first() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    // 2025, 2026 and 2027 have ended; 2028 has not.
+    let today = d("2028-02-01");
+    let close = |start: &str| close_fiscal_year(&pool, id, anna, d(start), today);
+    let reopen = |start: &str| reopen_fiscal_year(&pool, id, anna, d(start), "Fel", today);
+
+    assert!(matches!(
+        close("2026-01-01").await,
+        Err(Error::Domain(DomainError::PreviousFiscalYearOpen))
+    ));
+    close("2025-01-01").await.unwrap();
+    close("2026-01-01").await.unwrap();
+    assert!(matches!(
+        close("2028-01-01").await,
+        Err(Error::Domain(DomainError::FiscalYearNotEnded))
+    ));
+    assert!(matches!(
+        reopen("2025-01-01").await,
+        Err(Error::Domain(DomainError::LaterFiscalYearClosed))
+    ));
+    assert!(matches!(
+        reopen("2027-01-01").await,
+        Err(Error::Domain(DomainError::FiscalYearOpen))
+    ));
+    reopen("2026-01-01").await.unwrap();
+    reopen("2025-01-01").await.unwrap();
+}
+
+#[tokio::test]
+async fn a_date_that_does_not_start_a_fiscal_year_is_not_found() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+
+    // Mid-year, before the first year, and after today.
+    for start in ["2025-02-01", "2024-01-01", "2027-01-01", "9999-01-01"] {
+        assert!(
+            matches!(
+                close_fiscal_year(&pool, id, anna, d(start), today).await,
+                Err(Error::Domain(DomainError::FiscalYearNotFound))
+            ),
+            "close {start}"
+        );
+        assert!(
+            matches!(
+                reopen_fiscal_year(&pool, id, anna, d(start), "Fel", today).await,
+                Err(Error::Domain(DomainError::FiscalYearNotFound))
+            ),
+            "reopen {start}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn non_members_cannot_set_balances_close_or_reopen() {
+    let pool = db().await;
+    let (anna, bo) = (Uuid::new_v4(), Uuid::new_v4());
+    let id = company(&pool, anna).await;
+    let (start, today) = (d("2025-01-01"), d(TODAY));
+
+    assert!(matches!(
+        set_opening_balances(&pool, id, bo, ib(&[(1930, 1, 0), (2081, 0, 1)])).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        close_fiscal_year(&pool, id, bo, start, today).await,
+        Err(Error::NotFound)
+    ));
+    close_fiscal_year(&pool, id, anna, start, today)
+        .await
+        .unwrap();
+    assert!(matches!(
+        reopen_fiscal_year(&pool, id, bo, start, "Fel", today).await,
+        Err(Error::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn opening_balances_and_closings_rebuild_from_the_events() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let (start, today) = (d("2025-01-01"), d(TODAY));
+    set_opening_balances(&pool, id, anna, ib(&[(1930, 10_000, 0), (2081, 0, 10_000)]))
+        .await
+        .unwrap();
+    record_voucher(&pool, id, anna, sale("2025-03-01", 1_000), today)
+        .await
+        .unwrap();
+    close_fiscal_year(&pool, id, anna, start, today)
+        .await
+        .unwrap();
+    reopen_fiscal_year(&pool, id, anna, start, "Fel", today)
+        .await
+        .unwrap();
+    close_fiscal_year(&pool, id, anna, start, today)
+        .await
+        .unwrap();
+    let ib_sql = "SELECT company_id || account || ':' || debit || ':' || credit FROM opening_balances ORDER BY 1";
+    let closed_sql = "SELECT company_id || fiscal_year_start || closed_at || closed_by FROM closed_fiscal_years ORDER BY 1";
+    let lines_sql = "SELECT company_id || fiscal_year_start || number || line_no || account || debit || credit FROM voucher_lines ORDER BY 1";
+    let (ib_rows, closed, lines) = (
+        table(&pool, ib_sql).await,
+        table(&pool, closed_sql).await,
+        table(&pool, lines_sql).await,
+    );
+
+    rebuild_projections(&pool).await.unwrap();
+
+    assert_eq!(ib_rows.len(), 2);
+    assert_eq!(closed.len(), 1);
+    assert_eq!(table(&pool, ib_sql).await, ib_rows);
+    assert_eq!(table(&pool, closed_sql).await, closed);
+    assert_eq!(table(&pool, lines_sql).await, lines);
 }
