@@ -67,13 +67,15 @@ pub async fn list_vouchers(
     doris_company::get_company(pool, company_id, user_id).await?;
     let (company_id, fiscal_year_start) = (company_id.to_string(), fiscal_year_start.to_string());
     type Head = (u32, String, String, Option<u32>, Option<u32>);
+    // One read transaction: heads and lines from the same snapshot (WAL).
+    let mut tx = pool.begin().await?;
     let heads: Vec<Head> = sqlx::query_as(
         "SELECT number, date, text, corrects, corrected_by FROM vouchers
          WHERE company_id = ? AND fiscal_year_start = ? ORDER BY number",
     )
     .bind(&company_id)
     .bind(&fiscal_year_start)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
     let lines: Vec<(u32, u32, i64, i64)> = sqlx::query_as(
         "SELECT number, account, debit, credit FROM voucher_lines
@@ -81,8 +83,9 @@ pub async fn list_vouchers(
     )
     .bind(&company_id)
     .bind(&fiscal_year_start)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
+    tx.commit().await?;
     let mut vouchers: Vec<Voucher> = heads
         .into_iter()
         .map(|(number, date, text, corrects, corrected_by)| Voucher {
@@ -94,11 +97,50 @@ pub async fn list_vouchers(
             corrected_by,
         })
         .collect();
-    for (number, account, debit, credit) in lines {
-        // Numbers run 1..=n (the trigger guarantees it), so number - 1 is the index.
-        vouchers[number as usize - 1]
-            .lines
-            .push(VoucherLine::new(account, debit, credit).expect("projected accounts are valid"));
-    }
+    attach_lines(&mut vouchers, lines);
     Ok(vouchers)
+}
+
+/// Puts each `(number, account, debit, credit)` line on its voucher.
+fn attach_lines(vouchers: &mut [Voucher], lines: Vec<(u32, u32, i64, i64)>) {
+    for (number, account, debit, credit) in lines {
+        // Numbers run 1..=n (the trigger guarantees it), so number - 1 is the
+        // index. A line whose head is missing is skipped, never a panic.
+        if let Some(voucher) = (number as usize)
+            .checked_sub(1)
+            .and_then(|i| vouchers.get_mut(i))
+            .filter(|v| v.number == number)
+        {
+            voucher.lines.push(
+                VoucherLine::new(account, debit, credit).expect("projected accounts are valid"),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_line_without_its_voucher_is_skipped() {
+        let mut vouchers = vec![Voucher {
+            number: 1,
+            date: jiff::civil::date(2026, 1, 1),
+            text: "Kassa".into(),
+            lines: Vec::new(),
+            corrects: None,
+            corrected_by: None,
+        }];
+        // Voucher 2 was committed after the heads were read.
+        attach_lines(
+            &mut vouchers,
+            vec![(1, 1930, 100, 0), (2, 1930, 50, 0), (0, 1930, 1, 0)],
+        );
+        assert_eq!(vouchers.len(), 1);
+        assert_eq!(
+            vouchers[0].lines,
+            vec![VoucherLine::new(1930, 100, 0).unwrap()]
+        );
+    }
 }
