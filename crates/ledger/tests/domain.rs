@@ -899,3 +899,25 @@ fn the_running_balance_continues_from_the_opening_balance() {
         None
     );
 }
+
+#[test]
+fn reopening_does_not_reverse_a_result_voucher_that_is_already_corrected() {
+    let mut given = year_with(vec![sale("2025-03-01", 1_000)]);
+    given.extend(close_2025(&given, LegalForm::Aktiebolag)); // ver 2
+    // Corrupt history the domain never produces: ver 2 corrected while closed.
+    given.push(LedgerEvent::VoucherRecorded {
+        number: 3,
+        date: d("2025-12-31"),
+        text: "Rättelse av ver 2".into(),
+        lines: vec![line(8999, 0, 1_000), line(2099, 1_000, 0)],
+        corrects: Some(2),
+    });
+    let ledger = Ledger::from_events(first_year(), &given);
+
+    assert_eq!(
+        reopen_fiscal_year(&ledger, false, "Fel").unwrap(),
+        vec![LedgerEvent::FiscalYearReopened {
+            reason: "Fel".into()
+        }]
+    );
+}

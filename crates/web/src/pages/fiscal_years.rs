@@ -111,12 +111,13 @@ fn FiscalYearRow(
         busy.set(true);
         let company_id = companies.active.get_untracked();
         let start = start.get_value();
+        let reason = reason.get_untracked();
         spawn_local(async move {
             let result = ledger_api()
                 .reopen_fiscal_year(lpb::ReopenFiscalYearRequest {
                     company_id: company_id.clone(),
                     fiscal_year_start: start.clone(),
-                    reason: reason.get_untracked(),
+                    reason,
                 })
                 .await;
             // The row may have been rebuilt meanwhile; never read it after the await.

@@ -127,6 +127,12 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `domain_code`). Company codes are mapped in `crates/server/src/company.rs`
   (`status`, `domain_status`). Ledger codes are mapped in
   `crates/server/src/ledger.rs` (`status`, `domain_status`).
+- `LedgerService` also has `GetOpeningBalances`, `SetOpeningBalances`,
+  `CloseFiscalYear` and `ReopenFiscalYear`. Their codes are
+  `not_balance_sheet_account`, `duplicate_account`,
+  `opening_balances_unbalanced`, `invalid_reason`, `fiscal_year_not_found`,
+  `fiscal_year_closed`, `fiscal_year_open`, `fiscal_year_not_ended`,
+  `previous_fiscal_year_open` and `later_fiscal_year_closed`.
 - Company lookup uses Bolagsverket's free "värdefulla datamängder" API (OAuth2
   client credentials, register at portal.api.bolagsverket.se). Without
   credentials the lookup answers `lookup_unavailable` and details are typed in.

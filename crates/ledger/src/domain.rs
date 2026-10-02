@@ -719,7 +719,8 @@ pub fn reopen_fiscal_year(
     let mut events = vec![LedgerEvent::FiscalYearReopened {
         reason: reason.to_owned(),
     }];
-    if let Some(original) = ledger.result_voucher.and_then(|n| ledger.voucher(n)) {
+    let result = ledger.result_voucher.and_then(|n| ledger.voucher(n));
+    if let Some(original) = result.filter(|v| v.corrected_by.is_none()) {
         events.push(reversal(ledger, original, ledger.fiscal_year.end));
     }
     Ok(events)
