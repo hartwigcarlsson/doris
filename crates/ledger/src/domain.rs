@@ -3,7 +3,7 @@
 use doris_company::domain::FiscalYear;
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DomainError {
@@ -37,6 +37,29 @@ pub enum DomainError {
     AlreadyCorrected,
     #[error("a correction cannot be corrected")]
     CannotCorrectCorrection,
+    #[error("opening balances are for accounts 1000-2999")]
+    NotBalanceSheetAccount,
+    #[error("an account appears more than once")]
+    DuplicateAccount,
+    #[error("opening balances must balance")]
+    OpeningBalancesUnbalanced,
+    #[error("reason must be 1-200 characters")]
+    InvalidReason,
+    #[error("no such fiscal year")]
+    FiscalYearNotFound,
+    #[error("fiscal year is closed")]
+    FiscalYearClosed,
+    #[error("fiscal year is open")]
+    FiscalYearOpen,
+    #[error("fiscal year has not ended")]
+    FiscalYearNotEnded,
+    #[error("the previous fiscal year is open")]
+    PreviousFiscalYearOpen,
+    #[error("a later fiscal year is closed")]
+    LaterFiscalYearClosed,
+    /// A sum outgrew `i64`; no real ledger gets there.
+    #[error("amount overflow")]
+    Overflow,
 }
 
 /// A BAS account number: four digits, 1000-8999.
@@ -271,6 +294,14 @@ pub enum LedgerEvent {
         lines: Vec<VoucherLine>,
         corrects: Option<u32>,
     },
+    /// The first fiscal year's ingående balanser, replacing any before.
+    /// Not a voucher: it takes no number. Later years' are derived.
+    OpeningBalancesSet { lines: Vec<VoucherLine> },
+    /// The year is locked. `result_voucher` is the "Årets resultat" voucher
+    /// booked just before, if the result wasn't already on equity.
+    FiscalYearClosed { result_voucher: Option<u32> },
+    /// The year is open again; the result voucher's reversal follows.
+    FiscalYearReopened { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -325,11 +356,14 @@ pub fn running_balance(lines: Vec<(Date, u32, String, i64, i64)>) -> Option<Vec<
         .collect()
 }
 
-/// One fiscal year's vouchers, in number order.
+/// One fiscal year's vouchers, in number order, and whether it is closed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ledger {
     pub fiscal_year: FiscalYear,
     vouchers: Vec<Voucher>,
+    opening_balances: Vec<VoucherLine>,
+    closed: bool,
+    result_voucher: Option<u32>,
 }
 
 impl Ledger {
@@ -337,6 +371,9 @@ impl Ledger {
         Self {
             fiscal_year,
             vouchers: Vec::new(),
+            opening_balances: Vec::new(),
+            closed: false,
+            result_voucher: None,
         }
     }
 
@@ -349,26 +386,47 @@ impl Ledger {
     }
 
     pub fn apply(&mut self, event: &LedgerEvent) {
-        let LedgerEvent::VoucherRecorded {
-            number,
-            date,
-            text,
-            lines,
-            corrects,
-        } = event.clone();
-        if let Some(original) =
-            corrects.and_then(|n| self.vouchers.iter_mut().find(|v| v.number == n))
-        {
-            original.corrected_by = Some(number);
+        match event.clone() {
+            LedgerEvent::VoucherRecorded {
+                number,
+                date,
+                text,
+                lines,
+                corrects,
+            } => {
+                if let Some(original) =
+                    corrects.and_then(|n| self.vouchers.iter_mut().find(|v| v.number == n))
+                {
+                    original.corrected_by = Some(number);
+                }
+                self.vouchers.push(Voucher {
+                    number,
+                    date,
+                    text,
+                    lines,
+                    corrects,
+                    corrected_by: None,
+                });
+            }
+            LedgerEvent::OpeningBalancesSet { lines } => self.opening_balances = lines,
+            LedgerEvent::FiscalYearClosed { result_voucher } => {
+                self.closed = true;
+                self.result_voucher = result_voucher;
+            }
+            LedgerEvent::FiscalYearReopened { .. } => {
+                self.closed = false;
+                self.result_voucher = None;
+            }
         }
-        self.vouchers.push(Voucher {
-            number,
-            date,
-            text,
-            lines,
-            corrects,
-            corrected_by: None,
-        });
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    /// Only ever set in the first fiscal year.
+    pub fn opening_balances(&self) -> &[VoucherLine] {
+        &self.opening_balances
     }
 
     /// 0 before the first voucher.
@@ -415,6 +473,9 @@ pub fn record_voucher(
     chart: &Chart,
     cmd: RecordVoucher,
 ) -> Result<LedgerEvent, DomainError> {
+    if ledger.closed {
+        return Err(DomainError::FiscalYearClosed);
+    }
     let text = cmd.text.trim();
     if !(1..=200).contains(&text.chars().count()) {
         return Err(DomainError::InvalidVoucherText);
@@ -458,6 +519,9 @@ pub fn correct_voucher(
     date: Date,
     today: Date,
 ) -> Result<LedgerEvent, DomainError> {
+    if ledger.closed {
+        return Err(DomainError::FiscalYearClosed);
+    }
     let original = ledger.voucher(number).ok_or(DomainError::VoucherNotFound)?;
     if original.corrects.is_some() {
         return Err(DomainError::CannotCorrectCorrection);
@@ -486,4 +550,45 @@ pub fn correct_voucher(
             .collect(),
         corrects: Some(number),
     })
+}
+
+/// The most lines the first year's opening balances may have.
+pub const MAX_OPENING_BALANCE_LINES: usize = 500;
+
+/// Decides the first fiscal year's ingående balanser, replacing any before.
+/// Accounts must exist but may be inactive: the balance is history.
+pub fn set_opening_balances(
+    ledger: &Ledger,
+    chart: &Chart,
+    lines: Vec<VoucherLine>,
+) -> Result<LedgerEvent, DomainError> {
+    if ledger.closed {
+        return Err(DomainError::FiscalYearClosed);
+    }
+    if lines.len() > MAX_OPENING_BALANCE_LINES {
+        return Err(DomainError::InvalidVoucherLines);
+    }
+    let mut seen = BTreeSet::new();
+    let (mut debit, mut credit) = (0_i64, 0_i64);
+    for line in &lines {
+        if !line.is_valid() {
+            return Err(DomainError::InvalidAmount);
+        }
+        if line.account.get() >= 3000 {
+            return Err(DomainError::NotBalanceSheetAccount);
+        }
+        chart
+            .get(line.account)
+            .ok_or(DomainError::AccountNotFound)?;
+        if !seen.insert(line.account) {
+            return Err(DomainError::DuplicateAccount);
+        }
+        // Cannot overflow: at most 500 lines of at most MAX_AMOUNT.
+        debit += line.debit;
+        credit += line.credit;
+    }
+    if debit != credit {
+        return Err(DomainError::OpeningBalancesUnbalanced);
+    }
+    Ok(LedgerEvent::OpeningBalancesSet { lines })
 }

@@ -162,8 +162,9 @@ async fn assert_consistent(
     let mut conn = pool.acquire().await.unwrap();
     let mut numbers: BTreeMap<String, Vec<u32>> = BTreeMap::new();
     for event in doris_eventstore::read_all(&mut conn, 0).await.unwrap() {
-        if event.stream_id.starts_with("ledger-") {
-            let LedgerEvent::VoucherRecorded { number, .. } = event.decode().unwrap();
+        if event.stream_id.starts_with("ledger-")
+            && let LedgerEvent::VoucherRecorded { number, .. } = event.decode().unwrap()
+        {
             numbers
                 .entry(event.stream_id.clone())
                 .or_default()

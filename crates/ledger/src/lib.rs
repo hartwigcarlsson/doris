@@ -279,7 +279,9 @@ async fn commit_voucher(
     event: LedgerEvent,
     actor: Uuid,
 ) -> Result<VoucherRef> {
-    let LedgerEvent::VoucherRecorded { number, .. } = event;
+    let &LedgerEvent::VoucherRecorded { number, .. } = &event else {
+        unreachable!("record_voucher and correct_voucher decide a voucher");
+    };
     let stream = ledger_stream(company_id, fiscal_year.start);
     append(conn, &stream, version, &[event], actor).await?;
     Ok(VoucherRef {

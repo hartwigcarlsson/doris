@@ -166,8 +166,10 @@ fn record(
 }
 
 fn number_of(event: &LedgerEvent) -> u32 {
-    let LedgerEvent::VoucherRecorded { number, .. } = event;
-    *number
+    match event {
+        LedgerEvent::VoucherRecorded { number, .. } => *number,
+        other => panic!("not a voucher: {other:?}"),
+    }
 }
 
 #[test]
@@ -202,7 +204,9 @@ fn voucher_text_is_trimmed_and_1_to_200_characters() {
     let chart = seeded();
     let mut cmd = sale("2025-03-01", 100);
     cmd.text = "  Hyra mars ".into();
-    let LedgerEvent::VoucherRecorded { text, .. } = record(&[], &chart, cmd).unwrap();
+    let LedgerEvent::VoucherRecorded { text, .. } = record(&[], &chart, cmd).unwrap() else {
+        panic!("not a voucher");
+    };
     assert_eq!(text, "Hyra mars");
     for bad in ["", "  ", &"x".repeat(201)] {
         let mut cmd = sale("2025-03-01", 100);
@@ -496,5 +500,161 @@ fn an_overflowing_running_balance_is_none_not_a_panic() {
             (t, 2, "b".into(), 0, 2)
         ]),
         None
+    );
+}
+
+/// The 2025 ledger after `given`, closed.
+fn closed_year(mut given: Vec<LedgerEvent>) -> Ledger {
+    given.push(LedgerEvent::FiscalYearClosed {
+        result_voucher: None,
+    });
+    Ledger::from_events(first_year(), &given)
+}
+
+#[test]
+fn a_closed_year_takes_no_voucher_and_no_correction() {
+    let chart = seeded();
+    let booked = record(&[], &chart, sale("2025-03-01", 100)).unwrap();
+    let ledger = closed_year(vec![booked]);
+
+    assert!(ledger.is_closed());
+    assert_eq!(
+        record_voucher(&ledger, &chart, sale("2025-03-02", 100)),
+        Err(DomainError::FiscalYearClosed)
+    );
+    assert_eq!(
+        correct_voucher(&ledger, 1, d("2025-03-02"), d("2026-10-02")),
+        Err(DomainError::FiscalYearClosed)
+    );
+}
+
+#[test]
+fn a_reopened_year_takes_vouchers_again() {
+    let chart = seeded();
+    let ledger = Ledger::from_events(
+        first_year(),
+        &[
+            LedgerEvent::FiscalYearClosed {
+                result_voucher: None,
+            },
+            LedgerEvent::FiscalYearReopened {
+                reason: "Glömd faktura".into(),
+            },
+        ],
+    );
+
+    assert!(!ledger.is_closed());
+    assert!(record_voucher(&ledger, &chart, sale("2025-03-02", 100)).is_ok());
+}
+
+fn lines(raw: &[(u32, i64, i64)]) -> Vec<VoucherLine> {
+    raw.iter()
+        .map(|&(account, debit, credit)| line(account, debit, credit))
+        .collect()
+}
+
+#[test]
+fn balanced_opening_balances_on_balance_sheet_accounts_are_set() {
+    let chart = seeded();
+    let ib = lines(&[(1930, 10_000, 0), (2081, 0, 10_000)]);
+
+    let event = set_opening_balances(&Ledger::new(first_year()), &chart, ib.clone()).unwrap();
+
+    assert_eq!(event, LedgerEvent::OpeningBalancesSet { lines: ib.clone() });
+    let ledger = Ledger::from_events(first_year(), &[event]);
+    assert_eq!(ledger.opening_balances(), &ib[..]);
+    // An empty list clears them.
+    assert_eq!(
+        set_opening_balances(&ledger, &chart, Vec::new()),
+        Ok(LedgerEvent::OpeningBalancesSet { lines: Vec::new() })
+    );
+}
+
+#[test]
+fn an_inactive_account_may_carry_an_opening_balance() {
+    let mut chart = seeded();
+    for event in set_account_active(&chart, n(1910), false).unwrap() {
+        chart.apply(&event);
+    }
+
+    let ib = lines(&[(1910, 500, 0), (2081, 0, 500)]);
+
+    assert!(set_opening_balances(&Ledger::new(first_year()), &chart, ib).is_ok());
+}
+
+#[test]
+fn invalid_opening_balances_are_refused() {
+    let chart = seeded();
+    let open = Ledger::new(first_year());
+    let too_many: Vec<VoucherLine> = (0..=MAX_OPENING_BALANCE_LINES)
+        .map(|_| line(1930, 1, 0))
+        .collect();
+    for (ib, expected) in [
+        (too_many, DomainError::InvalidVoucherLines),
+        (
+            lines(&[(1930, 0, 0), (2081, 0, 0)]),
+            DomainError::InvalidAmount,
+        ),
+        (
+            lines(&[(1930, 5, 5), (2081, 0, 0)]),
+            DomainError::InvalidAmount,
+        ),
+        (
+            lines(&[(1930, 100, 0), (3001, 0, 100)]),
+            DomainError::NotBalanceSheetAccount,
+        ),
+        (
+            lines(&[(1999, 100, 0), (2081, 0, 100)]),
+            DomainError::AccountNotFound,
+        ),
+        (
+            lines(&[(1930, 100, 0), (1930, 0, 100)]),
+            DomainError::DuplicateAccount,
+        ),
+        (
+            lines(&[(1930, 100, 0), (2081, 0, 99)]),
+            DomainError::OpeningBalancesUnbalanced,
+        ),
+    ] {
+        assert_eq!(
+            set_opening_balances(&open, &chart, ib),
+            Err(expected),
+            "{expected:?}"
+        );
+    }
+    assert_eq!(
+        set_opening_balances(
+            &closed_year(Vec::new()),
+            &chart,
+            lines(&[(1930, 100, 0), (2081, 0, 100)])
+        ),
+        Err(DomainError::FiscalYearClosed)
+    );
+}
+
+#[test]
+fn closing_events_are_readable_json() {
+    let as_json = |event: LedgerEvent| serde_json::to_value(event).unwrap();
+
+    assert_eq!(
+        as_json(LedgerEvent::OpeningBalancesSet {
+            lines: vec![line(1930, 100, 0)]
+        }),
+        serde_json::json!({
+            "type": "OpeningBalancesSet",
+            "lines": [{"account": 1930, "debit": 100, "credit": 0}]
+        })
+    );
+    assert_eq!(
+        as_json(LedgerEvent::FiscalYearClosed {
+            result_voucher: Some(7)
+        }),
+        serde_json::json!({"type": "FiscalYearClosed", "result_voucher": 7})
+    );
+    assert_eq!(
+        as_json(LedgerEvent::FiscalYearReopened {
+            reason: "Glömd faktura".into()
+        }),
+        serde_json::json!({"type": "FiscalYearReopened", "reason": "Glömd faktura"})
     );
 }

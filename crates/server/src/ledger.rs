@@ -264,6 +264,20 @@ fn domain_status(err: DomainError) -> Status {
         VoucherNotFound => Status::not_found("voucher_not_found"),
         AlreadyCorrected => Status::failed_precondition("already_corrected"),
         CannotCorrectCorrection => Status::failed_precondition("cannot_correct_correction"),
+        NotBalanceSheetAccount => Status::invalid_argument("not_balance_sheet_account"),
+        DuplicateAccount => Status::invalid_argument("duplicate_account"),
+        OpeningBalancesUnbalanced => Status::invalid_argument("opening_balances_unbalanced"),
+        InvalidReason => Status::invalid_argument("invalid_reason"),
+        FiscalYearNotFound => Status::not_found("fiscal_year_not_found"),
+        FiscalYearClosed => Status::failed_precondition("fiscal_year_closed"),
+        FiscalYearOpen => Status::failed_precondition("fiscal_year_open"),
+        FiscalYearNotEnded => Status::failed_precondition("fiscal_year_not_ended"),
+        PreviousFiscalYearOpen => Status::failed_precondition("previous_fiscal_year_open"),
+        LaterFiscalYearClosed => Status::failed_precondition("later_fiscal_year_closed"),
+        Overflow => {
+            tracing::error!("ledger: amount overflow");
+            Status::internal("internal")
+        }
     }
 }
 
