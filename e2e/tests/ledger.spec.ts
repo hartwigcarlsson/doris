@@ -196,3 +196,20 @@ test("choosing another fiscal year clears an old error", async ({ page, app }) =
   await page.getByLabel("Räkenskapsår").selectOption({ label: "2025-01-01 – 2025-12-31" });
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
+
+test("the grundbok and the chart fit without scrolling sideways", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await bookSale(page, "Försäljning kassa", "1250");
+  await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
+
+  for (const path of ["/vouchers", "/accounts"]) {
+    await page.goto(`${app}${path}`);
+    const table = page.getByRole("table");
+    await expect(table.getByRole("row").nth(1)).toBeVisible();
+    const overflow = await table.evaluate((t) => t.scrollWidth - t.parentElement!.clientWidth);
+    expect(overflow, `${path} table overflows its container`).toBeLessThanOrEqual(0);
+  }
+  await expect(page.getByRole("columnheader", { name: "Konto" })).toBeInViewport();
+});

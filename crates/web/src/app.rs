@@ -60,7 +60,9 @@ pub fn App() -> impl IntoView {
     view! {
         <Router>
             <Header />
-            <main class="mx-auto w-full max-w-sm px-4 py-10">
+            // A page that marks an element `data-wide` (the ledger's tables and line
+            // editor) gets the header's width; forms stay narrow.
+            <main class="mx-auto w-full max-w-sm px-4 py-10 has-[[data-wide]]:max-w-3xl">
                 <Show when=move || session.loaded.get() fallback=|| view! { <p class="text-muted-foreground">"Laddar…"</p> }>
                     <Routes fallback=|| view! { <p>"Sidan finns inte."</p> }>
                         <Route path=path!("/register") view=Register />

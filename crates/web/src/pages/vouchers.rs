@@ -106,7 +106,7 @@ pub fn Vouchers() -> impl IntoView {
     let changed = Callback::new(move |()| load());
 
     view! {
-        <div class="grid gap-6">
+        <div class="grid gap-6" data-wide>
             <div class="flex items-end justify-between gap-4">
                 <h1 class="text-sm font-medium">"Verifikationer"</h1>
                 <A href="/vouchers/new" attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline">"Ny verifikation"</A>

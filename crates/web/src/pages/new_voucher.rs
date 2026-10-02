@@ -165,7 +165,7 @@ pub fn NewVoucher() -> impl IntoView {
 
     view! {
         <Card title="Ny verifikation">
-            <form class="grid gap-4" novalidate on:submit=submit>
+            <form class="grid gap-4" data-wide novalidate on:submit=submit>
                 <ErrorAlert message=error />
                 {move || booked.get().map(|text| view! { <p role="status" class="text-xs/relaxed">{text}</p> })}
                 <div class="grid grid-cols-[10rem_1fr] gap-4">

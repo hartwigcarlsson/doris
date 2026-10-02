@@ -80,7 +80,7 @@ pub fn Accounts() -> impl IntoView {
     };
 
     view! {
-        <div class="grid gap-6">
+        <div class="grid gap-6" data-wide>
             <h1 class="text-sm font-medium">"Kontoplan"</h1>
             <ErrorAlert message=error />
             <Card title="Lägg till konto">
