@@ -3,6 +3,7 @@
 use crate::active_company::Companies;
 use crate::api::{ledger_api, lpb};
 use crate::errors::describe;
+use crate::fiscal_year::is_closed;
 use crate::format::{amount, today};
 use crate::ui::{
     Button, ErrorAlert, SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
@@ -112,16 +113,21 @@ pub fn Vouchers() -> impl IntoView {
                 <A href="/vouchers/new" attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline">"Ny verifikation"</A>
             </div>
             <ErrorAlert message=error />
-            <div class="w-56">
-                <Select label="Räkenskapsår" id="fiscal_year" value=year>
-                    {move || {
-                        years
-                            .get()
-                            .into_iter()
-                            .map(|y| view! { <option class=SELECT_OPTION value=y.start.clone()>{format!("{} – {}", y.start, y.end)}</option> })
-                            .collect_view()
-                    }}
-                </Select>
+            <div class="flex items-end gap-4">
+                <div class="w-56">
+                    <Select label="Räkenskapsår" id="fiscal_year" value=year>
+                        {move || {
+                            years
+                                .get()
+                                .into_iter()
+                                .map(|y| view! { <option class=SELECT_OPTION value=y.start.clone()>{format!("{} – {}", y.start, y.end)}</option> })
+                                .collect_view()
+                        }}
+                    </Select>
+                </div>
+                <Show when=move || years.with(|ys| is_closed(ys, &year.get()))>
+                    <span class="pb-2 text-xs/relaxed text-muted-foreground">"Stängt"</span>
+                </Show>
             </div>
             <Table>
                 <thead class=TABLE_HEAD>
@@ -167,6 +173,7 @@ fn VoucherRow(
     let companies = expect_context::<Companies>();
     // The company and year this row was loaded for, not whatever is active now.
     let company_id = StoredValue::new(company_id);
+    let closed = fiscal_year.as_ref().is_some_and(|y| y.closed);
     let fiscal_year = StoredValue::new(fiscal_year);
     let expanded = RwSignal::new(false);
     let correcting = RwSignal::new(false);
@@ -178,7 +185,8 @@ fn VoucherRow(
         (of, _) if of != 0 => format!("Rättelse av ver {of}"),
         _ => String::new(),
     };
-    let can_correct = voucher.corrects == 0 && voucher.corrected_by == 0;
+    // A closed year takes no correction; the server refuses one anyway.
+    let can_correct = voucher.corrects == 0 && voucher.corrected_by == 0 && !closed;
     let lines = voucher.lines.clone();
 
     let start_correction = move |_| {

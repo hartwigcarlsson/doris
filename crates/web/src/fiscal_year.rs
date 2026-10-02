@@ -56,17 +56,9 @@ pub fn pick_year(years: &[lpb::FiscalYear], preferred: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Whether `start` is a later year than the company's first (the oldest,
-/// listed last). Opening balances don't exist yet, so from the second year
-/// on the balance-sheet accounts show only that year's movements.
-pub fn opening_balances_missing(years: &[lpb::FiscalYear], start: &str) -> bool {
-    !start.is_empty() && years.last().is_some_and(|first| first.start != start)
-}
-
 /// Whether `start`'s opening balances are still preliminary: the year
 /// before it (listed next, years are newest first) is open, so its result
 /// is not on equity yet.
-#[allow(dead_code)] // ponytail: used from Tasks 8-10, drop then
 pub fn opening_balances_preliminary(years: &[lpb::FiscalYear], start: &str) -> bool {
     years
         .iter()
@@ -76,7 +68,6 @@ pub fn opening_balances_preliminary(years: &[lpb::FiscalYear], start: &str) -> b
 }
 
 /// Whether the listed year starting on `start` is closed.
-#[allow(dead_code)] // ponytail: used from Tasks 8-10, drop then
 pub fn is_closed(years: &[lpb::FiscalYear], start: &str) -> bool {
     years.iter().any(|y| y.start == start && y.closed)
 }
@@ -273,15 +264,6 @@ mod tests {
         assert_eq!(pick_year(&ys, ""), "2027-01-01");
         assert_eq!(pick_year(&ys, "nonsense"), "2027-01-01");
         assert_eq!(pick_year(&[], "2026-01-01"), "");
-    }
-
-    #[test]
-    fn opening_balances_are_missing_after_the_first_year() {
-        let ys = years(&["2027-01-01", "2026-01-01"]);
-        assert!(opening_balances_missing(&ys, "2027-01-01"));
-        assert!(!opening_balances_missing(&ys, "2026-01-01"));
-        assert!(!opening_balances_missing(&ys, ""));
-        assert!(!opening_balances_missing(&[], "2026-01-01"));
     }
 
     #[test]
