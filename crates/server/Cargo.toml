@@ -18,7 +18,8 @@ doris-ledger.workspace = true
 doris-proto = { workspace = true, features = ["server"] }
 http.workspace = true
 reqwest.workspace = true
-jiff.workspace = true
+# The image has no tzdata: bundle the tz database for Europe/Stockholm.
+jiff = { workspace = true, features = ["tzdb-bundle-always"] }
 rust-embed = { workspace = true, features = ["mime-guess"] }
 serde.workspace = true
 serde_json.workspace = true
