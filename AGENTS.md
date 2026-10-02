@@ -64,6 +64,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   trigger back that up. `crates/ledger/tests/stress.rs` must keep passing.
 - A voucher is never changed or removed. A rättelse is a new voucher with
   every line reversed and `corrects` pointing at the original.
+- The saldobalans and huvudbok (`trial_balance`, `account_ledger` in
+  `crates/ledger/src/queries.rs`) are plain queries over the voucher
+  projections, one fiscal year at a time. There are no opening balances
+  yet, so from the second year on balance-sheet accounts show only that
+  year's movements.
 
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.
