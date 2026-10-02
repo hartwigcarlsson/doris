@@ -254,6 +254,11 @@ pub async fn correct_voucher_in(
     today: Date,
 ) -> Result<VoucherRef> {
     let company = member_company(conn, company_id, actor).await?;
+    // A year that starts after today has no vouchers; checked first so a
+    // far-future start never steps fiscal years past the date limits.
+    if fiscal_year_start > today {
+        return Err(DomainError::VoucherNotFound.into());
+    }
     let fiscal_year = company.first_fiscal_year.containing(fiscal_year_start);
     if fiscal_year.start != fiscal_year_start {
         return Err(DomainError::VoucherNotFound.into());

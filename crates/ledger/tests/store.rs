@@ -379,6 +379,38 @@ async fn correcting_in_a_year_that_is_not_a_fiscal_year_start_finds_nothing() {
 }
 
 #[tokio::test]
+async fn correcting_in_a_far_future_year_finds_nothing_and_does_not_panic() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    // A broken räkenskapsår: stepping years towards 9999-12-31 overflows.
+    let id = doris_company::register_company(
+        &pool,
+        anna,
+        NewCompany {
+            org_nr: "556016-0680",
+            name: "Exempel AB",
+            legal_form: LegalForm::Aktiebolag,
+            street: "",
+            postal_code: "",
+            city: "",
+            fiscal_year_start: "2025-05-01".parse().unwrap(),
+            fiscal_year_end: "2026-04-30".parse().unwrap(),
+            accounting_method: AccountingMethod::Invoice,
+        },
+    )
+    .await
+    .unwrap();
+
+    for start in ["9999-05-01", "9999-12-31"] {
+        let result = correct_voucher(&pool, id, anna, d(start), 1, d("2025-06-01"), d(TODAY)).await;
+        assert!(
+            matches!(result, Err(Error::Domain(DomainError::VoucherNotFound))),
+            "{start}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn fiscal_years_run_from_the_first_to_the_current_newest_first() {
     let pool = db().await;
     let anna = Uuid::new_v4();
