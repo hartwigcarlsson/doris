@@ -1,11 +1,6 @@
 //! Components in the style of shadcn preset b1Gdz9bFY (radix-mira). Class
 //! lists are copied from the generated shadcn components; only what the app
 //! uses is here.
-
-// Table and TextInput are first used in Task 8, and leptos's props structs
-// ignore item-level allows, so this is file-wide until then.
-#![allow(dead_code)]
-
 use leptos::prelude::*;
 
 const BUTTON: &str = "inline-flex shrink-0 items-center justify-center gap-1 rounded-md border border-transparent bg-clip-padding text-xs/relaxed font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 active:translate-y-px disabled:pointer-events-none disabled:opacity-50 h-7 px-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-3.5";

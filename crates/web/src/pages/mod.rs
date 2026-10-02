@@ -1,3 +1,4 @@
+mod accounts;
 mod companies;
 mod company;
 mod home;
@@ -7,6 +8,7 @@ mod new_company;
 mod passkeys;
 mod register;
 
+pub use accounts::Accounts;
 pub use companies::Companies;
 pub use company::CompanyPage;
 pub use home::Home;

@@ -9,12 +9,10 @@ use tonic_web_wasm_client::options::{Credentials, FetchOptions};
 
 pub use doris_proto::auth::v1 as pb;
 pub use doris_proto::company::v1 as cpb;
-#[allow(unused_imports)]
 pub use doris_proto::ledger::v1 as lpb;
 
 pub type Api = AuthServiceClient<Client>;
 pub type CompanyApi = CompanyServiceClient<Client>;
-#[allow(dead_code)]
 pub type LedgerApi = LedgerServiceClient<Client>;
 
 pub fn api() -> Api {
@@ -25,7 +23,6 @@ pub fn company_api() -> CompanyApi {
     CompanyServiceClient::new(client())
 }
 
-#[allow(dead_code)]
 pub fn ledger_api() -> LedgerApi {
     LedgerServiceClient::new(client())
 }
