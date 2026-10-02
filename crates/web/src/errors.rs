@@ -51,7 +51,7 @@ fn message(code: &str) -> &'static str {
             "Kontot är inaktivt. Aktivera det i kontoplanen eller välj ett annat."
         }
         "invalid_voucher_text" => "Texten måste vara 1–200 tecken.",
-        "invalid_voucher_lines" => "En verifikation har 2–100 rader.",
+        "invalid_voucher_lines" => "En verifikation ska ha 2–100 rader.",
         "invalid_amount" => "Varje rad ska ha ett belopp i antingen debet eller kredit.",
         "voucher_unbalanced" => "Debet och kredit måste vara lika stora.",
         "voucher_date_in_future" => "Datumet kan inte vara i framtiden.",
@@ -96,6 +96,10 @@ mod tests {
         ] {
             assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
         }
+        assert_eq!(
+            message("invalid_voucher_lines"),
+            "En verifikation ska ha 2–100 rader."
+        );
     }
 
     #[test]
