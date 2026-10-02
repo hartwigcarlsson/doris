@@ -94,7 +94,10 @@ pub async fn open(url: &str) -> Result<SqlitePool, Error> {
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Full)
-        .foreign_keys(true);
+        .foreign_keys(true)
+        // Writers queue for the write lock instead of failing after sqlx's 5 s default.
+        // ponytail: SQLite's busy wait isn't FIFO; serialize writers in-process if 30 s is ever not enough.
+        .busy_timeout(std::time::Duration::from_secs(30));
     // Every connection to `:memory:` is its own database, so keep exactly one
     // and never let the pool recycle it: a fresh connection would be an
     // empty, unmigrated database.

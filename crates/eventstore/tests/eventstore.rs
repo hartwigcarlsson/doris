@@ -123,3 +123,15 @@ fn from_tagged_takes_event_type_from_serde_tag() {
     assert_eq!(event.event_type, "Happened");
     assert_eq!(event.payload, json!({ "type": "Happened", "x": 7 }));
 }
+
+#[tokio::test]
+async fn writers_wait_30_seconds_for_the_write_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", dir.path().join("busy.db").display());
+    let pool = open(&url).await.unwrap();
+    let ms: i64 = sqlx::query_scalar("SELECT timeout FROM pragma_busy_timeout")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ms, 30_000);
+}
