@@ -133,9 +133,8 @@ export async function logIn(page: Page, app: string, email: string) {
   await page.getByRole("button", { name: "Logga in med passkey" }).click();
 }
 
-/** Adds a company through the UI and waits for its page. */
-/** Adds a company whose first räkenskapsår starts on `start` (a 1 January). */
-export async function addCompany(page: Page, app: string, orgNr: string, name: string, start = "2026-01-01") {
+/** Adds a company whose first räkenskapsår starts on `start` (a 1 January), by default this year. */
+export async function addCompany(page: Page, app: string, orgNr: string, name: string, start = `${new Date().getFullYear()}-01-01`) {
   await page.goto(`${app}/companies`);
   await page.getByRole("main").getByRole("link", { name: "Lägg till företag" }).click();
   await page.getByLabel("Organisationsnummer").fill(orgNr);
