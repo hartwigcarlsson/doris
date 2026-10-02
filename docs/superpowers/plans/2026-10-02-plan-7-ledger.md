@@ -38,7 +38,7 @@
 - The UI follows shadcn preset b1Gdz9bFY. Table classes are copied from shadcn's generated `table` component (Task 7). Invent no classes except layout utilities.
 - No new dependencies, except `tempfile` (already in the workspace) as a dev-dependency of `doris-ledger` and the `StorageEvent` feature of `web-sys`.
 - Lints: `cargo clippy --workspace --all-targets -- -D warnings` and `cargo clippy -p doris-web --target wasm32-unknown-unknown -- -D warnings`.
-- The wasm stays under `WASM_BUDGET` (800 000 bytes). It is 786 184 bytes before this plan (measured 2026-10-02), leaving 13 816 bytes for three pages and the ledger client. Measure before Task 7 and after each of Tasks 8 and 9. If it goes over, stop and report; don't raise the budget.
+- The wasm budget rises from 800 000 to **900 000 bytes** in Task 7 (decided by the user on 2026-10-02: it was 786 184 bytes before this plan; code splitting needs cargo-leptos and is a separate step). Measure before Task 7 and after Tasks 8 and 9. If it goes over 900 000, stop and report; don't raise it further.
 - TDD: a failing test first for every behavior, and a commit per task. Commit messages are English and end with the attribution lines from the session.
 
 ## Review Focus
@@ -3060,10 +3060,9 @@ git commit -m "Serve the ledger over gRPC-Web"
     - the components `Table` (children: thead/tbody) and `TextInput`, a bare input bound to a `RwSignal<String>` with a required `label` used as `aria-label`
     - `pub const`s `TABLE_HEAD`, `TABLE_BODY`, `TABLE_ROW`, `TABLE_HEADER_CELL`, `TABLE_CELL`.
 
-- [ ] **Step 0: Measure the wasm before**
+- [ ] **Step 0: Raise the budget and measure the wasm before**
 
-Run: `make dist` and note the size printed by `wc -c crates/web/dist/*_bg.wasm`.
-Expected: under 800 000. Write the number into the commit message of this task, for example "wasm before: 7xx xxx bytes".
+In `Makefile`, set `WASM_BUDGET := 900000`. In `AGENTS.md`, change "fails if it grows past `WASM_BUDGET` (800 KB uncompressed)" to "(900 KB uncompressed)". Run `make dist` and note the size printed by `wc -c crates/web/dist/*_bg.wasm`; expected about 786 000. Put the number in this task's commit message, for example "wasm before: 786 184 bytes", and add `Makefile` and `AGENTS.md` to the commit.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4117,7 +4116,7 @@ Expected: everything passes.
 - [ ] **Step 6: Check the wasm budget**
 
 Run: `make dist`
-Expected: passes the `WASM_BUDGET` check. Report the size and how much it grew since Task 7 Step 0. If it fails, stop and report. Don't raise the budget.
+Expected: passes the `WASM_BUDGET` check (900 000). Report the size and how much it grew since Task 7 Step 0. If it fails, stop and report. Don't raise the budget further.
 
 - [ ] **Step 7: Commit**
 
@@ -4165,7 +4164,7 @@ make dist
 make e2e
 ```
 
-Expected: all green. `make dist` stays under the budget.
+Expected: all green. `make dist` stays under the 900 000-byte budget.
 
 - [ ] **Step 3: Commit**
 
