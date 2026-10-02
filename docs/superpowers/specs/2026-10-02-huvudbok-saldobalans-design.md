@@ -18,9 +18,9 @@ Båda funktionerna kontrollerar medlemskap först med `doris_company::get_compan
 
 ### `trial_balance(pool, company_id, user_id, fiscal_year_start) -> Vec<TrialBalanceRow>`
 - `TrialBalanceRow { account: u32, name: String, debit: i64, credit: i64 }`. Saldot räknas som `debit - credit` där det behövs och lagras inte.
-- En enda fråga: `voucher_lines` grupperade på `account` med `SUM(debit)` och `SUM(credit)`, och `JOIN accounts` för namnet. Den sorteras på kontonummer.
+- En enda fråga: `voucher_lines` grupperade på `account` med `SUM(debit)` och `SUM(credit)`, och `LEFT JOIN accounts` för namnet. Den sorteras på kontonummer.
 - Bara konton med minst en rad under året kommer med. Ett konto vars rader tar ut varandra (till exempel 0 efter en rättelse) kommer också med, med saldo 0.
-- Kontoplanen är alltid seedad om det finns verifikationer, eftersom seedningen sker vid första skrivningen. Därför räcker en `JOIN`.
+- Kontoplanen är alltid seedad om det finns verifikationer, eftersom seedningen sker vid första skrivningen. `LEFT JOIN` med tomt namn som reserv gör att ett konto aldrig försvinner ur saldobalansen ändå.
 - SQLite avbryter `SUM` med ett fel vid heltalsöverflöd i stället för att räkna fel. Det felet blir `internal`. Med högst 10¹³ öre per rad händer det inte i praktiken.
 
 ### `account_ledger(pool, company_id, user_id, fiscal_year_start, account) -> Vec<LedgerEntry>`
