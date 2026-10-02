@@ -35,6 +35,7 @@ migrations/         sqlx migrations, NNNN_name.sql, shared by all crates
 crates/company      doris-company: companies, members, fiscal year and accounting method
 crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
 crates/identity     doris-identity: users, passkeys, invitations, sessions
+crates/ledger       doris-ledger: chart of accounts and vouchers (verifikationer)
 crates/proto        doris-proto: generated code (feature `server` for stubs)
 crates/server       doris-server: binary, gRPC services, embedded frontend
 crates/web          doris-web: Leptos CSR app, UI components
@@ -56,6 +57,13 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `evolve(state, event)`. Test it given/when/then, without a database.
 - Operational data is **not** events and may be purged. That covers sessions
   and WebAuthn ceremony state.
+- Voucher numbers run 1..=n per company and fiscal year without gaps (BFL
+  5 kap.). The number is decided inside the write transaction
+  (`last_number + 1`), never by the client and never ahead of time; the
+  `vouchers` projection's primary key and the `vouchers_numbered_without_gaps`
+  trigger back that up. `crates/ledger/tests/stress.rs` must keep passing.
+- A voucher is never changed or removed. A rättelse is a new voucher with
+  every line reversed and `corrects` pointing at the original.
 
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.
@@ -65,7 +73,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - Archiving: data must be kept 7 years in a readable form, which is why events
   are stored as JSON rather than an opaque binary.
 - SQLite runs with `journal_mode=WAL`, `synchronous=FULL` and
-  `foreign_keys=ON`.
+  `foreign_keys=ON`. It also runs with `busy_timeout` 30 s
+  (`doris_eventstore::open`), so writers queue for the write lock instead of
+  failing; `crates/ledger/tests/stress.rs` exercises that.
 
 ## Naming and language
 - Code, identifiers, URLs, query params, proto, event names, commits: English.
@@ -92,8 +102,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - Email is personal data: never log it.
 
 ## API
-- The contract lives in `proto/doris/auth/v1/auth.proto` and
-  `proto/doris/company/v1/company.proto`. `doris-proto` generates
+- The contract lives in `proto/doris/auth/v1/auth.proto`,
+  `proto/doris/company/v1/company.proto` and `proto/doris/ledger/v1/ledger.proto`. `doris-proto` generates
   the client; its `server` feature adds the server stubs. The client builds for
   wasm32 because no transport is generated.
 - gRPC-Web over HTTP/1.1 (`tonic_web::GrpcWebLayer`) shares one port with the
@@ -104,7 +114,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `ceremony_expired`. The frontend translates them. They never contain
   personal data. The mapping is in `crates/server/src/grpc.rs` (`status`,
   `domain_code`). Company codes are mapped in `crates/server/src/company.rs`
-  (`status`, `domain_status`).
+  (`status`, `domain_status`). Ledger codes are mapped in
+  `crates/server/src/ledger.rs` (`status`, `domain_status`).
 - Company lookup uses Bolagsverket's free "värdefulla datamängder" API (OAuth2
   client credentials, register at portal.api.bolagsverket.se). Without
   credentials the lookup answers `lookup_unavailable` and details are typed in.
@@ -142,7 +153,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   remembered in `localStorage` as `doris.active_company.{user id}`. Pages that
   work on "the" company read it from the `Companies` context and send its
   `company_id` with every RPC. It grants nothing: the server checks membership
-  on every call.
+  on every call. Other tabs follow a change through the `storage` event, so a
+  stale tab never books in the wrong company.
 - `src/errors.rs` maps API error codes to Swedish text. Add a line there for
   every new code.
 - `src/ui.rs` holds the preset's components, with class lists copied from
@@ -154,9 +166,13 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `cargo clippy -p doris-web --target wasm32-unknown-unknown -- -D warnings`.
 - Keep the wasm small. `make dist` builds it with the `wasm-release` profile
   (opt-level "z", LTO, `panic = "abort"`), and fails if it grows past
-  `WASM_BUDGET` (800 KB uncompressed). The server sends frontend files
+  `WASM_BUDGET` (900 KB uncompressed). The server sends frontend files
   compressed (brotli or gzip, via tower-http), so the wasm transfers at about
   a third of its size. Check what a new dependency adds before taking it on.
+- The wasm is built with `--cfg erase_components` (set in `.cargo/config.toml`
+  for `wasm32-unknown-unknown`), which type-erases Leptos views and keeps the
+  wasm under budget; an env `RUSTFLAGS` overrides it, so don't set one for wasm
+  builds.
 - E2E tests live in `e2e/` (Playwright). Every test spawns its own server on
   a fresh database, and pages get a Chrome DevTools virtual WebAuthn
   authenticator. Select elements by their Swedish label or role.

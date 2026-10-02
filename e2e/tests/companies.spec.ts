@@ -1,21 +1,7 @@
-import { expect, register, test } from "./fixtures";
+import { addCompany, expect, register, test } from "./fixtures";
 import type { Page } from "@playwright/test";
 
 const nav = (page: Page) => page.getByRole("link", { name: "Företag", exact: true });
-
-async function addCompany(page: Page, app: string, orgNr: string, name: string) {
-  await page.goto(`${app}/companies`);
-  await page.getByRole("main").getByRole("link", { name: "Lägg till företag" }).click();
-  await page.getByLabel("Organisationsnummer").fill(orgNr);
-  await page.getByLabel("Företagsnamn").fill(name);
-  await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
-  await page.getByLabel("Postort").fill("Stockholm");
-  await page.getByLabel("Räkenskapsåret börjar").fill("2026-01-01");
-  await expect(page.getByText("Räkenskapsåret slutar 2026-12-31.")).toBeVisible();
-  await page.getByLabel("Faktureringsmetoden").check();
-  await page.getByRole("button", { name: "Spara företag" }).click();
-  await expect(page.getByRole("heading", { name })).toBeVisible();
-}
 
 test("a user adds a company by hand and finds it in the list", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });

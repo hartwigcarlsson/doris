@@ -854,6 +854,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -881,6 +882,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "doris-ledger"
+version = "0.1.0"
+dependencies = [
+ "doris-company",
+ "doris-eventstore",
+ "jiff",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "doris-proto"
 version = "0.1.0"
 dependencies = [
@@ -899,6 +916,7 @@ dependencies = [
  "doris-company",
  "doris-eventstore",
  "doris-identity",
+ "doris-ledger",
  "doris-proto",
  "http",
  "http-body-util",
@@ -1667,6 +1685,7 @@ dependencies = [
  "defmt",
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb",
  "jiff-tzdb-platform",
  "log",
  "portable-atomic",

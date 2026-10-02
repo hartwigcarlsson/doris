@@ -1,0 +1,122 @@
+syntax = "proto3";
+
+package doris.ledger.v1;
+
+// A company's chart of accounts and its vouchers (verifikationer). Every RPC
+// needs a session; a company the caller isn't a member of answers NOT_FOUND
+// "company_not_found". Dates are YYYY-MM-DD; amounts are öre.
+service LedgerService {
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
+  rpc AddAccount(AddAccountRequest) returns (AddAccountResponse);
+  rpc RenameAccount(RenameAccountRequest) returns (RenameAccountResponse);
+  rpc SetAccountActive(SetAccountActiveRequest) returns (SetAccountActiveResponse);
+  // From the first räkenskapsår up to the current one, newest first.
+  rpc ListFiscalYears(ListFiscalYearsRequest) returns (ListFiscalYearsResponse);
+  // The server decides the voucher's number.
+  rpc RecordVoucher(RecordVoucherRequest) returns (RecordVoucherResponse);
+  // Books a reversing voucher in the original's fiscal year.
+  rpc CorrectVoucher(CorrectVoucherRequest) returns (CorrectVoucherResponse);
+  // The grundbok for one fiscal year, by number.
+  rpc ListVouchers(ListVouchersRequest) returns (ListVouchersResponse);
+}
+
+message Account {
+  uint32 number = 1;
+  string name = 2;
+  bool active = 3;
+}
+
+message ListAccountsRequest {
+  string company_id = 1;
+}
+
+message ListAccountsResponse {
+  repeated Account accounts = 1;
+}
+
+message AddAccountRequest {
+  string company_id = 1;
+  uint32 number = 2;
+  string name = 3;
+}
+
+message AddAccountResponse {}
+
+message RenameAccountRequest {
+  string company_id = 1;
+  uint32 number = 2;
+  string name = 3;
+}
+
+message RenameAccountResponse {}
+
+message SetAccountActiveRequest {
+  string company_id = 1;
+  uint32 number = 2;
+  bool active = 3;
+}
+
+message SetAccountActiveResponse {}
+
+message FiscalYear {
+  string start = 1;
+  string end = 2;
+}
+
+message ListFiscalYearsRequest {
+  string company_id = 1;
+}
+
+message ListFiscalYearsResponse {
+  repeated FiscalYear fiscal_years = 1;
+}
+
+// Exactly one of debit and credit is positive.
+message VoucherLine {
+  uint32 account = 1;
+  int64 debit = 2;
+  int64 credit = 3;
+}
+
+message RecordVoucherRequest {
+  string company_id = 1;
+  string date = 2;
+  string text = 3;
+  repeated VoucherLine lines = 4;
+}
+
+message RecordVoucherResponse {
+  string fiscal_year_start = 1;
+  uint32 number = 2;
+}
+
+message CorrectVoucherRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+  uint32 number = 3;
+  string date = 4;
+}
+
+message CorrectVoucherResponse {
+  uint32 number = 1;
+}
+
+message ListVouchersRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+}
+
+// corrects and corrected_by are voucher numbers in the same fiscal year;
+// 0 means none.
+message Voucher {
+  uint32 number = 1;
+  string date = 2;
+  string text = 3;
+  repeated VoucherLine lines = 4;
+  uint32 corrects = 5;
+  uint32 corrected_by = 6;
+}
+
+message ListVouchersResponse {
+  repeated Voucher vouchers = 1;
+}

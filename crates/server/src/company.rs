@@ -8,9 +8,7 @@ use doris_company::domain::{AccountingMethod, Address, Company, DomainError, Leg
 use doris_company::{Error, NewCompany};
 use doris_proto::company::v1 as pb;
 use doris_proto::company::v1::company_service_server::CompanyService;
-use jiff::Timestamp;
 use jiff::civil::Date;
-use jiff::tz::TimeZone;
 use sqlx::SqlitePool;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
@@ -135,9 +133,7 @@ impl CompanyService for CompanyApi {
         let (company, _) = self
             .member_company(&request, &request.get_ref().company_id)
             .await?;
-        // ponytail: "today" in UTC, so the fiscal year flips up to 2 hours
-        // late at New Year in Sweden; use Europe/Stockholm once the image ships tzdata.
-        let today = Timestamp::now().to_zoned(TimeZone::UTC).date();
+        let today = grpc::today();
         let year = company.first_fiscal_year.containing(today);
         Ok(Response::new(pb::Company {
             id: company.id.to_string(),

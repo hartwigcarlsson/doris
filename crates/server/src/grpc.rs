@@ -6,6 +6,8 @@ use doris_identity::{Auth, Error, SESSION_TTL};
 use doris_proto::auth::v1 as pb;
 use doris_proto::auth::v1::auth_service_server::AuthService;
 use jiff::Timestamp;
+use jiff::civil::Date;
+use jiff::tz::TimeZone;
 use sqlx::SqlitePool;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
@@ -365,5 +367,42 @@ fn domain_code(err: DomainError) -> &'static str {
         DomainError::DuplicatePasskey => "duplicate_passkey",
         DomainError::UnknownPasskey => "unknown_passkey",
         DomainError::NotAdmin => "not_admin",
+    }
+}
+
+/// Today's date for date rules: Swedish, like the browser's local date.
+pub(crate) fn today() -> Date {
+    today_in_sweden(Timestamp::now())
+}
+
+/// The date in Sweden at `ts`.
+fn today_in_sweden(ts: Timestamp) -> Date {
+    // The tz database is bundled (jiff `tzdb-bundle-always`), so this holds
+    // even without tzdata on the host.
+    let sweden = TimeZone::get("Europe/Stockholm").expect("bundled tz database");
+    ts.to_zoned(sweden).date()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::today_in_sweden;
+    use jiff::civil::date;
+
+    #[test]
+    fn today_is_the_date_in_sweden() {
+        // Summer time (UTC+2) and winter time (UTC+1): past midnight in Sweden.
+        let at = |s: &str| s.parse().unwrap();
+        assert_eq!(
+            today_in_sweden(at("2026-10-01T22:30:00Z")),
+            date(2026, 10, 2)
+        );
+        assert_eq!(
+            today_in_sweden(at("2026-01-01T23:30:00Z")),
+            date(2026, 1, 2)
+        );
+        assert_eq!(
+            today_in_sweden(at("2026-01-01T22:30:00Z")),
+            date(2026, 1, 1)
+        );
     }
 }

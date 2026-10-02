@@ -1,7 +1,7 @@
 use clap::Parser;
 use doris_identity::Auth;
 use doris_server::bolagsverket::Bolagsverket;
-use doris_server::{AuthApi, CompanyApi, assets::WebDist};
+use doris_server::{AuthApi, CompanyApi, LedgerApi, assets::WebDist};
 use http::HeaderValue;
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -83,7 +83,8 @@ async fn run(config: Config) -> Result<(), String> {
     };
     let app = doris_server::router::<WebDist>(
         AuthApi::new(pool.clone(), auth),
-        CompanyApi::new(pool, bolagsverket),
+        CompanyApi::new(pool.clone(), bolagsverket),
+        LedgerApi::new(pool),
         cors_origins,
         config.serve_frontend,
     );

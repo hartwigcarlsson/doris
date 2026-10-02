@@ -127,7 +127,17 @@ pub async fn add_member(
 /// The company, if `user_id` is a member of it.
 pub async fn get_company(pool: &SqlitePool, company_id: Uuid, user_id: Uuid) -> Result<Company> {
     let mut conn = pool.acquire().await?;
-    match load_company(&mut conn, company_id).await? {
+    get_company_in(&mut conn, company_id, user_id).await
+}
+
+/// [`get_company`] on the caller's connection, e.g. inside another crate's
+/// write transaction.
+pub async fn get_company_in(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    user_id: Uuid,
+) -> Result<Company> {
+    match load_company(conn, company_id).await? {
         Some((company, _)) if company.is_member(user_id) => Ok(company),
         _ => Err(Error::NotFound),
     }

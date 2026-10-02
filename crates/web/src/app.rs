@@ -3,7 +3,8 @@
 use crate::active_company::{ActiveCompanySelect, Companies};
 use crate::api::{api, pb};
 use crate::pages::{
-    Companies, CompanyPage, Home, Invitations, Login, NewCompany, Passkeys, Register,
+    Accounts, Companies, CompanyPage, Home, Invitations, Login, NewCompany, NewVoucher, Passkeys,
+    Register, Vouchers,
 };
 use crate::ui::{Button, Variant};
 use leptos::prelude::*;
@@ -59,7 +60,9 @@ pub fn App() -> impl IntoView {
     view! {
         <Router>
             <Header />
-            <main class="mx-auto w-full max-w-sm px-4 py-10">
+            // A page that marks an element `data-wide` (the ledger's tables and line
+            // editor) gets the header's width; forms stay narrow.
+            <main class="mx-auto w-full max-w-sm px-4 py-10 has-[[data-wide]]:max-w-3xl">
                 <Show when=move || session.loaded.get() fallback=|| view! { <p class="text-muted-foreground">"Laddar…"</p> }>
                     <Routes fallback=|| view! { <p>"Sidan finns inte."</p> }>
                         <Route path=path!("/register") view=Register />
@@ -68,6 +71,9 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/companies") view=|| view! { <SignedIn><Companies /></SignedIn> } />
                         <Route path=path!("/companies/new") view=|| view! { <SignedIn><NewCompany /></SignedIn> } />
                         <Route path=path!("/companies/:id") view=|| view! { <SignedIn><CompanyPage /></SignedIn> } />
+                        <Route path=path!("/accounts") view=|| view! { <SignedIn><Accounts /></SignedIn> } />
+                        <Route path=path!("/vouchers") view=|| view! { <SignedIn><Vouchers /></SignedIn> } />
+                        <Route path=path!("/vouchers/new") view=|| view! { <SignedIn><NewVoucher /></SignedIn> } />
                         <Route path=path!("/settings/passkeys") view=|| view! { <SignedIn><Passkeys /></SignedIn> } />
                         <Route path=path!("/admin/invitations") view=|| view! { <SignedIn admin=true><Invitations /></SignedIn> } />
                     </Routes>
@@ -98,6 +104,7 @@ fn SignedIn(#[prop(optional)] admin: bool, children: ChildrenFn) -> impl IntoVie
 #[component]
 fn Header() -> impl IntoView {
     let session = expect_context::<Session>();
+    let companies = expect_context::<Companies>();
     let navigate = use_navigate();
     let log_out = move |_| {
         let navigate = navigate.clone();
@@ -113,6 +120,10 @@ fn Header() -> impl IntoView {
                 <A href="/" attr:class="text-sm font-semibold">"Doris"</A>
                 <Show when=move || session.user.get().is_some()>
                     <ActiveCompanySelect />
+                    <Show when=move || !companies.active.get().is_empty()>
+                        <A href="/vouchers" attr:class="text-muted-foreground hover:text-foreground">"Verifikationer"</A>
+                        <A href="/accounts" attr:class="text-muted-foreground hover:text-foreground">"Kontoplan"</A>
+                    </Show>
                     <A href="/companies" attr:class="text-muted-foreground hover:text-foreground">"Företag"</A>
                     <A href="/settings/passkeys" attr:class="text-muted-foreground hover:text-foreground">"Passkeys"</A>
                     <Show when=move || session.is_admin()>

@@ -132,3 +132,18 @@ export async function logIn(page: Page, app: string, email: string) {
   await page.getByLabel("E-post").fill(email);
   await page.getByRole("button", { name: "Logga in med passkey" }).click();
 }
+
+/** Adds a company through the UI and waits for its page. */
+export async function addCompany(page: Page, app: string, orgNr: string, name: string) {
+  await page.goto(`${app}/companies`);
+  await page.getByRole("main").getByRole("link", { name: "Lägg till företag" }).click();
+  await page.getByLabel("Organisationsnummer").fill(orgNr);
+  await page.getByLabel("Företagsnamn").fill(name);
+  await page.getByLabel("Juridisk form").selectOption({ label: "Aktiebolag" });
+  await page.getByLabel("Postort").fill("Stockholm");
+  await page.getByLabel("Räkenskapsåret börjar").fill("2026-01-01");
+  await expect(page.getByText("Räkenskapsåret slutar 2026-12-31.")).toBeVisible();
+  await page.getByLabel("Faktureringsmetoden").check();
+  await page.getByRole("button", { name: "Spara företag" }).click();
+  await expect(page.getByRole("heading", { name })).toBeVisible();
+}

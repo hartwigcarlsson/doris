@@ -39,7 +39,33 @@ impl Companies {
                 remember(&user_id, &active);
             }
         });
+        companies.follow_other_tabs();
         companies
+    }
+
+    /// Another tab of this browser chose another company: switch too, so
+    /// this tab never books in a company the user has just left. A company
+    /// this tab doesn't know yet (added in the other tab) reloads the list.
+    fn follow_other_tabs(self) {
+        // The handle is dropped on purpose: the listener lives as long as the app.
+        let _ = window_event_listener(leptos::ev::storage, move |event| {
+            let Some(user_id) = self.user_id.get_untracked() else {
+                return;
+            };
+            if event.key().as_deref() != Some(storage_key(&user_id).as_str()) {
+                return;
+            }
+            let Some(company_id) = event.new_value().filter(|id| !id.is_empty()) else {
+                return;
+            };
+            let known = self
+                .list
+                .with_untracked(|list| list.iter().any(|c| c.id == company_id));
+            self.active.set(company_id);
+            if !known {
+                self.reload();
+            }
+        });
     }
 
     /// Fetches `user_id`'s companies and settles the active one: the current
