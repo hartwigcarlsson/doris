@@ -1,8 +1,8 @@
 //! Read models for the chart and the vouchers. Updated in the same
 //! transaction as the append; rebuildable from the event log.
 
-use crate::domain::{ChartAccount, ChartEvent};
-use crate::{ACCOUNTS_STREAM, LEDGER_STREAM};
+use crate::ACCOUNTS_STREAM;
+use crate::domain::{ChartAccount, ChartEvent, LedgerEvent};
 use doris_eventstore::RecordedEvent;
 use sqlx::SqliteConnection;
 
@@ -10,8 +10,8 @@ pub(crate) async fn apply(conn: &mut SqliteConnection, event: &RecordedEvent) ->
     if let Some(company_id) = event.stream_id.strip_prefix(ACCOUNTS_STREAM) {
         return apply_chart(conn, company_id, event.decode()?).await;
     }
-    if event.stream_id.starts_with(LEDGER_STREAM) {
-        return Ok(()); // Task 4
+    if let Some((company_id, fiscal_year_start)) = crate::parse_ledger_stream(&event.stream_id) {
+        return apply_ledger(conn, company_id, fiscal_year_start, event).await;
     }
     Ok(())
 }
@@ -75,6 +75,65 @@ async fn set_active(
         .bind(number)
         .execute(&mut *conn)
         .await?;
+    Ok(())
+}
+
+async fn apply_ledger(
+    conn: &mut SqliteConnection,
+    company_id: &str,
+    fiscal_year_start: &str,
+    event: &RecordedEvent,
+) -> crate::Result<()> {
+    let LedgerEvent::VoucherRecorded {
+        number,
+        date,
+        text,
+        lines,
+        corrects,
+    } = event.decode()?;
+    sqlx::query(
+        "INSERT INTO vouchers (company_id, fiscal_year_start, number, date, text, corrects,
+             recorded_at, recorded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(company_id)
+    .bind(fiscal_year_start)
+    .bind(number)
+    .bind(date.to_string())
+    .bind(&text)
+    .bind(corrects)
+    .bind(&event.recorded_at)
+    .bind(event.metadata.actor.as_deref().unwrap_or_default())
+    .execute(&mut *conn)
+    .await?;
+    for (line_no, line) in (1_i64..).zip(&lines) {
+        sqlx::query(
+            "INSERT INTO voucher_lines (company_id, fiscal_year_start, number, line_no, account,
+                 debit, credit)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(company_id)
+        .bind(fiscal_year_start)
+        .bind(number)
+        .bind(line_no)
+        .bind(line.account.get())
+        .bind(line.debit)
+        .bind(line.credit)
+        .execute(&mut *conn)
+        .await?;
+    }
+    if let Some(original) = corrects {
+        sqlx::query(
+            "UPDATE vouchers SET corrected_by = ?
+             WHERE company_id = ? AND fiscal_year_start = ? AND number = ?",
+        )
+        .bind(number)
+        .bind(company_id)
+        .bind(fiscal_year_start)
+        .bind(original)
+        .execute(&mut *conn)
+        .await?;
+    }
     Ok(())
 }
 

@@ -1,9 +1,12 @@
 use doris_company::NewCompany;
 use doris_company::domain::{AccountingMethod, LegalForm};
-use doris_ledger::domain::DomainError;
+use doris_ledger::domain::{DomainError, RecordVoucher, VoucherLine};
 use doris_ledger::{
-    Error, add_account, list_accounts, rebuild_projections, rename_account, set_account_active,
+    Error, VoucherRef, add_account, correct_voucher, list_accounts, list_fiscal_years,
+    list_vouchers, rebuild_projections, record_voucher, record_voucher_in, rename_account,
+    set_account_active,
 };
+use jiff::civil::Date;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -178,4 +181,315 @@ async fn the_chart_projection_rebuilds_from_the_events() {
 
     assert_eq!(table(&pool, sql).await, before);
     assert!(!before.is_empty());
+}
+
+fn d(s: &str) -> Date {
+    s.parse().unwrap()
+}
+
+const TODAY: &str = "2026-10-02";
+
+fn sale(date: &str, ore: i64) -> RecordVoucher {
+    RecordVoucher {
+        date: d(date),
+        text: "Försäljning".into(),
+        lines: vec![
+            VoucherLine::new(1930, ore, 0).unwrap(),
+            VoucherLine::new(3001, 0, ore).unwrap(),
+        ],
+    }
+}
+
+#[tokio::test]
+async fn vouchers_are_numbered_per_fiscal_year() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+
+    let a = record_voucher(&pool, id, anna, sale("2025-12-31", 100), today)
+        .await
+        .unwrap();
+    let b = record_voucher(&pool, id, anna, sale("2026-01-01", 100), today)
+        .await
+        .unwrap();
+    let c = record_voucher(&pool, id, anna, sale("2025-02-01", 100), today)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        a,
+        VoucherRef {
+            fiscal_year_start: d("2025-01-01"),
+            number: 1
+        }
+    );
+    assert_eq!(
+        b,
+        VoucherRef {
+            fiscal_year_start: d("2026-01-01"),
+            number: 1
+        }
+    );
+    assert_eq!(
+        c,
+        VoucherRef {
+            fiscal_year_start: d("2025-01-01"),
+            number: 2
+        }
+    );
+    let in_2025 = list_vouchers(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+    assert_eq!(in_2025.iter().map(|v| v.number).collect::<Vec<_>>(), [1, 2]);
+    assert_eq!(in_2025[0].date, d("2025-12-31"));
+    assert_eq!(in_2025[0].lines, sale("2025-12-31", 100).lines);
+}
+
+#[tokio::test]
+async fn a_rejected_voucher_uses_no_number_and_writes_nothing() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    let mut unbalanced = sale("2025-03-01", 100);
+    unbalanced.lines[1].credit = 99;
+
+    let result = record_voucher(&pool, id, anna, unbalanced, today).await;
+    let next = record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        result,
+        Err(Error::Domain(DomainError::VoucherUnbalanced))
+    ));
+    assert_eq!(next.number, 1);
+    assert_eq!(events_of(&pool, "ledger-").await, ["VoucherRecorded"]);
+}
+
+#[tokio::test]
+async fn a_rolled_back_transaction_uses_no_number() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+
+    let mut tx = doris_eventstore::begin(&pool).await.unwrap();
+    let abandoned = record_voucher_in(&mut tx, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    let kept = record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+
+    assert_eq!(abandoned.number, 1);
+    assert_eq!(kept.number, 1);
+    assert!(events_of(&pool, "accounts-").await == ["ChartSeeded"]);
+}
+
+#[tokio::test]
+async fn the_first_voucher_seeds_the_chart_it_is_checked_against() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), d(TODAY))
+        .await
+        .unwrap();
+
+    assert_eq!(events_of(&pool, "accounts-").await, ["ChartSeeded"]);
+}
+
+#[tokio::test]
+async fn a_correction_is_listed_with_both_links() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    let original = record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+
+    let correction = correct_voucher(
+        &pool,
+        id,
+        anna,
+        original.fiscal_year_start,
+        1,
+        d("2025-12-31"),
+        today,
+    )
+    .await
+    .unwrap();
+    let again = correct_voucher(
+        &pool,
+        id,
+        anna,
+        original.fiscal_year_start,
+        1,
+        d("2025-12-31"),
+        today,
+    )
+    .await;
+
+    assert_eq!(
+        correction,
+        VoucherRef {
+            fiscal_year_start: d("2025-01-01"),
+            number: 2
+        }
+    );
+    assert!(matches!(
+        again,
+        Err(Error::Domain(DomainError::AlreadyCorrected))
+    ));
+    let listed = list_vouchers(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+    assert_eq!(
+        (listed[0].corrects, listed[0].corrected_by),
+        (None, Some(2))
+    );
+    assert_eq!(
+        (listed[1].corrects, listed[1].corrected_by),
+        (Some(1), None)
+    );
+    assert_eq!(listed[1].text, "Rättelse av ver 1");
+}
+
+#[tokio::test]
+async fn correcting_in_a_year_that_is_not_a_fiscal_year_start_finds_nothing() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+
+    for start in ["2025-02-01", "2024-01-01", "2027-01-01"] {
+        let result = correct_voucher(&pool, id, anna, d(start), 1, d("2025-03-02"), today).await;
+        assert!(
+            matches!(result, Err(Error::Domain(DomainError::VoucherNotFound))),
+            "{start}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn fiscal_years_run_from_the_first_to_the_current_newest_first() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+
+    let years = list_fiscal_years(&pool, id, anna, d(TODAY)).await.unwrap();
+    let before_start = list_fiscal_years(&pool, id, anna, d("2024-06-01"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        years.iter().map(|y| y.start).collect::<Vec<_>>(),
+        [d("2026-01-01"), d("2025-01-01")]
+    );
+    assert_eq!(
+        before_start.iter().map(|y| y.start).collect::<Vec<_>>(),
+        [d("2025-01-01")]
+    );
+}
+
+#[tokio::test]
+async fn non_members_cannot_book_correct_or_read() {
+    let pool = db().await;
+    let (anna, bo) = (Uuid::new_v4(), Uuid::new_v4());
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        record_voucher(&pool, id, bo, sale("2025-03-01", 1), today).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        correct_voucher(&pool, id, bo, d("2025-01-01"), 1, d("2025-03-02"), today).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        list_vouchers(&pool, id, bo, d("2025-01-01")).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        list_fiscal_years(&pool, id, bo, today).await,
+        Err(Error::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn the_database_refuses_a_gap_or_a_duplicate_in_the_projection() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), d(TODAY))
+        .await
+        .unwrap();
+    let insert = |number: i64| {
+        sqlx::query(
+            "INSERT INTO vouchers (company_id, fiscal_year_start, number, date, text, recorded_at, recorded_by)
+             VALUES (?, '2025-01-01', ?, '2025-03-01', 'x', 'now', 'test')",
+        )
+        .bind(id.to_string())
+        .bind(number)
+        .execute(&pool)
+    };
+
+    assert!(insert(3).await.is_err(), "a gap");
+    assert!(insert(1).await.is_err(), "a duplicate");
+    assert!(insert(2).await.is_ok(), "the next number");
+}
+
+#[tokio::test]
+async fn the_voucher_projections_rebuild_from_the_events() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+    record_voucher(&pool, id, anna, sale("2026-03-01", 250), today)
+        .await
+        .unwrap();
+    correct_voucher(&pool, id, anna, d("2025-01-01"), 1, d("2025-03-02"), today)
+        .await
+        .unwrap();
+    let before_2025 = list_vouchers(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+    let before_2026 = list_vouchers(&pool, id, anna, d("2026-01-01"))
+        .await
+        .unwrap();
+    let lines_sql = "SELECT company_id || fiscal_year_start || number || line_no || account || debit || credit FROM voucher_lines ORDER BY 1";
+    let audit_sql = "SELECT number || recorded_at || recorded_by FROM vouchers ORDER BY 1";
+    let (lines, audit) = (table(&pool, lines_sql).await, table(&pool, audit_sql).await);
+
+    rebuild_projections(&pool).await.unwrap();
+
+    assert_eq!(
+        list_vouchers(&pool, id, anna, d("2025-01-01"))
+            .await
+            .unwrap(),
+        before_2025
+    );
+    assert_eq!(
+        list_vouchers(&pool, id, anna, d("2026-01-01"))
+            .await
+            .unwrap(),
+        before_2026
+    );
+    assert_eq!(table(&pool, lines_sql).await, lines);
+    assert_eq!(table(&pool, audit_sql).await, audit);
+    assert!(audit.iter().all(|row| row.ends_with(&anna.to_string())));
 }

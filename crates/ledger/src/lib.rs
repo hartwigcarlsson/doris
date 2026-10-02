@@ -10,15 +10,18 @@ pub mod domain;
 mod projections;
 mod queries;
 
-use domain::{AccountName, AccountNumber, Chart, ChartEvent, DomainError};
-use doris_company::domain::Company;
+use domain::{
+    AccountName, AccountNumber, Chart, ChartEvent, DomainError, Ledger, LedgerEvent, RecordVoucher,
+};
+use doris_company::domain::{Company, FiscalYear};
 use doris_eventstore::{Metadata, NewEvent};
+use jiff::civil::Date;
 use serde::Serialize;
 use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 pub use projections::rebuild_projections;
-pub use queries::list_accounts;
+pub use queries::{list_accounts, list_fiscal_years, list_vouchers};
 
 const ACCOUNTS_STREAM: &str = "accounts-";
 const LEDGER_STREAM: &str = "ledger-";
@@ -176,4 +179,129 @@ async fn append<E: Serialize>(
         projections::apply(conn, event).await?;
     }
     Ok(())
+}
+
+/// Where a voucher landed: its fiscal year and its number in that year.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VoucherRef {
+    pub fiscal_year_start: Date,
+    pub number: u32,
+}
+
+pub async fn record_voucher(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    cmd: RecordVoucher,
+    today: Date,
+) -> Result<VoucherRef> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let voucher = record_voucher_in(&mut tx, company_id, actor, cmd, today).await?;
+    tx.commit().await?;
+    Ok(voucher)
+}
+
+/// [`record_voucher`] in the caller's transaction, which must be IMMEDIATE
+/// (see [`doris_eventstore::begin`]). Nothing is kept, and no number is used
+/// up, unless the caller commits.
+pub async fn record_voucher_in(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    actor: Uuid,
+    cmd: RecordVoucher,
+    today: Date,
+) -> Result<VoucherRef> {
+    let company = member_company(conn, company_id, actor).await?;
+    let fiscal_year = domain::fiscal_year_for(company.first_fiscal_year, cmd.date, today)?;
+    let chart = seeded_chart(conn, company_id, actor).await?;
+    let (ledger, version) = load_ledger(conn, company_id, fiscal_year).await?;
+    let event = domain::record_voucher(&ledger, &chart, cmd)?;
+    commit_voucher(conn, company_id, fiscal_year, version, event, actor).await
+}
+
+pub async fn correct_voucher(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    number: u32,
+    date: Date,
+    today: Date,
+) -> Result<VoucherRef> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let voucher = correct_voucher_in(
+        &mut tx,
+        company_id,
+        actor,
+        fiscal_year_start,
+        number,
+        date,
+        today,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(voucher)
+}
+
+/// [`correct_voucher`] in the caller's IMMEDIATE transaction.
+pub async fn correct_voucher_in(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    number: u32,
+    date: Date,
+    today: Date,
+) -> Result<VoucherRef> {
+    let company = member_company(conn, company_id, actor).await?;
+    let fiscal_year = company.first_fiscal_year.containing(fiscal_year_start);
+    if fiscal_year.start != fiscal_year_start {
+        return Err(DomainError::VoucherNotFound.into());
+    }
+    let (ledger, version) = load_ledger(conn, company_id, fiscal_year).await?;
+    let event = domain::correct_voucher(&ledger, number, date, today)?;
+    commit_voucher(conn, company_id, fiscal_year, version, event, actor).await
+}
+
+async fn commit_voucher(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    fiscal_year: FiscalYear,
+    version: i64,
+    event: LedgerEvent,
+    actor: Uuid,
+) -> Result<VoucherRef> {
+    let LedgerEvent::VoucherRecorded { number, .. } = event;
+    let stream = ledger_stream(company_id, fiscal_year.start);
+    append(conn, &stream, version, &[event], actor).await?;
+    Ok(VoucherRef {
+        fiscal_year_start: fiscal_year.start,
+        number,
+    })
+}
+
+fn ledger_stream(company_id: Uuid, fiscal_year_start: Date) -> String {
+    format!("{LEDGER_STREAM}{company_id}-{fiscal_year_start}")
+}
+
+/// The ledger stream id's parts: company id and fiscal year start.
+fn parse_ledger_stream(stream_id: &str) -> Option<(&str, &str)> {
+    let rest = stream_id.strip_prefix(LEDGER_STREAM)?;
+    // A uuid is 36 characters, followed by '-' and the YYYY-MM-DD start.
+    Some((rest.get(..36)?, rest.get(37..)?))
+}
+
+async fn load_ledger(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    fiscal_year: FiscalYear,
+) -> Result<(Ledger, i64)> {
+    let recorded =
+        doris_eventstore::load(conn, &ledger_stream(company_id, fiscal_year.start)).await?;
+    let version = recorded.last().map_or(0, |e| e.stream_version);
+    let events = recorded
+        .iter()
+        .map(|e| e.decode::<LedgerEvent>())
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((Ledger::from_events(fiscal_year, &events), version))
 }
