@@ -1,7 +1,7 @@
 use doris_company::domain::{AccountingMethod, DomainError, LegalForm};
 use doris_company::{
-    Error, NewCompany, add_member, get_company, list_companies, rebuild_projections,
-    register_company,
+    Error, NewCompany, add_member, get_company, get_company_in, list_companies,
+    rebuild_projections, register_company,
 };
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -181,4 +181,21 @@ async fn companies_are_listed_alphabetically_ignoring_case() {
         .map(|c| c.name)
         .collect();
     assert_eq!(names, ["Alfa AB", "beta AB", "Ceta AB"]);
+}
+
+#[tokio::test]
+async fn get_company_in_works_inside_a_write_transaction() {
+    let pool = db().await;
+    let (anna, bo) = (Uuid::new_v4(), Uuid::new_v4());
+    let id = register_company(&pool, anna, input("556016-0680", "Exempel AB"))
+        .await
+        .unwrap();
+
+    let mut tx = doris_eventstore::begin(&pool).await.unwrap();
+    let company = get_company_in(&mut tx, id, anna).await.unwrap();
+    let outsider = get_company_in(&mut tx, id, bo).await;
+    tx.rollback().await.unwrap();
+
+    assert_eq!(company.id, id);
+    assert!(matches!(outsider, Err(Error::NotFound)));
 }
