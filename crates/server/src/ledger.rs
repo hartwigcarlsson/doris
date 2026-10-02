@@ -168,6 +168,50 @@ impl LedgerService for LedgerApi {
             .collect();
         Ok(Response::new(pb::ListVouchersResponse { vouchers }))
     }
+
+    async fn get_trial_balance(
+        &self,
+        request: Request<pb::GetTrialBalanceRequest>,
+    ) -> Result<Response<pb::GetTrialBalanceResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let fiscal_year_start = date(&request.get_ref().fiscal_year_start)?;
+        let rows = doris_ledger::trial_balance(&self.pool, company, user, fiscal_year_start)
+            .await
+            .map_err(status)?
+            .into_iter()
+            .map(|r| pb::TrialBalanceRow {
+                account: r.account,
+                name: r.name,
+                debit: r.debit,
+                credit: r.credit,
+            })
+            .collect();
+        Ok(Response::new(pb::GetTrialBalanceResponse { rows }))
+    }
+
+    async fn get_account_ledger(
+        &self,
+        request: Request<pb::GetAccountLedgerRequest>,
+    ) -> Result<Response<pb::GetAccountLedgerResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let req = request.get_ref();
+        let fiscal_year_start = date(&req.fiscal_year_start)?;
+        let entries =
+            doris_ledger::account_ledger(&self.pool, company, user, fiscal_year_start, req.account)
+                .await
+                .map_err(status)?
+                .into_iter()
+                .map(|e| pb::LedgerEntry {
+                    date: e.date.to_string(),
+                    number: e.number,
+                    text: e.text,
+                    debit: e.debit,
+                    credit: e.credit,
+                    balance: e.balance,
+                })
+                .collect();
+        Ok(Response::new(pb::GetAccountLedgerResponse { entries }))
+    }
 }
 
 fn voucher_message(v: Voucher) -> pb::Voucher {

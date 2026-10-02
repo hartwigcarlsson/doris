@@ -18,6 +18,12 @@ service LedgerService {
   rpc CorrectVoucher(CorrectVoucherRequest) returns (CorrectVoucherResponse);
   // The grundbok for one fiscal year, by number.
   rpc ListVouchers(ListVouchersRequest) returns (ListVouchersResponse);
+  // The saldobalans for one fiscal year: debit and credit per account with
+  // lines in it, by account number.
+  rpc GetTrialBalance(GetTrialBalanceRequest) returns (GetTrialBalanceResponse);
+  // One account's huvudbok for one fiscal year: its lines by date, then
+  // voucher number, with the balance after each.
+  rpc GetAccountLedger(GetAccountLedgerRequest) returns (GetAccountLedgerResponse);
 }
 
 message Account {
@@ -119,4 +125,41 @@ message Voucher {
 
 message ListVouchersResponse {
   repeated Voucher vouchers = 1;
+}
+
+message GetTrialBalanceRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+}
+
+// The balance is debit - credit; positive is a debit balance.
+message TrialBalanceRow {
+  uint32 account = 1;
+  string name = 2;
+  int64 debit = 3;
+  int64 credit = 4;
+}
+
+message GetTrialBalanceResponse {
+  repeated TrialBalanceRow rows = 1;
+}
+
+message GetAccountLedgerRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+  uint32 account = 3;
+}
+
+// balance is the account's balance after this line.
+message LedgerEntry {
+  string date = 1;
+  uint32 number = 2;
+  string text = 3;
+  int64 debit = 4;
+  int64 credit = 5;
+  int64 balance = 6;
+}
+
+message GetAccountLedgerResponse {
+  repeated LedgerEntry entries = 1;
 }
