@@ -172,6 +172,16 @@ async fn assert_consistent(
     }
     drop(conn);
     assert_eq!(numbers.len(), 3, "one stream per fiscal year");
+    // The raced targets (op 0, and k % 10 == 3) each won by exactly one writer.
+    let raced: BTreeMap<(Date, u32), u32> = [
+        ("2024-01-01", 1),
+        ("2025-01-01", 2),
+        ("2026-01-01", 3),
+        ("2026-01-01", 1),
+    ]
+    .map(|(start, number)| ((d(start), number), 1))
+    .into();
+    assert_eq!(corrections, &raced);
     for (stream, numbers) in &numbers {
         let expected: Vec<u32> = (1..=numbers.len() as u32).collect();
         assert_eq!(numbers, &expected, "{stream}");
@@ -196,18 +206,14 @@ async fn assert_consistent(
             let credit: i64 = v.lines.iter().map(|l| l.credit).sum();
             assert_eq!(debit, credit, "ver {} in {start}", v.number);
         }
-        // 4. Every raced-for voucher was corrected exactly once.
+        // 4. Every raced-for voucher was corrected exactly once, no other.
         for target in 1..=TARGETS_PER_YEAR {
-            let by: Vec<_> = vouchers
+            let by = vouchers
                 .iter()
                 .filter(|v| v.corrects == Some(target))
-                .collect();
+                .count();
             let expected = corrections.get(&(start, target)).copied().unwrap_or(0);
-            assert!(
-                expected <= 1,
-                "{start} ver {target} corrected {expected} times"
-            );
-            assert_eq!(by.len() as u32, expected, "{start} ver {target}");
+            assert_eq!(by as u32, expected, "{start} ver {target}");
         }
     }
 }
@@ -255,10 +261,6 @@ async fn voucher_numbers_never_gap_or_repeat_under_concurrent_writers() {
     let committed = committed.lock().unwrap().clone();
     let corrections = corrections.lock().unwrap().clone();
     assert_eq!(committed.len(), 3);
-    assert!(
-        corrections.contains_key(&(d("2026-01-01"), 1)),
-        "the op-0 race was won by someone"
-    );
     assert_consistent(&pool, company, anna, &committed, &corrections).await;
     rebuild_projections(&pool).await.unwrap();
     assert_consistent(&pool, company, anna, &committed, &corrections).await;
