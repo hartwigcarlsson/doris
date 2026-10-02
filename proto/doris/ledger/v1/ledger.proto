@@ -24,6 +24,15 @@ service LedgerService {
   // One account's huvudbok for one fiscal year: its lines by date, then
   // voucher number, with the balance after each.
   rpc GetAccountLedger(GetAccountLedgerRequest) returns (GetAccountLedgerResponse);
+  // The first fiscal year's ingående balanser, by account.
+  rpc GetOpeningBalances(GetOpeningBalancesRequest) returns (GetOpeningBalancesResponse);
+  // Replaces them. Only while the first fiscal year is open.
+  rpc SetOpeningBalances(SetOpeningBalancesRequest) returns (SetOpeningBalancesResponse);
+  // Books the year's result (8999 against 2099 or 2019) and locks the year.
+  // Years close oldest first, once they have ended.
+  rpc CloseFiscalYear(CloseFiscalYearRequest) returns (CloseFiscalYearResponse);
+  // Unlocks the newest closed year and reverses its result voucher.
+  rpc ReopenFiscalYear(ReopenFiscalYearRequest) returns (ReopenFiscalYearResponse);
 }
 
 message Account {
@@ -67,6 +76,7 @@ message SetAccountActiveResponse {}
 message FiscalYear {
   string start = 1;
   string end = 2;
+  bool closed = 3;
 }
 
 message ListFiscalYearsRequest {
@@ -132,12 +142,14 @@ message GetTrialBalanceRequest {
   string fiscal_year_start = 2;
 }
 
-// The balance is debit - credit; positive is a debit balance.
+// The balance is debit - credit; positive is a debit balance. opening is the
+// ingående balans; the utgående balans is opening + debit - credit.
 message TrialBalanceRow {
   uint32 account = 1;
   string name = 2;
   int64 debit = 3;
   int64 credit = 4;
+  int64 opening = 5;
 }
 
 message GetTrialBalanceResponse {
@@ -160,6 +172,41 @@ message LedgerEntry {
   int64 balance = 6;
 }
 
+// opening is the ingående balans the running balance starts from.
 message GetAccountLedgerResponse {
   repeated LedgerEntry entries = 1;
+  int64 opening = 2;
 }
+
+message GetOpeningBalancesRequest {
+  string company_id = 1;
+}
+
+message GetOpeningBalancesResponse {
+  repeated VoucherLine lines = 1;
+}
+
+message SetOpeningBalancesRequest {
+  string company_id = 1;
+  repeated VoucherLine lines = 2;
+}
+
+message SetOpeningBalancesResponse {}
+
+message CloseFiscalYearRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+}
+
+// 0 when the result was already on equity and no voucher was booked.
+message CloseFiscalYearResponse {
+  uint32 result_voucher = 1;
+}
+
+message ReopenFiscalYearRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+  string reason = 3;
+}
+
+message ReopenFiscalYearResponse {}

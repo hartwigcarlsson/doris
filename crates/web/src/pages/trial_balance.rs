@@ -182,6 +182,7 @@ mod tests {
             name: String::new(),
             debit,
             credit,
+            opening: 0,
         }
     }
 

@@ -169,6 +169,7 @@ mod tests {
             .map(|s| lpb::FiscalYear {
                 start: (*s).into(),
                 end: String::new(),
+                closed: false,
             })
             .collect()
     }

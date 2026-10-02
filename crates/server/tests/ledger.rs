@@ -9,8 +9,8 @@ fn code_of(err: tonic::Status) -> (Code, String) {
     (err.code(), err.message().to_owned())
 }
 
-/// Anna's company, first räkenskapsår 2026.
-async fn company(server: &TestServer, session: &str) -> String {
+/// Anna's company with the given first räkenskapsår.
+async fn company_starting(server: &TestServer, session: &str, start: &str, end: &str) -> String {
     server
         .companies()
         .create_company(authed(
@@ -19,8 +19,8 @@ async fn company(server: &TestServer, session: &str) -> String {
                 name: "Exempel AB".into(),
                 legal_form: cpb::LegalForm::Aktiebolag as i32,
                 address: None,
-                fiscal_year_start: "2026-01-01".into(),
-                fiscal_year_end: "2026-12-31".into(),
+                fiscal_year_start: start.into(),
+                fiscal_year_end: end.into(),
                 accounting_method: cpb::AccountingMethod::Invoice as i32,
             },
             session,
@@ -29,6 +29,11 @@ async fn company(server: &TestServer, session: &str) -> String {
         .unwrap()
         .into_inner()
         .company_id
+}
+
+/// Anna's company, first räkenskapsår 2026.
+async fn company(server: &TestServer, session: &str) -> String {
+    company_starting(server, session, "2026-01-01", "2026-12-31").await
 }
 
 fn sale(company_id: &str, ore: i64) -> pb::RecordVoucherRequest {
@@ -137,7 +142,8 @@ async fn a_member_keeps_the_chart_and_books_and_corrects_vouchers() {
         years.last().unwrap(),
         &pb::FiscalYear {
             start: "2026-01-01".into(),
-            end: "2026-12-31".into()
+            end: "2026-12-31".into(),
+            closed: false,
         }
     );
 
@@ -477,12 +483,11 @@ async fn the_trial_balance_and_an_accounts_ledger_follow_the_vouchers() {
         .unwrap()
         .into_inner()
         .rows;
-    let entries = api
+    let ledger = api
         .get_account_ledger(authed(ledger_of(&id, "2026-01-01", 1930), &anna))
         .await
         .unwrap()
-        .into_inner()
-        .entries;
+        .into_inner();
 
     assert_eq!(
         rows,
@@ -492,17 +497,20 @@ async fn the_trial_balance_and_an_accounts_ledger_follow_the_vouchers() {
                 name: "Företagskonto/checkkonto/affärskonto".into(),
                 debit: 130_000,
                 credit: 0,
+                opening: 0,
             },
             pb::TrialBalanceRow {
                 account: 3001,
                 name: "Försäljning inom Sverige, 25 % moms".into(),
                 debit: 0,
                 credit: 130_000,
+                opening: 0,
             },
         ]
     );
+    assert_eq!(ledger.opening, 0);
     assert_eq!(
-        entries,
+        ledger.entries,
         vec![
             pb::LedgerEntry {
                 date: "2026-01-15".into(),
@@ -571,4 +579,241 @@ async fn the_reports_refuse_bad_input_and_non_members() {
         code_of(err),
         (Code::Unauthenticated, "not_signed_in".to_owned())
     );
+}
+
+fn line(account: u32, debit: i64, credit: i64) -> pb::VoucherLine {
+    pb::VoucherLine {
+        account,
+        debit,
+        credit,
+    }
+}
+
+fn close_of(company_id: &str, fiscal_year_start: &str) -> pb::CloseFiscalYearRequest {
+    pb::CloseFiscalYearRequest {
+        company_id: company_id.into(),
+        fiscal_year_start: fiscal_year_start.into(),
+    }
+}
+
+fn reopen_of(
+    company_id: &str,
+    fiscal_year_start: &str,
+    reason: &str,
+) -> pb::ReopenFiscalYearRequest {
+    pb::ReopenFiscalYearRequest {
+        company_id: company_id.into(),
+        fiscal_year_start: fiscal_year_start.into(),
+        reason: reason.into(),
+    }
+}
+
+#[tokio::test]
+async fn opening_balances_and_a_closed_year_carry_into_the_next() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let bo = server.invite(&anna, "bo@example.se").await;
+    // 2025 has ended by the time this runs.
+    let id = company_starting(&server, &anna, "2025-01-01", "2025-12-31").await;
+    let mut api = server.ledger();
+    let ib = vec![line(1930, 10_000, 0), line(2081, 0, 10_000)];
+
+    api.set_opening_balances(authed(
+        pb::SetOpeningBalancesRequest {
+            company_id: id.clone(),
+            lines: ib.clone(),
+        },
+        &anna,
+    ))
+    .await
+    .unwrap();
+    let saved = api
+        .get_opening_balances(authed(
+            pb::GetOpeningBalancesRequest {
+                company_id: id.clone(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .lines;
+    assert_eq!(saved, ib);
+    let mut sale_2025 = sale(&id, 1_000);
+    sale_2025.date = "2025-03-01".into();
+    api.record_voucher(authed(sale_2025.clone(), &anna))
+        .await
+        .unwrap();
+
+    let closed = api
+        .close_fiscal_year(authed(close_of(&id, "2025-01-01"), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(closed.result_voucher, 2);
+
+    let years = api
+        .list_fiscal_years(authed(
+            pb::ListFiscalYearsRequest {
+                company_id: id.clone(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .fiscal_years;
+    let oldest = years.last().unwrap();
+    assert_eq!((oldest.start.as_str(), oldest.closed), ("2025-01-01", true));
+    assert!(!years[0].closed);
+
+    let err = api
+        .record_voucher(authed(sale_2025, &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(err),
+        (Code::FailedPrecondition, "fiscal_year_closed".to_owned())
+    );
+
+    // 2026 opens with the balance sheet and the result on 2099.
+    let rows = api
+        .get_trial_balance(authed(trial_balance_of(&id, "2026-01-01"), &anna))
+        .await
+        .unwrap()
+        .into_inner()
+        .rows;
+    assert_eq!(
+        rows.iter()
+            .map(|r| (r.account, r.opening))
+            .collect::<Vec<_>>(),
+        vec![(1930, 11_000), (2081, -10_000), (2099, -1_000)]
+    );
+    let bank = api
+        .get_account_ledger(authed(ledger_of(&id, "2026-01-01", 1930), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(bank.opening, 11_000);
+
+    let err = api
+        .close_fiscal_year(authed(close_of(&id, "2025-01-01"), &bo))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(err),
+        (Code::NotFound, "company_not_found".to_owned())
+    );
+    api.reopen_fiscal_year(authed(reopen_of(&id, "2025-01-01", "Glömd faktura"), &anna))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn closing_errors_have_stable_codes() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    // 2024 and 2025 have both ended by the time this runs.
+    let id = company_starting(&server, &anna, "2024-01-01", "2024-12-31").await;
+    let mut api = server.ledger();
+    let set = |lines: Vec<pb::VoucherLine>| {
+        authed(
+            pb::SetOpeningBalancesRequest {
+                company_id: id.clone(),
+                lines,
+            },
+            &anna,
+        )
+    };
+    let expect = |err: tonic::Status, code: Code, message: &str| {
+        assert_eq!(code_of(err), (code, message.to_owned()));
+    };
+
+    let err = api
+        .set_opening_balances(set(vec![line(1930, 100, 0), line(2081, 0, 99)]))
+        .await
+        .unwrap_err();
+    expect(err, Code::InvalidArgument, "opening_balances_unbalanced");
+    let err = api
+        .set_opening_balances(set(vec![line(1930, 100, 0), line(3001, 0, 100)]))
+        .await
+        .unwrap_err();
+    expect(err, Code::InvalidArgument, "not_balance_sheet_account");
+    let err = api
+        .set_opening_balances(set(vec![line(1930, 100, 0), line(1930, 0, 100)]))
+        .await
+        .unwrap_err();
+    expect(err, Code::InvalidArgument, "duplicate_account");
+
+    let err = api
+        .close_fiscal_year(authed(close_of(&id, "2025-01-01"), &anna))
+        .await
+        .unwrap_err();
+    expect(err, Code::FailedPrecondition, "previous_fiscal_year_open");
+    let err = api
+        .reopen_fiscal_year(authed(reopen_of(&id, "2024-01-01", "Fel"), &anna))
+        .await
+        .unwrap_err();
+    expect(err, Code::FailedPrecondition, "fiscal_year_open");
+    let err = api
+        .close_fiscal_year(authed(close_of(&id, "2024-02-01"), &anna))
+        .await
+        .unwrap_err();
+    expect(err, Code::NotFound, "fiscal_year_not_found");
+    let err = api
+        .close_fiscal_year(authed(close_of(&id, "nonsense"), &anna))
+        .await
+        .unwrap_err();
+    expect(err, Code::InvalidArgument, "invalid_date");
+
+    api.close_fiscal_year(authed(close_of(&id, "2024-01-01"), &anna))
+        .await
+        .unwrap();
+    api.close_fiscal_year(authed(close_of(&id, "2025-01-01"), &anna))
+        .await
+        .unwrap();
+    let err = api
+        .reopen_fiscal_year(authed(reopen_of(&id, "2025-01-01", "  "), &anna))
+        .await
+        .unwrap_err();
+    expect(err, Code::InvalidArgument, "invalid_reason");
+    let err = api
+        .reopen_fiscal_year(authed(reopen_of(&id, "2024-01-01", "Fel"), &anna))
+        .await
+        .unwrap_err();
+    expect(err, Code::FailedPrecondition, "later_fiscal_year_closed");
+    let err = api
+        .set_opening_balances(set(vec![line(1930, 100, 0), line(2081, 0, 100)]))
+        .await
+        .unwrap_err();
+    expect(err, Code::FailedPrecondition, "fiscal_year_closed");
+
+    // The newest listed year contains today, so it has never ended. Every
+    // year between 2025 and it must be closed first, oldest first.
+    let years = api
+        .list_fiscal_years(authed(
+            pb::ListFiscalYearsRequest {
+                company_id: id.clone(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .fiscal_years;
+    let (current, ended) = years.split_first().unwrap();
+    for year in ended
+        .iter()
+        .rev()
+        .filter(|y| y.start.as_str() > "2025-01-01")
+    {
+        api.close_fiscal_year(authed(close_of(&id, &year.start), &anna))
+            .await
+            .unwrap();
+    }
+    let err = api
+        .close_fiscal_year(authed(close_of(&id, &current.start), &anna))
+        .await
+        .unwrap_err();
+    expect(err, Code::FailedPrecondition, "fiscal_year_not_ended");
 }
