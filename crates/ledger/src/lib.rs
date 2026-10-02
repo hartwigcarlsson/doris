@@ -21,7 +21,7 @@ use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 pub use projections::rebuild_projections;
-pub use queries::{list_accounts, list_fiscal_years, list_vouchers};
+pub use queries::{account_ledger, list_accounts, list_fiscal_years, list_vouchers, trial_balance};
 
 const ACCOUNTS_STREAM: &str = "accounts-";
 const LEDGER_STREAM: &str = "ledger-";
@@ -34,6 +34,9 @@ pub enum Error {
     /// No such company, or the user is not a member: callers can't tell which.
     #[error("company not found")]
     NotFound,
+    /// A sum outgrew `i64`; no real ledger gets there.
+    #[error("amount overflow")]
+    Overflow,
     #[error(transparent)]
     Store(#[from] doris_eventstore::Error),
 }

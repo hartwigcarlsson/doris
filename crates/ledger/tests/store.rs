@@ -1,10 +1,10 @@
 use doris_company::NewCompany;
 use doris_company::domain::{AccountingMethod, LegalForm};
-use doris_ledger::domain::{DomainError, RecordVoucher, VoucherLine};
+use doris_ledger::domain::{DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
 use doris_ledger::{
-    Error, VoucherRef, add_account, correct_voucher, list_accounts, list_fiscal_years,
-    list_vouchers, rebuild_projections, record_voucher, record_voucher_in, rename_account,
-    set_account_active,
+    Error, VoucherRef, account_ledger, add_account, correct_voucher, list_accounts,
+    list_fiscal_years, list_vouchers, rebuild_projections, record_voucher, record_voucher_in,
+    rename_account, set_account_active, trial_balance,
 };
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -524,4 +524,176 @@ async fn the_voucher_projections_rebuild_from_the_events() {
     assert_eq!(table(&pool, lines_sql).await, lines);
     assert_eq!(table(&pool, audit_sql).await, audit);
     assert!(audit.iter().all(|row| row.ends_with(&anna.to_string())));
+}
+
+/// Another company of `owner`'s, also with first räkenskapsår 2025.
+async fn second_company(pool: &SqlitePool, owner: Uuid) -> Uuid {
+    doris_company::register_company(
+        pool,
+        owner,
+        NewCompany {
+            org_nr: "556036-0793",
+            name: "Bolaget AB",
+            legal_form: LegalForm::Aktiebolag,
+            street: "",
+            postal_code: "",
+            city: "",
+            fiscal_year_start: "2025-01-01".parse().unwrap(),
+            fiscal_year_end: "2025-12-31".parse().unwrap(),
+            accounting_method: AccountingMethod::Invoice,
+        },
+    )
+    .await
+    .unwrap()
+}
+
+fn booking(date: &str, text: &str, lines: &[(u32, i64, i64)]) -> RecordVoucher {
+    RecordVoucher {
+        date: d(date),
+        text: text.into(),
+        lines: lines
+            .iter()
+            .map(|&(account, debit, credit)| VoucherLine::new(account, debit, credit).unwrap())
+            .collect(),
+    }
+}
+
+#[tokio::test]
+async fn the_trial_balance_sums_each_account_in_one_fiscal_year() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let other = second_company(&pool, anna).await;
+    let today = d(TODAY);
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+    record_voucher(&pool, id, anna, sale("2025-04-01", 250), today)
+        .await
+        .unwrap();
+    record_voucher(
+        &pool,
+        id,
+        anna,
+        booking("2025-05-01", "Hyra", &[(5010, 300, 0), (1930, 0, 300)]),
+        today,
+    )
+    .await
+    .unwrap();
+    // Reverses voucher 1: both it and the correction are counted.
+    correct_voucher(&pool, id, anna, d("2025-01-01"), 1, d("2025-06-01"), today)
+        .await
+        .unwrap();
+    // Another fiscal year, and another company: neither is counted.
+    record_voucher(&pool, id, anna, sale("2026-01-10", 999), today)
+        .await
+        .unwrap();
+    record_voucher(&pool, other, anna, sale("2025-03-01", 777), today)
+        .await
+        .unwrap();
+
+    let rows = trial_balance(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        rows,
+        vec![
+            TrialBalanceRow {
+                account: 1930,
+                name: "Företagskonto/checkkonto/affärskonto".into(),
+                debit: 350,
+                credit: 400,
+            },
+            TrialBalanceRow {
+                account: 3001,
+                name: "Försäljning inom Sverige, 25 % moms".into(),
+                debit: 100,
+                credit: 350,
+            },
+            TrialBalanceRow {
+                account: 5010,
+                name: "Lokalhyra".into(),
+                debit: 300,
+                credit: 0,
+            },
+        ]
+    );
+    assert_eq!(rows.iter().map(|r| r.debit - r.credit).sum::<i64>(), 0);
+    assert!(
+        trial_balance(&pool, id, anna, d("2024-01-01"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn an_accounts_ledger_runs_in_date_order_with_its_balance() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    // Voucher 1 is dated after vouchers 2 and 3.
+    for cmd in [
+        sale("2025-04-01", 250),
+        sale("2025-03-01", 100),
+        booking("2025-03-01", "Hyra", &[(5010, 300, 0), (1930, 0, 300)]),
+        booking("2025-05-01", "Omföring", &[(1930, 40, 0), (1930, 0, 40)]),
+    ] {
+        record_voucher(&pool, id, anna, cmd, today).await.unwrap();
+    }
+
+    let entries = account_ledger(&pool, id, anna, d("2025-01-01"), 1930)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        entries
+            .iter()
+            .map(|e| (e.date, e.number, e.debit, e.credit, e.balance))
+            .collect::<Vec<_>>(),
+        vec![
+            (d("2025-03-01"), 2, 100, 0, 100),
+            (d("2025-03-01"), 3, 0, 300, -200),
+            (d("2025-04-01"), 1, 250, 0, 50),
+            (d("2025-05-01"), 4, 40, 0, 90),
+            (d("2025-05-01"), 4, 0, 40, 50),
+        ]
+    );
+    assert_eq!(entries[1].text, "Hyra");
+    assert!(
+        account_ledger(&pool, id, anna, d("2025-01-01"), 1931)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(matches!(
+        account_ledger(&pool, id, anna, d("2025-01-01"), 999).await,
+        Err(Error::Domain(DomainError::InvalidAccountNumber))
+    ));
+}
+
+#[tokio::test]
+async fn non_members_cannot_read_the_reports() {
+    let pool = db().await;
+    let (anna, bo) = (Uuid::new_v4(), Uuid::new_v4());
+    let id = company(&pool, anna).await;
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), d(TODAY))
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        trial_balance(&pool, id, bo, d("2025-01-01")).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        account_ledger(&pool, id, bo, d("2025-01-01"), 1930).await,
+        Err(Error::NotFound)
+    ));
+    // Membership is checked before the account number.
+    assert!(matches!(
+        account_ledger(&pool, id, bo, d("2025-01-01"), 999).await,
+        Err(Error::NotFound)
+    ));
 }

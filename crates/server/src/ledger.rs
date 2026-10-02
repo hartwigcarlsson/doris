@@ -227,6 +227,10 @@ fn status(err: Error) -> Status {
     match err {
         Error::Domain(err) => domain_status(err),
         Error::NotFound => company_not_found(),
+        Error::Overflow => {
+            tracing::error!("ledger: amount overflow");
+            Status::internal("internal")
+        }
         Error::Store(err) => {
             tracing::error!("store: {err}");
             Status::internal("internal")

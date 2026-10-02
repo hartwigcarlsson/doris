@@ -1,7 +1,10 @@
 //! Read-only views over the ledger projections. Each checks membership first.
 
-use crate::Result;
-use crate::domain::{Account, AccountName, AccountNumber, Chart, Voucher, VoucherLine};
+use crate::domain::{
+    Account, AccountName, AccountNumber, Chart, LedgerEntry, TrialBalanceRow, Voucher, VoucherLine,
+    running_balance,
+};
+use crate::{Error, Result};
 use doris_company::domain::FiscalYear;
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -99,6 +102,79 @@ pub async fn list_vouchers(
         .collect();
     attach_lines(&mut vouchers, lines);
     Ok(vouchers)
+}
+
+/// The saldobalans for one fiscal year: every account with lines in it,
+/// by number, with its debit and credit totals.
+// ponytail: whole year in one response; paginate when a year gets large.
+pub async fn trial_balance(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    user_id: Uuid,
+    fiscal_year_start: Date,
+) -> Result<Vec<TrialBalanceRow>> {
+    doris_company::get_company(pool, company_id, user_id).await?;
+    // The chart is always seeded once there are vouchers; LEFT JOIN keeps an
+    // account in the saldobalans even if it somehow weren't. SQLite's SUM
+    // fails on integer overflow rather than wrapping.
+    let rows: Vec<(u32, String, i64, i64)> = sqlx::query_as(
+        "SELECT l.account, COALESCE(a.name, ''), SUM(l.debit), SUM(l.credit)
+         FROM voucher_lines l
+         LEFT JOIN accounts a ON a.company_id = l.company_id AND a.number = l.account
+         WHERE l.company_id = ? AND l.fiscal_year_start = ?
+         GROUP BY l.account
+         ORDER BY l.account",
+    )
+    .bind(company_id.to_string())
+    .bind(fiscal_year_start.to_string())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(account, name, debit, credit)| TrialBalanceRow {
+            account,
+            name,
+            debit,
+            credit,
+        })
+        .collect())
+}
+
+/// One account's huvudbok for one fiscal year: its lines by date, then
+/// voucher number, then line, each with the balance after it.
+// ponytail: whole year in one response; paginate when a year gets large.
+pub async fn account_ledger(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    user_id: Uuid,
+    fiscal_year_start: Date,
+    account: u32,
+) -> Result<Vec<LedgerEntry>> {
+    doris_company::get_company(pool, company_id, user_id).await?;
+    let account = AccountNumber::parse(account)?;
+    let lines: Vec<(String, u32, String, i64, i64)> = sqlx::query_as(
+        "SELECT v.date, v.number, v.text, l.debit, l.credit
+         FROM voucher_lines l
+         JOIN vouchers v ON v.company_id = l.company_id
+             AND v.fiscal_year_start = l.fiscal_year_start AND v.number = l.number
+         WHERE l.company_id = ? AND l.fiscal_year_start = ? AND l.account = ?
+         ORDER BY v.date, v.number, l.line_no",
+    )
+    .bind(company_id.to_string())
+    .bind(fiscal_year_start.to_string())
+    .bind(i64::from(account.get()))
+    .fetch_all(pool)
+    .await?;
+    running_balance(
+        lines
+            .into_iter()
+            .map(|(date, number, text, debit, credit)| {
+                let date = date.parse().expect("projected dates are valid");
+                (date, number, text, debit, credit)
+            })
+            .collect(),
+    )
+    .ok_or(Error::Overflow)
 }
 
 /// Puts each `(number, account, debit, credit)` line on its voucher.
