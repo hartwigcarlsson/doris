@@ -1,5 +1,7 @@
 //! Pure ledger rules: the chart of accounts and vouchers. No I/O, no clock.
 
+use doris_company::domain::FiscalYear;
+use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -225,5 +227,221 @@ pub fn set_account_active(
         (true, false) => vec![ChartEvent::AccountDeactivated { number }],
         (false, true) => vec![ChartEvent::AccountReactivated { number }],
         _ => vec![],
+    })
+}
+
+/// The most one line may carry: 100 miljarder kronor. With at most 100
+/// lines, sums stay far below `i64::MAX`, so they cannot overflow.
+pub const MAX_AMOUNT: i64 = 10_000_000_000_000;
+
+/// One kontering. Exactly one of `debit` and `credit` is positive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoucherLine {
+    pub account: AccountNumber,
+    pub debit: i64,
+    pub credit: i64,
+}
+
+impl VoucherLine {
+    /// An out-of-range account number cannot be in any chart, so it is
+    /// reported as an unknown account.
+    pub fn new(account: u32, debit: i64, credit: i64) -> Result<Self, DomainError> {
+        let account = AccountNumber::parse(account).map_err(|_| DomainError::AccountNotFound)?;
+        Ok(Self {
+            account,
+            debit,
+            credit,
+        })
+    }
+
+    fn is_valid(&self) -> bool {
+        let in_range = |amount: i64| (0..=MAX_AMOUNT).contains(&amount);
+        in_range(self.debit) && in_range(self.credit) && (self.debit == 0) != (self.credit == 0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum LedgerEvent {
+    /// Who recorded it, and when, is in the event metadata (BFL 5 kap. 11 §).
+    VoucherRecorded {
+        number: u32,
+        date: Date,
+        text: String,
+        lines: Vec<VoucherLine>,
+        corrects: Option<u32>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Voucher {
+    pub number: u32,
+    pub date: Date,
+    pub text: String,
+    pub lines: Vec<VoucherLine>,
+    pub corrects: Option<u32>,
+    pub corrected_by: Option<u32>,
+}
+
+/// One fiscal year's vouchers, in number order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ledger {
+    pub fiscal_year: FiscalYear,
+    vouchers: Vec<Voucher>,
+}
+
+impl Ledger {
+    pub fn new(fiscal_year: FiscalYear) -> Self {
+        Self {
+            fiscal_year,
+            vouchers: Vec::new(),
+        }
+    }
+
+    pub fn from_events(fiscal_year: FiscalYear, events: &[LedgerEvent]) -> Self {
+        let mut ledger = Self::new(fiscal_year);
+        for event in events {
+            ledger.apply(event);
+        }
+        ledger
+    }
+
+    pub fn apply(&mut self, event: &LedgerEvent) {
+        let LedgerEvent::VoucherRecorded {
+            number,
+            date,
+            text,
+            lines,
+            corrects,
+        } = event.clone();
+        if let Some(original) =
+            corrects.and_then(|n| self.vouchers.iter_mut().find(|v| v.number == n))
+        {
+            original.corrected_by = Some(number);
+        }
+        self.vouchers.push(Voucher {
+            number,
+            date,
+            text,
+            lines,
+            corrects,
+            corrected_by: None,
+        });
+    }
+
+    /// 0 before the first voucher.
+    pub fn last_number(&self) -> u32 {
+        self.vouchers.last().map_or(0, |v| v.number)
+    }
+
+    pub fn voucher(&self, number: u32) -> Option<&Voucher> {
+        self.vouchers.iter().find(|v| v.number == number)
+    }
+
+    pub fn vouchers(&self) -> &[Voucher] {
+        &self.vouchers
+    }
+}
+
+/// The räkenskapsår a voucher dated `date` belongs to. A voucher records
+/// something that happened, so it cannot be dated after `today`.
+pub fn fiscal_year_for(
+    first: FiscalYear,
+    date: Date,
+    today: Date,
+) -> Result<FiscalYear, DomainError> {
+    if date > today {
+        return Err(DomainError::VoucherDateInFuture);
+    }
+    if date < first.start {
+        return Err(DomainError::VoucherDateBeforeFirstFiscalYear);
+    }
+    Ok(first.containing(date))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordVoucher {
+    pub date: Date,
+    pub text: String,
+    pub lines: Vec<VoucherLine>,
+}
+
+/// Decides a new voucher in `ledger`, the fiscal year `cmd.date` falls in
+/// (see [`fiscal_year_for`]). Its number is the next one in that year.
+pub fn record_voucher(
+    ledger: &Ledger,
+    chart: &Chart,
+    cmd: RecordVoucher,
+) -> Result<LedgerEvent, DomainError> {
+    let text = cmd.text.trim();
+    if !(1..=200).contains(&text.chars().count()) {
+        return Err(DomainError::InvalidVoucherText);
+    }
+    if !(2..=100).contains(&cmd.lines.len()) {
+        return Err(DomainError::InvalidVoucherLines);
+    }
+    let (mut debit, mut credit) = (0_i64, 0_i64);
+    for line in &cmd.lines {
+        if !line.is_valid() {
+            return Err(DomainError::InvalidAmount);
+        }
+        let account = chart
+            .get(line.account)
+            .ok_or(DomainError::AccountNotFound)?;
+        if !account.active {
+            return Err(DomainError::AccountInactive);
+        }
+        // Cannot overflow: at most 100 lines of at most MAX_AMOUNT.
+        debit += line.debit;
+        credit += line.credit;
+    }
+    if debit != credit {
+        return Err(DomainError::VoucherUnbalanced);
+    }
+    Ok(LedgerEvent::VoucherRecorded {
+        number: ledger.last_number() + 1,
+        date: cmd.date,
+        text: text.to_owned(),
+        lines: cmd.lines,
+        corrects: None,
+    })
+}
+
+/// A rättelse (BFL 5 kap. 5 §): a new voucher in the same fiscal year with
+/// debit and credit swapped on every line. It ignores whether the accounts
+/// are still active, so a voucher can always be reversed.
+pub fn correct_voucher(
+    ledger: &Ledger,
+    number: u32,
+    date: Date,
+    today: Date,
+) -> Result<LedgerEvent, DomainError> {
+    let original = ledger.voucher(number).ok_or(DomainError::VoucherNotFound)?;
+    if original.corrects.is_some() {
+        return Err(DomainError::CannotCorrectCorrection);
+    }
+    if original.corrected_by.is_some() {
+        return Err(DomainError::AlreadyCorrected);
+    }
+    if date > today {
+        return Err(DomainError::VoucherDateInFuture);
+    }
+    if date < ledger.fiscal_year.start || date > ledger.fiscal_year.end {
+        return Err(DomainError::CorrectionDateOutsideFiscalYear);
+    }
+    Ok(LedgerEvent::VoucherRecorded {
+        number: ledger.last_number() + 1,
+        date,
+        text: format!("Rättelse av ver {number}"),
+        lines: original
+            .lines
+            .iter()
+            .map(|l| VoucherLine {
+                account: l.account,
+                debit: l.credit,
+                credit: l.debit,
+            })
+            .collect(),
+        corrects: Some(number),
     })
 }
