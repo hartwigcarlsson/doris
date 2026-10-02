@@ -125,7 +125,7 @@ pub fn OpeningBalances() -> impl IntoView {
                         </datalist>
                         <LineRows lines=lines list="balance_accounts" />
                         <div>
-                            <Button disabled=busy>"Spara"</Button>
+                            <Button disabled=Signal::derive(move || busy.get() || current.with(Option::is_none))>"Spara"</Button>
                         </div>
                     </form>
                 }

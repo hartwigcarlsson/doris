@@ -67,9 +67,9 @@ fn FiscalYearRow(
     let can_close = move || years.with(|ys| closable(ys, &today())) == Some(start.get_value());
     let can_reopen = move || years.with(|ys| reopenable(ys)) == Some(start.get_value());
     // Once the server has answered, the list says so; the row is rebuilt.
-    let mark = move |closed: bool| {
+    let mark = move |start: &str, closed: bool| {
         years.update(|ys| {
-            for y in ys.iter_mut().filter(|y| y.start == start.get_value()) {
+            for y in ys.iter_mut().filter(|y| y.start == start) {
                 y.closed = closed;
             }
         })
@@ -80,14 +80,16 @@ fn FiscalYearRow(
         done.set(None);
         busy.set(true);
         let company_id = companies.active.get_untracked();
+        let start = start.get_value();
         spawn_local(async move {
             let result = ledger_api()
                 .close_fiscal_year(lpb::CloseFiscalYearRequest {
                     company_id: company_id.clone(),
-                    fiscal_year_start: start.get_value(),
+                    fiscal_year_start: start.clone(),
                 })
                 .await;
-            busy.set(false);
+            // The row may have been rebuilt meanwhile; never read it after the await.
+            busy.try_set(false);
             if company_id != companies.active.get_untracked() {
                 return;
             }
@@ -97,7 +99,7 @@ fn FiscalYearRow(
                         0 => "Räkenskapsåret stängt.".to_owned(),
                         n => format!("Räkenskapsåret stängt. Resultatet bokfördes som ver {n}."),
                     }));
-                    mark(true);
+                    mark(&start, true);
                 }
                 Err(status) => error.set(Some(describe(&status))),
             }
@@ -108,22 +110,24 @@ fn FiscalYearRow(
         done.set(None);
         busy.set(true);
         let company_id = companies.active.get_untracked();
+        let start = start.get_value();
         spawn_local(async move {
             let result = ledger_api()
                 .reopen_fiscal_year(lpb::ReopenFiscalYearRequest {
                     company_id: company_id.clone(),
-                    fiscal_year_start: start.get_value(),
+                    fiscal_year_start: start.clone(),
                     reason: reason.get_untracked(),
                 })
                 .await;
-            busy.set(false);
+            // The row may have been rebuilt meanwhile; never read it after the await.
+            busy.try_set(false);
             if company_id != companies.active.get_untracked() {
                 return;
             }
             match result {
                 Ok(_) => {
                     done.set(Some("Räkenskapsåret öppnat igen.".to_owned()));
-                    mark(false);
+                    mark(&start, false);
                 }
                 Err(status) => error.set(Some(describe(&status))),
             }
