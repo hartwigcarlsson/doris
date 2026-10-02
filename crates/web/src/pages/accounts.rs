@@ -14,7 +14,8 @@ use leptos::task::spawn_local;
 #[component]
 pub fn Accounts() -> impl IntoView {
     let companies = expect_context::<Companies>();
-    let accounts = RwSignal::new(Vec::<lpb::Account>::new());
+    // The accounts and the company they were loaded for, set together.
+    let accounts = RwSignal::new((String::new(), Vec::<lpb::Account>::new()));
     let show_inactive = RwSignal::new(false);
     let number = RwSignal::new(String::new());
     let name = RwSignal::new(String::new());
@@ -27,17 +28,26 @@ pub fn Accounts() -> impl IntoView {
             return;
         }
         spawn_local(async move {
-            match ledger_api()
-                .list_accounts(lpb::ListAccountsRequest { company_id })
-                .await
-            {
-                Ok(response) => accounts.set(response.into_inner().accounts),
+            let result = ledger_api()
+                .list_accounts(lpb::ListAccountsRequest {
+                    company_id: company_id.clone(),
+                })
+                .await;
+            // The user switched company meanwhile: this answer is stale.
+            if company_id != companies.active.get_untracked() {
+                return;
+            }
+            match result {
+                Ok(response) => accounts.set((company_id, response.into_inner().accounts)),
                 Err(status) => error.set(Some(describe(&status))),
             }
         });
     };
     Effect::new(move |_| {
         companies.active.track();
+        // Never leave the previous company's rows (or forms) on screen.
+        accounts.set((String::new(), Vec::new()));
+        error.set(None);
         load();
     });
     let changed = Callback::new(move |()| load());
@@ -89,16 +99,16 @@ pub fn Accounts() -> impl IntoView {
                 <tbody class=TABLE_BODY>
                     <For
                         each=move || {
-                            accounts
-                                .get()
-                                .into_iter()
+                            let (company_id, list) = accounts.get();
+                            list.into_iter()
                                 .filter(|a| a.active || show_inactive.get())
+                                .map(|a| (company_id.clone(), a))
                                 .collect::<Vec<_>>()
                         }
-                        key=|a| (a.number, a.name.clone(), a.active)
-                        let(account)
+                        key=|(company_id, a)| (company_id.clone(), a.number, a.name.clone(), a.active)
+                        let((company_id, account))
                     >
-                        <AccountRow account=account changed=changed error=error />
+                        <AccountRow company_id=company_id account=account changed=changed error=error />
                     </For>
                 </tbody>
             </Table>
@@ -108,11 +118,13 @@ pub fn Accounts() -> impl IntoView {
 
 #[component]
 fn AccountRow(
+    company_id: String,
     account: lpb::Account,
     changed: Callback<()>,
     error: RwSignal<Option<String>>,
 ) -> impl IntoView {
-    let companies = expect_context::<Companies>();
+    // The company this row was loaded for, not whatever is active now.
+    let company_id = StoredValue::new(company_id);
     let lpb::Account {
         number,
         name: current,
@@ -126,7 +138,7 @@ fn AccountRow(
         error.set(None);
         spawn_local(async move {
             let request = lpb::RenameAccountRequest {
-                company_id: companies.active.get_untracked(),
+                company_id: company_id.get_value(),
                 number,
                 name: name.get_untracked(),
             };
@@ -143,7 +155,7 @@ fn AccountRow(
         error.set(None);
         spawn_local(async move {
             let request = lpb::SetAccountActiveRequest {
-                company_id: companies.active.get_untracked(),
+                company_id: company_id.get_value(),
                 number,
                 active: !active,
             };
