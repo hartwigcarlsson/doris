@@ -3,8 +3,8 @@
 use crate::active_company::{ActiveCompanySelect, Companies};
 use crate::api::{api, pb};
 use crate::pages::{
-    Accounts, Companies, CompanyPage, Home, Invitations, Login, NewCompany, NewVoucher, Passkeys,
-    Register, TrialBalance, Vouchers,
+    AccountLedger, Accounts, Companies, CompanyPage, Home, Invitations, Login, NewCompany,
+    NewVoucher, Passkeys, Register, TrialBalance, Vouchers,
 };
 use crate::ui::{Button, Variant};
 use leptos::prelude::*;
@@ -75,6 +75,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/vouchers") view=|| view! { <SignedIn><Vouchers /></SignedIn> } />
                         <Route path=path!("/vouchers/new") view=|| view! { <SignedIn><NewVoucher /></SignedIn> } />
                         <Route path=path!("/trial-balance") view=|| view! { <SignedIn><TrialBalance /></SignedIn> } />
+                        <Route path=path!("/trial-balance/:account") view=|| view! { <SignedIn><AccountLedger /></SignedIn> } />
                         <Route path=path!("/settings/passkeys") view=|| view! { <SignedIn><Passkeys /></SignedIn> } />
                         <Route path=path!("/admin/invitations") view=|| view! { <SignedIn admin=true><Invitations /></SignedIn> } />
                     </Routes>
