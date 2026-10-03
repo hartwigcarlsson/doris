@@ -75,6 +75,13 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   once they have ended. Reopening (`FiscalYearReopened`, with a reason)
   comes before the reversal of that voucher and goes newest first, so no
   voucher is ever recorded while its year is closed.
+- Underlag (PDF, JPEG, PNG; `AttachmentAdded` in the ledger stream) keep
+  their bytes in `attachment_files`: primary data like `events`, not a
+  projection, append-only by trigger and keyed by SHA-256, so a file is
+  stored once. They are read only through `voucher_attachments` for the
+  company's own voucher, never by hash alone. An underlag is never removed
+  or renamed, and it may be added to a voucher in a closed year: it changes
+  no amount. The type comes from the bytes, never from the client.
 
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.
@@ -133,6 +140,19 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `opening_balances_unbalanced`, `invalid_reason`, `fiscal_year_not_found`,
   `fiscal_year_closed`, `fiscal_year_open`, `fiscal_year_not_ended`,
   `previous_fiscal_year_open` and `later_fiscal_year_closed`.
+- `LedgerService` also has `AddAttachment` and `GetAttachment`, and
+  `RecordVoucher` takes underlag. Limits: 10 MiB per file, 20 MiB per
+  request; the service accepts 21 MiB messages and sends up to 11 MiB (the
+  other services keep tonic's 4 MiB). Codes: `unsupported_attachment_type`,
+  `invalid_attachment_name`, `empty_attachment`, `attachment_too_large`,
+  `duplicate_attachment` and `attachment_not_found`. File names are never
+  logged.
+- tonic reserves the size a frame header claims before a handler runs, so
+  `session_gate` (`crates/server/src/lib.rs`) answers `LedgerService` calls
+  without a valid session with `not_signed_in` before the body is read. The
+  handlers still check the session themselves.
+- A reverse proxy in front of Doris must allow request bodies of about
+  21 MiB (nginx's default `client_max_body_size` is 1 MiB).
 - Company lookup uses Bolagsverket's free "värdefulla datamängder" API (OAuth2
   client credentials, register at portal.api.bolagsverket.se). Without
   credentials the lookup answers `lookup_unavailable` and details are typed in.
@@ -174,6 +194,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   stale tab never books in the wrong company.
 - `src/errors.rs` maps API error codes to Swedish text. Add a line there for
   every new code.
+- `src/attachments.rs` reads picked files (one over 10 MiB is refused
+  before it is read), checks the size limits before upload, and opens an underlag as a Blob URL in a new tab. The tab is
+  opened on the click and navigated once `GetAttachment` returns; a blocked
+  popup shows `popup_blocked`. `ledger_api()` raises its decode limit to
+  11 MiB for that.
 - `src/ui.rs` holds the preset's components, with class lists copied from
   shadcn's generated output. Add more by generating them with
   `npx shadcn init -t vite -b radix -p b1Gdz9bFY` in a scratch directory and

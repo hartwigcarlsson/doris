@@ -7,6 +7,7 @@ const BUTTON: &str = "inline-flex shrink-0 items-center justify-center gap-1 rou
 const BUTTON_DEFAULT: &str = "bg-primary text-primary-foreground hover:bg-primary/80";
 const BUTTON_GHOST: &str = "hover:bg-muted hover:text-foreground dark:hover:bg-muted/50";
 const INPUT: &str = "h-7 w-full min-w-0 rounded-md border border-input bg-input/20 px-2 py-0.5 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 read-only:cursor-default read-only:border-dashed read-only:focus-visible:border-input read-only:bg-muted read-only:text-muted-foreground md:text-xs/relaxed dark:bg-input/30";
+const INPUT_FILE: &str = "file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-xs/relaxed file:font-medium file:text-foreground";
 const LABEL: &str = "flex items-center gap-2 text-xs/relaxed leading-none font-medium select-none";
 /// shadcn NativeSelectOption: keeps the dropdown readable in dark mode.
 pub const SELECT_OPTION: &str = "bg-[Canvas] text-[CanvasText]";
@@ -267,5 +268,50 @@ pub fn TextInput(
             list=(!list.is_empty()).then_some(list)
             bind:value=value
         />
+    }
+}
+
+/// A labelled native file picker for underlag (PDF, JPEG, PNG). On mobile
+/// it offers the camera.
+#[component]
+pub fn FileInput(
+    #[prop(into)] label: String,
+    #[prop(into)] id: String,
+    on_pick: impl Fn(web_sys::HtmlInputElement) + 'static,
+) -> impl IntoView {
+    view! {
+        <div class="grid gap-2">
+            <label for=id.clone() class=LABEL>
+                {label}
+            </label>
+            <input
+                id=id
+                type="file"
+                multiple
+                accept="application/pdf,image/jpeg,image/png"
+                class=format!("{INPUT} {INPUT_FILE}")
+                on:change=move |ev| on_pick(event_target::<web_sys::HtmlInputElement>(&ev))
+            />
+        </div>
+    }
+}
+
+/// lucide `paperclip`.
+#[component]
+pub fn PaperclipIcon() -> impl IntoView {
+    view! {
+        <svg
+            class="size-3.5"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+        >
+            <path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" />
+        </svg>
     }
 }

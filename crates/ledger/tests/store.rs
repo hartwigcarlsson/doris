@@ -1,10 +1,11 @@
 use doris_company::NewCompany;
 use doris_company::domain::{AccountingMethod, LegalForm};
-use doris_ledger::domain::{DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
+use doris_ledger::domain::{ContentType, DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
 use doris_ledger::{
-    Error, VoucherRef, account_ledger, add_account, close_fiscal_year, correct_voucher,
-    list_accounts, list_fiscal_years, list_vouchers, opening_balances, rebuild_projections,
-    record_voucher, record_voucher_in, rename_account, reopen_fiscal_year, set_account_active,
+    Error, NewAttachment, VoucherRef, account_ledger, add_account, add_attachment,
+    close_fiscal_year, correct_voucher, get_attachment, list_accounts, list_fiscal_years,
+    list_vouchers, opening_balances, rebuild_projections, record_voucher, record_voucher_in,
+    record_voucher_with_attachments, rename_account, reopen_fiscal_year, set_account_active,
     set_opening_balances, trial_balance,
 };
 use jiff::civil::Date;
@@ -1101,4 +1102,335 @@ async fn the_first_years_opening_balances_are_read_back_by_account() {
         opening_balances(&pool, id, bo).await,
         Err(Error::NotFound)
     ));
+}
+
+/// A small PDF: the header plus `body`.
+fn file(name: &str, body: &str) -> NewAttachment {
+    NewAttachment {
+        file_name: name.into(),
+        data: format!("%PDF-1.7\n{body}").into_bytes(),
+    }
+}
+
+fn png(name: &str) -> NewAttachment {
+    NewAttachment {
+        file_name: name.into(),
+        data: b"\x89PNG\r\n\x1a\nbild".to_vec(),
+    }
+}
+
+#[tokio::test]
+async fn a_voucher_is_booked_with_its_attachments_in_one_transaction() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+
+    let booked = record_voucher_with_attachments(
+        &pool,
+        id,
+        anna,
+        sale("2025-03-01", 100),
+        vec![file("Kvitto åäö 🧾.pdf", "a"), png("foto.png")],
+        d(TODAY),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(booked.number, 1);
+    assert_eq!(
+        events_of(&pool, "ledger-").await,
+        ["VoucherRecorded", "AttachmentAdded", "AttachmentAdded"]
+    );
+    let vouchers = list_vouchers(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+    let listed: Vec<_> = vouchers[0]
+        .attachments
+        .iter()
+        .map(|a| (a.file_name.as_str(), a.content_type, a.size))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("Kvitto åäö 🧾.pdf", ContentType::Pdf, 10),
+            ("foto.png", ContentType::Png, 12)
+        ]
+    );
+    assert_eq!(vouchers[0].attachments[0].sha256.len(), 64);
+    assert_eq!(
+        table(
+            &pool,
+            "SELECT position || ':' || added_by FROM voucher_attachments ORDER BY position"
+        )
+        .await,
+        [format!("1:{anna}"), format!("2:{anna}")]
+    );
+}
+
+#[tokio::test]
+async fn a_file_is_stored_once_however_often_it_is_attached() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+
+    record_voucher_with_attachments(
+        &pool,
+        id,
+        anna,
+        sale("2025-03-01", 100),
+        vec![file("kvitto.pdf", "a")],
+        today,
+    )
+    .await
+    .unwrap();
+    record_voucher_with_attachments(
+        &pool,
+        id,
+        anna,
+        sale("2025-03-02", 100),
+        vec![file("kopia.pdf", "a")],
+        today,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        table(&pool, "SELECT sha256 FROM attachment_files")
+            .await
+            .len(),
+        1
+    );
+    assert_eq!(
+        table(&pool, "SELECT sha256 FROM voucher_attachments")
+            .await
+            .len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_booking_keeps_neither_the_voucher_nor_its_files() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    let unbalanced = RecordVoucher {
+        lines: vec![
+            VoucherLine::new(1930, 100, 0).unwrap(),
+            VoucherLine::new(3001, 0, 99).unwrap(),
+        ],
+        ..sale("2025-03-01", 100)
+    };
+    let gif = NewAttachment {
+        file_name: "bild.gif".into(),
+        data: b"GIF89a".to_vec(),
+    };
+
+    assert!(matches!(
+        record_voucher_with_attachments(
+            &pool,
+            id,
+            anna,
+            unbalanced,
+            vec![file("kvitto.pdf", "a")],
+            today
+        )
+        .await,
+        Err(Error::Domain(DomainError::VoucherUnbalanced))
+    ));
+    assert!(matches!(
+        record_voucher_with_attachments(
+            &pool,
+            id,
+            anna,
+            sale("2025-03-01", 100),
+            vec![file("kvitto.pdf", "a"), gif],
+            today
+        )
+        .await,
+        Err(Error::Domain(DomainError::UnsupportedAttachmentType))
+    ));
+    assert!(matches!(
+        record_voucher_with_attachments(
+            &pool,
+            id,
+            anna,
+            sale("2025-03-01", 100),
+            vec![file("a.pdf", "x"), file("b.pdf", "x")],
+            today
+        )
+        .await,
+        Err(Error::Domain(DomainError::DuplicateAttachment))
+    ));
+
+    assert!(events_of(&pool, "ledger-").await.is_empty());
+    assert!(
+        table(&pool, "SELECT sha256 FROM attachment_files")
+            .await
+            .is_empty()
+    );
+    let booked = record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+    assert_eq!(booked.number, 1);
+}
+
+#[tokio::test]
+async fn attachment_files_are_append_only() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    record_voucher_with_attachments(
+        &pool,
+        id,
+        anna,
+        sale("2025-03-01", 100),
+        vec![file("kvitto.pdf", "a")],
+        d(TODAY),
+    )
+    .await
+    .unwrap();
+
+    for sql in [
+        "UPDATE attachment_files SET size = 0",
+        "DELETE FROM attachment_files",
+    ] {
+        let err = sqlx::query(sql).execute(&pool).await.unwrap_err();
+        assert!(err.to_string().contains("append-only"), "{sql}: {err}");
+    }
+}
+
+#[tokio::test]
+async fn an_attachment_is_added_later_even_in_a_closed_year() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let (start, today) = (d("2025-01-01"), d(TODAY));
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+    close_fiscal_year(&pool, id, anna, start, today)
+        .await
+        .unwrap();
+
+    let added = add_attachment(&pool, id, anna, start, 1, file("faktura.pdf", "f"), today)
+        .await
+        .unwrap();
+
+    assert_eq!(added.file_name.as_str(), "faktura.pdf");
+    let vouchers = list_vouchers(&pool, id, anna, start).await.unwrap();
+    assert_eq!(vouchers[0].attachments, vec![added]);
+    for (fy_start, number) in [(start, 99), (d("2025-02-01"), 1), (d("2999-01-01"), 1)] {
+        assert!(
+            matches!(
+                add_attachment(&pool, id, anna, fy_start, number, file("x.pdf", "x"), today).await,
+                Err(Error::Domain(DomainError::VoucherNotFound))
+            ),
+            "{fy_start} {number}"
+        );
+    }
+    assert!(matches!(
+        add_attachment(
+            &pool,
+            id,
+            Uuid::new_v4(),
+            start,
+            1,
+            file("x.pdf", "x"),
+            today
+        )
+        .await,
+        Err(Error::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn attachments_rebuild_from_the_events() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let (start, today) = (d("2025-01-01"), d(TODAY));
+    record_voucher_with_attachments(
+        &pool,
+        id,
+        anna,
+        sale("2025-03-01", 100),
+        vec![file("a.pdf", "a"), file("b.pdf", "b")],
+        today,
+    )
+    .await
+    .unwrap();
+    add_attachment(&pool, id, anna, start, 1, file("c.pdf", "c"), today)
+        .await
+        .unwrap();
+    let sql = "SELECT company_id || fiscal_year_start || number || position || sha256 || file_name
+               || content_type || size || added_at || added_by FROM voucher_attachments ORDER BY 1";
+    let before = table(&pool, sql).await;
+    let listed = list_vouchers(&pool, id, anna, start).await.unwrap();
+
+    rebuild_projections(&pool).await.unwrap();
+
+    assert_eq!(before.len(), 3);
+    assert_eq!(table(&pool, sql).await, before);
+    assert_eq!(list_vouchers(&pool, id, anna, start).await.unwrap(), listed);
+}
+
+#[tokio::test]
+async fn an_attachment_is_read_only_through_the_companys_own_voucher() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let other = second_company(&pool, anna).await;
+    let (start, today) = (d("2025-01-01"), d(TODAY));
+    record_voucher_with_attachments(
+        &pool,
+        id,
+        anna,
+        sale("2025-03-01", 100),
+        vec![file("kvitto.pdf", "a")],
+        today,
+    )
+    .await
+    .unwrap();
+    record_voucher(&pool, other, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+    let sha = list_vouchers(&pool, id, anna, start).await.unwrap()[0].attachments[0]
+        .sha256
+        .clone();
+
+    let (attachment, data) = get_attachment(&pool, id, anna, start, 1, &sha)
+        .await
+        .unwrap();
+    assert_eq!(attachment.file_name.as_str(), "kvitto.pdf");
+    assert_eq!(attachment.content_type, ContentType::Pdf);
+    assert_eq!(data, file("", "a").data);
+
+    // The right hash on another company's voucher, or on another voucher.
+    for (company_id, number) in [(other, 1), (id, 2)] {
+        assert!(matches!(
+            get_attachment(&pool, company_id, anna, start, number, &sha).await,
+            Err(Error::Domain(DomainError::AttachmentNotFound))
+        ));
+    }
+    assert!(matches!(
+        get_attachment(&pool, id, Uuid::new_v4(), start, 1, &sha).await,
+        Err(Error::NotFound)
+    ));
+
+    // The same file in the other company: stored once, read there by its own name.
+    add_attachment(&pool, other, anna, start, 1, file("kopia.pdf", "a"), today)
+        .await
+        .unwrap();
+    let (theirs, _) = get_attachment(&pool, other, anna, start, 1, &sha)
+        .await
+        .unwrap();
+    assert_eq!(theirs.file_name.as_str(), "kopia.pdf");
+    assert_eq!(
+        table(&pool, "SELECT sha256 FROM attachment_files")
+            .await
+            .len(),
+        1
+    );
 }

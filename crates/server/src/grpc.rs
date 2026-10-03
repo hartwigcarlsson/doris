@@ -247,7 +247,15 @@ pub(crate) async fn signed_in_user<T>(
     pool: &SqlitePool,
     request: &Request<T>,
 ) -> Result<User, Status> {
-    let token = session_token(request).ok_or_else(not_signed_in)?;
+    session_user(pool, request.metadata().as_ref()).await
+}
+
+/// The user whose session cookie is in `headers`, or `Unauthenticated`.
+pub(crate) async fn session_user(
+    pool: &SqlitePool,
+    headers: &http::HeaderMap,
+) -> Result<User, Status> {
+    let token = cookie_session(headers).ok_or_else(not_signed_in)?;
     doris_identity::session_user(pool, &token, Timestamp::now())
         .await
         .map_err(status)?
@@ -287,9 +295,12 @@ fn credential<T: serde::de::DeserializeOwned>(json: &str) -> Result<T, Status> {
 }
 
 fn session_token<T>(request: &Request<T>) -> Option<String> {
-    request
-        .metadata()
-        .get_all("cookie")
+    cookie_session(request.metadata().as_ref())
+}
+
+fn cookie_session(headers: &http::HeaderMap) -> Option<String> {
+    headers
+        .get_all(http::header::COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|header| header.split(';'))

@@ -921,3 +921,143 @@ fn reopening_does_not_reverse_a_result_voucher_that_is_already_corrected() {
         }]
     );
 }
+
+fn pdf_of(size: usize) -> Vec<u8> {
+    let mut data = b"%PDF-1.7\n".to_vec();
+    data.resize(size, 0);
+    data
+}
+
+#[test]
+fn the_file_type_comes_from_the_first_bytes() {
+    assert_eq!(sniff(b"%PDF-1.7\n"), Ok(ContentType::Pdf));
+    assert_eq!(sniff(&[0xFF, 0xD8, 0xFF, 0xE0]), Ok(ContentType::Jpeg));
+    assert_eq!(sniff(b"\x89PNG\r\n\x1a\n\0"), Ok(ContentType::Png));
+    for bad in [&b"GIF89a"[..], b"hej", b"", b"%PDF"] {
+        assert_eq!(
+            sniff(bad),
+            Err(DomainError::UnsupportedAttachmentType),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(ContentType::Pdf.as_mime(), "application/pdf");
+    assert_eq!(ContentType::Jpeg.as_mime(), "image/jpeg");
+    assert_eq!(ContentType::from_mime("image/png"), Some(ContentType::Png));
+    assert_eq!(ContentType::from_mime("image/gif"), None);
+}
+
+#[test]
+fn attachment_names_are_trimmed_1_to_255_characters_without_paths() {
+    assert_eq!(
+        AttachmentName::parse("  Kvitto åäö 🧾.pdf ")
+            .unwrap()
+            .as_str(),
+        "Kvitto åäö 🧾.pdf"
+    );
+    assert!(AttachmentName::parse(&"å".repeat(255)).is_ok());
+    for bad in [
+        "",
+        "   ",
+        &"å".repeat(256),
+        "a/b.pdf",
+        "a\\b.pdf",
+        "a\nb.pdf",
+        "a\0.pdf",
+    ] {
+        assert_eq!(
+            AttachmentName::parse(bad),
+            Err(DomainError::InvalidAttachmentName),
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn an_attachment_is_1_byte_to_10_mib_of_pdf_jpeg_or_png() {
+    let max = Attachment::new("kvitto.pdf", &pdf_of(MAX_ATTACHMENT_SIZE), "ab".into()).unwrap();
+    assert_eq!(max.size, 10_485_760);
+    assert_eq!(max.content_type, ContentType::Pdf);
+    assert_eq!(max.file_name.as_str(), "kvitto.pdf");
+    assert_eq!(max.sha256, "ab");
+    assert_eq!(
+        Attachment::new("kvitto.pdf", &pdf_of(MAX_ATTACHMENT_SIZE + 1), "ab".into()),
+        Err(DomainError::AttachmentTooLarge)
+    );
+    assert_eq!(
+        Attachment::new("tom.pdf", b"", "ab".into()),
+        Err(DomainError::EmptyAttachment)
+    );
+    assert_eq!(
+        Attachment::new("bild.gif", b"GIF89a", "ab".into()),
+        Err(DomainError::UnsupportedAttachmentType)
+    );
+    assert_eq!(
+        Attachment::new("", b"%PDF-1.7\n", "ab".into()),
+        Err(DomainError::InvalidAttachmentName)
+    );
+}
+
+fn attachment(name: &str, sha256: &str) -> Attachment {
+    Attachment::new(name, b"%PDF-1.7\n", sha256.into()).unwrap()
+}
+
+#[test]
+fn an_attachment_is_added_to_an_existing_voucher_once_in_order() {
+    let booked = record(&[], &seeded(), sale("2025-03-01", 100)).unwrap();
+    let ledger = Ledger::from_events(first_year(), std::slice::from_ref(&booked));
+    let (a, b) = (
+        attachment("kvitto.pdf", "aa"),
+        attachment("faktura.pdf", "bb"),
+    );
+
+    let first = add_attachment(&ledger, 1, a.clone()).unwrap();
+    assert_eq!(
+        first,
+        LedgerEvent::AttachmentAdded {
+            voucher: 1,
+            attachment: a.clone()
+        }
+    );
+    assert_eq!(
+        add_attachment(&ledger, 2, a.clone()),
+        Err(DomainError::VoucherNotFound)
+    );
+
+    let ledger = Ledger::from_events(first_year(), &[booked.clone(), first.clone()]);
+    assert_eq!(
+        add_attachment(&ledger, 1, attachment("kopia.pdf", "aa")),
+        Err(DomainError::DuplicateAttachment)
+    );
+    let second = add_attachment(&ledger, 1, b.clone()).unwrap();
+    let ledger = Ledger::from_events(first_year(), &[booked, first, second]);
+    assert_eq!(ledger.voucher(1).unwrap().attachments, vec![a, b]);
+}
+
+#[test]
+fn a_closed_year_still_takes_an_attachment() {
+    let booked = record(&[], &seeded(), sale("2025-03-01", 100)).unwrap();
+    let ledger = closed_year(vec![booked]);
+
+    assert!(add_attachment(&ledger, 1, attachment("kvitto.pdf", "aa")).is_ok());
+}
+
+#[test]
+fn attachment_events_are_readable_json() {
+    let event = LedgerEvent::AttachmentAdded {
+        voucher: 1,
+        attachment: attachment("kvitto.pdf", "aa"),
+    };
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        serde_json::json!({
+            "type": "AttachmentAdded",
+            "voucher": 1,
+            "attachment": {
+                "sha256": "aa",
+                "file_name": "kvitto.pdf",
+                "content_type": "pdf",
+                "size": 9
+            }
+        })
+    );
+}

@@ -2,12 +2,13 @@
 
 use crate::active_company::Companies;
 use crate::api::{ledger_api, lpb};
-use crate::errors::describe;
+use crate::attachments::{open_in, read_files, size_label};
+use crate::errors::{describe, describe_code};
 use crate::fiscal_year::is_closed;
 use crate::format::{amount, today};
 use crate::ui::{
-    Button, ErrorAlert, SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
-    TABLE_HEADER_CELL, TABLE_ROW, Table, TextInput, Variant,
+    Button, ErrorAlert, FileInput, PaperclipIcon, SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL,
+    TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TextInput, Variant,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -137,6 +138,7 @@ pub fn Vouchers() -> impl IntoView {
                         <th class=TABLE_HEADER_CELL>"Text"</th>
                         <th class=format!("{TABLE_HEADER_CELL} text-right")>"Belopp"</th>
                         <th class=TABLE_HEADER_CELL>"Status"</th>
+                        <th class=TABLE_HEADER_CELL><span class="sr-only">"Underlag"</span></th>
                         <th class=TABLE_HEADER_CELL></th>
                     </tr>
                 </thead>
@@ -188,6 +190,91 @@ fn VoucherRow(
     // A closed year takes no correction; the server refuses one anyway.
     let can_correct = voucher.corrects == 0 && voucher.corrected_by == 0 && !closed;
     let lines = voucher.lines.clone();
+    let attachments = RwSignal::new(voucher.attachments.clone());
+    let open_attachment = move |id: String| {
+        error.set(None);
+        let Some(year) = fiscal_year.get_value() else {
+            return;
+        };
+        // Opened by the click itself: browsers block window.open after an await.
+        let Some(tab) = window()
+            .open_with_url_and_target("", "_blank")
+            .ok()
+            .flatten()
+        else {
+            return error.set(Some(describe_code("popup_blocked")));
+        };
+        let company = company_id.get_value();
+        spawn_local(async move {
+            let result = ledger_api()
+                .get_attachment(lpb::GetAttachmentRequest {
+                    company_id: company.clone(),
+                    fiscal_year_start: year.start,
+                    number,
+                    id,
+                })
+                .await;
+            match result {
+                Ok(response) => {
+                    let response = response.into_inner();
+                    let mime = response
+                        .attachment
+                        .map(|a| a.content_type)
+                        .unwrap_or_default();
+                    open_in(&tab, &mime, &response.data);
+                }
+                Err(status) => {
+                    let _ = tab.close();
+                    if company == companies.active.get_untracked() {
+                        error.try_set(Some(describe(&status)));
+                    }
+                }
+            }
+        });
+    };
+    // One file per request; also in a closed year.
+    let add_attachments = move |input: web_sys::HtmlInputElement| {
+        error.set(None);
+        let Some(year) = fiscal_year.get_value() else {
+            return;
+        };
+        let company = company_id.get_value();
+        spawn_local(async move {
+            let picked = match read_files(&input).await {
+                Ok(picked) => picked,
+                Err(code) => {
+                    error.try_set(Some(describe_code(code)));
+                    return;
+                }
+            };
+            for file in picked {
+                let result = ledger_api()
+                    .add_attachment(lpb::AddAttachmentRequest {
+                        company_id: company.clone(),
+                        fiscal_year_start: year.start.clone(),
+                        number,
+                        attachment: Some(file),
+                    })
+                    .await;
+                match result {
+                    Ok(response) => {
+                        if let Some(added) = response.into_inner().attachment {
+                            // The row is gone (company or year switched): stop.
+                            if attachments.try_update(|list| list.push(added)).is_none() {
+                                return;
+                            }
+                        }
+                    }
+                    Err(status) => {
+                        if company == companies.active.get_untracked() {
+                            error.try_set(Some(describe(&status)));
+                        }
+                        return;
+                    }
+                }
+            }
+        });
+    };
 
     let start_correction = move |_| {
         // Today, or the year's last day once the year is over.
@@ -234,6 +321,19 @@ fn VoucherRow(
             <td class=TABLE_CELL>{voucher.text.clone()}</td>
             <td class=format!("{TABLE_CELL} text-right tabular-nums")>{amount(total)}</td>
             <td class=TABLE_CELL>{status}</td>
+            <td class=TABLE_CELL>
+                {move || {
+                    let count = attachments.with(Vec::len);
+                    (count > 0)
+                        .then(|| view! {
+                            <span class="inline-flex items-center gap-1 text-muted-foreground">
+                                <PaperclipIcon />
+                                {count}
+                                <span class="sr-only">" underlag"</span>
+                            </span>
+                        })
+                }}
+            </td>
             <td class=format!("{TABLE_CELL} text-right")>
                 <Show when=move || can_correct && !correcting.get()>
                     <Button variant=Variant::Ghost kind="button" on:click=start_correction>"Rätta"</Button>
@@ -249,7 +349,7 @@ fn VoucherRow(
         <Show when=move || expanded.get()>
             <tr class=TABLE_ROW>
                 <td class=TABLE_CELL></td>
-                <td class=TABLE_CELL colspan="5">
+                <td class=TABLE_CELL colspan="6">
                     <ul class="grid gap-1">
                         {lines
                             .iter()
@@ -269,6 +369,38 @@ fn VoucherRow(
                             })
                             .collect_view()}
                     </ul>
+                    <div class="mt-3 grid gap-2">
+                        <h2 class="text-xs/relaxed font-medium">"Underlag"</h2>
+                        <ul class="grid gap-1">
+                            {move || {
+                                attachments
+                                    .get()
+                                    .into_iter()
+                                    .map(|a| {
+                                        let label = format!("{} ({})", a.file_name, size_label(a.size));
+                                        view! {
+                                            <li>
+                                                <button
+                                                    type="button"
+                                                    class="underline-offset-4 hover:underline"
+                                                    on:click=move |_| open_attachment(a.id.clone())
+                                                >
+                                                    {label}
+                                                </button>
+                                            </li>
+                                        }
+                                    })
+                                    .collect_view()
+                            }}
+                        </ul>
+                        <div class="w-72">
+                            <FileInput
+                                label=format!("Lägg till underlag till ver {number}")
+                                id=format!("attach_{number}")
+                                on_pick=add_attachments
+                            />
+                        </div>
+                    </div>
                 </td>
             </tr>
         </Show>

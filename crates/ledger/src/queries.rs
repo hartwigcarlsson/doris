@@ -1,8 +1,9 @@
 //! Read-only views over the ledger projections. Each checks membership first.
 
 use crate::domain::{
-    Account, AccountLedger, AccountName, AccountNumber, Chart, FiscalYearStatus, TrialBalanceRow,
-    Voucher, VoucherLine, running_balance,
+    Account, AccountLedger, AccountName, AccountNumber, Attachment, AttachmentName, Chart,
+    ContentType, DomainError, FiscalYearStatus, TrialBalanceRow, Voucher, VoucherLine,
+    running_balance,
 };
 use crate::{Error, Result};
 use jiff::civil::Date;
@@ -99,6 +100,14 @@ pub async fn list_vouchers(
     .bind(&fiscal_year_start)
     .fetch_all(&mut *tx)
     .await?;
+    let attachments: Vec<(u32, String, String, String, i64)> = sqlx::query_as(
+        "SELECT number, sha256, file_name, content_type, size FROM voucher_attachments
+         WHERE company_id = ? AND fiscal_year_start = ? ORDER BY number, position",
+    )
+    .bind(&company_id)
+    .bind(&fiscal_year_start)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     let mut vouchers: Vec<Voucher> = heads
         .into_iter()
@@ -109,10 +118,46 @@ pub async fn list_vouchers(
             lines: Vec::new(),
             corrects,
             corrected_by,
+            attachments: Vec::new(),
         })
         .collect();
     attach_lines(&mut vouchers, lines);
+    for (number, sha256, file_name, content_type, size) in attachments {
+        if let Some(voucher) = voucher_at(&mut vouchers, number) {
+            let attachment = projected_attachment(sha256, &file_name, &content_type, size);
+            voucher.attachments.push(attachment);
+        }
+    }
     Ok(vouchers)
+}
+
+/// One underlag and its bytes, found through the company's own voucher: a
+/// hash alone never reads another company's file.
+pub async fn get_attachment(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    user_id: Uuid,
+    fiscal_year_start: Date,
+    number: u32,
+    sha256: &str,
+) -> Result<(Attachment, Vec<u8>)> {
+    doris_company::get_company(pool, company_id, user_id).await?;
+    let row: Option<(String, String, i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT a.file_name, a.content_type, a.size, f.data
+         FROM voucher_attachments a JOIN attachment_files f ON f.sha256 = a.sha256
+         WHERE a.company_id = ? AND a.fiscal_year_start = ? AND a.number = ? AND a.sha256 = ?",
+    )
+    .bind(company_id.to_string())
+    .bind(fiscal_year_start.to_string())
+    .bind(number)
+    .bind(sha256)
+    .fetch_optional(pool)
+    .await?;
+    let (file_name, content_type, size, data) = row.ok_or(DomainError::AttachmentNotFound)?;
+    Ok((
+        projected_attachment(sha256.to_owned(), &file_name, &content_type, size),
+        data,
+    ))
 }
 
 /// The saldobalans for one fiscal year, by account number: every account
@@ -259,20 +304,39 @@ pub async fn opening_balances(
         .collect())
 }
 
+/// Voucher `number` in `vouchers`. Numbers run 1..=n (the trigger
+/// guarantees it), so number - 1 is the index. A row whose head is missing
+/// (committed after the heads were read) gives `None`, never a panic.
+fn voucher_at(vouchers: &mut [Voucher], number: u32) -> Option<&mut Voucher> {
+    (number as usize)
+        .checked_sub(1)
+        .and_then(|i| vouchers.get_mut(i))
+        .filter(|v| v.number == number)
+}
+
 /// Puts each `(number, account, debit, credit)` line on its voucher.
 fn attach_lines(vouchers: &mut [Voucher], lines: Vec<(u32, u32, i64, i64)>) {
     for (number, account, debit, credit) in lines {
-        // Numbers run 1..=n (the trigger guarantees it), so number - 1 is the
-        // index. A line whose head is missing is skipped, never a panic.
-        if let Some(voucher) = (number as usize)
-            .checked_sub(1)
-            .and_then(|i| vouchers.get_mut(i))
-            .filter(|v| v.number == number)
-        {
+        if let Some(voucher) = voucher_at(vouchers, number) {
             voucher.lines.push(
                 VoucherLine::new(account, debit, credit).expect("projected accounts are valid"),
             );
         }
+    }
+}
+
+/// An underlag as the projection holds it.
+fn projected_attachment(
+    sha256: String,
+    file_name: &str,
+    content_type: &str,
+    size: i64,
+) -> Attachment {
+    Attachment {
+        sha256,
+        file_name: AttachmentName::parse(file_name).expect("projected names are valid"),
+        content_type: ContentType::from_mime(content_type).expect("projected types are valid"),
+        size: size as u64,
     }
 }
 
@@ -289,6 +353,7 @@ mod tests {
             lines: Vec::new(),
             corrects: None,
             corrected_by: None,
+            attachments: Vec::new(),
         }];
         // Voucher 2 was committed after the heads were read.
         attach_lines(

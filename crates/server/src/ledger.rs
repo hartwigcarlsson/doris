@@ -4,7 +4,7 @@
 
 use crate::grpc::{signed_in_user, today};
 use doris_ledger::Error;
-use doris_ledger::domain::{DomainError, RecordVoucher, Voucher, VoucherLine};
+use doris_ledger::domain::{Attachment, DomainError, RecordVoucher, Voucher, VoucherLine};
 use doris_proto::ledger::v1 as pb;
 use doris_proto::ledger::v1::ledger_service_server::LedgerService;
 use jiff::civil::Date;
@@ -12,8 +12,15 @@ use sqlx::SqlitePool;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
+/// Two 10 MiB underlag plus the rest of a `RecordVoucher`.
+pub(crate) const MAX_REQUEST: usize = 21 << 20;
+/// One 10 MiB underlag in a `GetAttachment` answer.
+pub(crate) const MAX_RESPONSE: usize = 11 << 20;
+/// The most underlag data one request may carry, all files together.
+const MAX_ATTACHMENTS_PER_REQUEST: usize = 20 << 20;
+
 pub struct LedgerApi {
-    pool: SqlitePool,
+    pub(crate) pool: SqlitePool,
 }
 
 impl LedgerApi {
@@ -119,12 +126,69 @@ impl LedgerService for LedgerApi {
             text: req.text,
             lines: domain_lines(&req.lines)?,
         };
-        let booked = doris_ledger::record_voucher(&self.pool, company, user, cmd, today())
-            .await
-            .map_err(status)?;
+        let attachments = new_attachments(req.attachments)?;
+        let booked = doris_ledger::record_voucher_with_attachments(
+            &self.pool,
+            company,
+            user,
+            cmd,
+            attachments,
+            today(),
+        )
+        .await
+        .map_err(status)?;
         Ok(Response::new(pb::RecordVoucherResponse {
             fiscal_year_start: booked.fiscal_year_start.to_string(),
             number: booked.number,
+        }))
+    }
+
+    async fn add_attachment(
+        &self,
+        request: Request<pb::AddAttachmentRequest>,
+    ) -> Result<Response<pb::AddAttachmentResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let req = request.into_inner();
+        // A missing attachment arrives as an empty name and is refused as such.
+        let new = req.attachment.unwrap_or_default();
+        let added = doris_ledger::add_attachment(
+            &self.pool,
+            company,
+            user,
+            date(&req.fiscal_year_start)?,
+            req.number,
+            doris_ledger::NewAttachment {
+                file_name: new.file_name,
+                data: new.data,
+            },
+            today(),
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::AddAttachmentResponse {
+            attachment: Some(attachment_message(&added)),
+        }))
+    }
+
+    async fn get_attachment(
+        &self,
+        request: Request<pb::GetAttachmentRequest>,
+    ) -> Result<Response<pb::GetAttachmentResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let req = request.get_ref();
+        let (attachment, data) = doris_ledger::get_attachment(
+            &self.pool,
+            company,
+            user,
+            date(&req.fiscal_year_start)?,
+            req.number,
+            &req.id,
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::GetAttachmentResponse {
+            attachment: Some(attachment_message(&attachment)),
+            data,
         }))
     }
 
@@ -287,6 +351,32 @@ fn domain_lines(lines: &[pb::VoucherLine]) -> Result<Vec<VoucherLine>, Status> {
         .map_err(domain_status)
 }
 
+/// The uploaded files, refused as a whole if together they are over the
+/// per-request limit. Each file is checked by `doris_ledger`.
+fn new_attachments(
+    files: Vec<pb::NewAttachment>,
+) -> Result<Vec<doris_ledger::NewAttachment>, Status> {
+    if files.iter().map(|f| f.data.len()).sum::<usize>() > MAX_ATTACHMENTS_PER_REQUEST {
+        return Err(domain_status(DomainError::AttachmentTooLarge));
+    }
+    Ok(files
+        .into_iter()
+        .map(|f| doris_ledger::NewAttachment {
+            file_name: f.file_name,
+            data: f.data,
+        })
+        .collect())
+}
+
+fn attachment_message(a: &Attachment) -> pb::Attachment {
+    pb::Attachment {
+        id: a.sha256.clone(),
+        file_name: a.file_name.as_str().to_owned(),
+        content_type: a.content_type.as_mime().to_owned(),
+        size: a.size,
+    }
+}
+
 fn voucher_message(v: Voucher) -> pb::Voucher {
     pb::Voucher {
         number: v.number,
@@ -295,6 +385,7 @@ fn voucher_message(v: Voucher) -> pb::Voucher {
         lines: v.lines.iter().map(line_message).collect(),
         corrects: v.corrects.unwrap_or(0),
         corrected_by: v.corrected_by.unwrap_or(0),
+        attachments: v.attachments.iter().map(attachment_message).collect(),
     }
 }
 
@@ -339,6 +430,12 @@ fn domain_status(err: DomainError) -> Status {
         FiscalYearNotEnded => Status::failed_precondition("fiscal_year_not_ended"),
         PreviousFiscalYearOpen => Status::failed_precondition("previous_fiscal_year_open"),
         LaterFiscalYearClosed => Status::failed_precondition("later_fiscal_year_closed"),
+        UnsupportedAttachmentType => Status::invalid_argument("unsupported_attachment_type"),
+        InvalidAttachmentName => Status::invalid_argument("invalid_attachment_name"),
+        EmptyAttachment => Status::invalid_argument("empty_attachment"),
+        AttachmentTooLarge => Status::invalid_argument("attachment_too_large"),
+        DuplicateAttachment => Status::invalid_argument("duplicate_attachment"),
+        AttachmentNotFound => Status::not_found("attachment_not_found"),
         Overflow => {
             tracing::error!("ledger: amount overflow");
             Status::internal("internal")

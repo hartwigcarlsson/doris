@@ -57,6 +57,18 @@ pub enum DomainError {
     PreviousFiscalYearOpen,
     #[error("a later fiscal year is closed")]
     LaterFiscalYearClosed,
+    #[error("an underlag must be a PDF, JPEG or PNG")]
+    UnsupportedAttachmentType,
+    #[error("file name must be 1-255 characters, without / \\ or control characters")]
+    InvalidAttachmentName,
+    #[error("the file is empty")]
+    EmptyAttachment,
+    #[error("the file is too large")]
+    AttachmentTooLarge,
+    #[error("the voucher already has this file")]
+    DuplicateAttachment,
+    #[error("no such underlag")]
+    AttachmentNotFound,
     /// A sum outgrew `i64`; no real ledger gets there.
     #[error("amount overflow")]
     Overflow,
@@ -283,6 +295,101 @@ impl VoucherLine {
     }
 }
 
+/// The most one underlag may weigh: 10 MiB.
+pub const MAX_ATTACHMENT_SIZE: usize = 10 * 1024 * 1024;
+
+/// The file types an underlag may have. All open in a browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentType {
+    Pdf,
+    Jpeg,
+    Png,
+}
+
+impl ContentType {
+    pub fn as_mime(self) -> &'static str {
+        match self {
+            ContentType::Pdf => "application/pdf",
+            ContentType::Jpeg => "image/jpeg",
+            ContentType::Png => "image/png",
+        }
+    }
+
+    pub fn from_mime(mime: &str) -> Option<Self> {
+        [ContentType::Pdf, ContentType::Jpeg, ContentType::Png]
+            .into_iter()
+            .find(|t| t.as_mime() == mime)
+    }
+}
+
+/// The file's type, from its first bytes. What a client claims is never
+/// trusted.
+pub fn sniff(data: &[u8]) -> Result<ContentType, DomainError> {
+    if data.starts_with(b"%PDF-") {
+        Ok(ContentType::Pdf)
+    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Ok(ContentType::Jpeg)
+    } else if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Ok(ContentType::Png)
+    } else {
+        Err(DomainError::UnsupportedAttachmentType)
+    }
+}
+
+/// An underlag's file name, as the user picked it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AttachmentName(String);
+
+impl AttachmentName {
+    pub fn parse(raw: &str) -> Result<Self, DomainError> {
+        let name = raw.trim();
+        let safe = !name
+            .chars()
+            .any(|c| c == '/' || c == '\\' || c.is_control());
+        if safe && (1..=255).contains(&name.chars().count()) {
+            Ok(Self(name.to_owned()))
+        } else {
+            Err(DomainError::InvalidAttachmentName)
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// An underlag (BFL 5 kap. 6–7 §). The bytes are stored once per `sha256`,
+/// apart from the event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    pub sha256: String,
+    pub file_name: AttachmentName,
+    pub content_type: ContentType,
+    pub size: u64,
+}
+
+impl Attachment {
+    /// `sha256` is the lowercase hex SHA-256 of `data`, worked out by the
+    /// caller so the domain stays free of crypto.
+    pub fn new(file_name: &str, data: &[u8], sha256: String) -> Result<Self, DomainError> {
+        let file_name = AttachmentName::parse(file_name)?;
+        if data.is_empty() {
+            return Err(DomainError::EmptyAttachment);
+        }
+        if data.len() > MAX_ATTACHMENT_SIZE {
+            return Err(DomainError::AttachmentTooLarge);
+        }
+        Ok(Self {
+            sha256,
+            file_name,
+            content_type: sniff(data)?,
+            size: data.len() as u64,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum LedgerEvent {
@@ -302,6 +409,12 @@ pub enum LedgerEvent {
     FiscalYearClosed { result_voucher: Option<u32> },
     /// The year is open again; the result voucher's reversal follows.
     FiscalYearReopened { reason: String },
+    /// An underlag for voucher `voucher` (BFL 5 kap. 6–7 §). Never removed;
+    /// who added it, and when, is in the event metadata.
+    AttachmentAdded {
+        voucher: u32,
+        attachment: Attachment,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -312,6 +425,8 @@ pub struct Voucher {
     pub lines: Vec<VoucherLine>,
     pub corrects: Option<u32>,
     pub corrected_by: Option<u32>,
+    /// In the order they were added.
+    pub attachments: Vec<Attachment>,
 }
 
 /// One account's figures in a fiscal year (saldobalans). `opening` is its
@@ -427,6 +542,7 @@ impl Ledger {
                     lines,
                     corrects,
                     corrected_by: None,
+                    attachments: Vec::new(),
                 });
             }
             LedgerEvent::OpeningBalancesSet { lines } => self.opening_balances = lines,
@@ -437,6 +553,14 @@ impl Ledger {
             LedgerEvent::FiscalYearReopened { .. } => {
                 self.closed = false;
                 self.result_voucher = None;
+            }
+            LedgerEvent::AttachmentAdded {
+                voucher,
+                attachment,
+            } => {
+                if let Some(v) = self.vouchers.iter_mut().find(|v| v.number == voucher) {
+                    v.attachments.push(attachment);
+                }
             }
         }
     }
@@ -557,6 +681,29 @@ pub fn correct_voucher(
         return Err(DomainError::CorrectionDateOutsideFiscalYear);
     }
     Ok(reversal(ledger, original, date))
+}
+
+/// Adds an underlag to a voucher. A closed year takes it too: it changes no
+/// amount, and the event records who added it and when.
+pub fn add_attachment(
+    ledger: &Ledger,
+    voucher: u32,
+    attachment: Attachment,
+) -> Result<LedgerEvent, DomainError> {
+    let existing = ledger
+        .voucher(voucher)
+        .ok_or(DomainError::VoucherNotFound)?;
+    if existing
+        .attachments
+        .iter()
+        .any(|a| a.sha256 == attachment.sha256)
+    {
+        return Err(DomainError::DuplicateAttachment);
+    }
+    Ok(LedgerEvent::AttachmentAdded {
+        voucher,
+        attachment,
+    })
 }
 
 /// The most lines the first year's opening balances may have.

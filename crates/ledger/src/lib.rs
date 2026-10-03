@@ -11,20 +11,21 @@ mod projections;
 mod queries;
 
 use domain::{
-    AccountName, AccountNumber, Chart, ChartEvent, DomainError, Ledger, LedgerEvent, RecordVoucher,
-    VoucherLine,
+    AccountName, AccountNumber, Attachment, Chart, ChartEvent, DomainError, Ledger, LedgerEvent,
+    RecordVoucher, VoucherLine,
 };
 use doris_company::domain::{Company, FiscalYear};
 use doris_eventstore::{Metadata, NewEvent};
 use jiff::civil::Date;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 pub use projections::rebuild_projections;
 pub use queries::{
-    account_ledger, list_accounts, list_fiscal_years, list_vouchers, opening_balances,
-    trial_balance,
+    account_ledger, get_attachment, list_accounts, list_fiscal_years, list_vouchers,
+    opening_balances, trial_balance,
 };
 
 const ACCOUNTS_STREAM: &str = "accounts-";
@@ -266,6 +267,105 @@ pub async fn correct_voucher_in(
     let (ledger, version) = load_ledger(conn, company_id, fiscal_year).await?;
     let event = domain::correct_voucher(&ledger, number, date, today)?;
     commit_voucher(conn, company_id, fiscal_year, version, event, actor).await
+}
+
+/// An underlag as it arrives: the file's name and its bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewAttachment {
+    pub file_name: String,
+    pub data: Vec<u8>,
+}
+
+/// Books a voucher and its underlag in one transaction: all of it, or
+/// nothing and no number used up.
+pub async fn record_voucher_with_attachments(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    cmd: RecordVoucher,
+    attachments: Vec<NewAttachment>,
+    today: Date,
+) -> Result<VoucherRef> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let voucher = record_voucher_in(&mut tx, company_id, actor, cmd, today).await?;
+    // ponytail: each add_attachment_in reloads membership and the year's
+    // ledger; fine for a few files, load them once if vouchers get many.
+    for attachment in attachments {
+        add_attachment_in(
+            &mut tx,
+            company_id,
+            actor,
+            voucher.fiscal_year_start,
+            voucher.number,
+            attachment,
+            today,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(voucher)
+}
+
+/// Adds an underlag to voucher `number` of the fiscal year starting on
+/// `fiscal_year_start`, also when that year is closed.
+pub async fn add_attachment(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    number: u32,
+    attachment: NewAttachment,
+    today: Date,
+) -> Result<Attachment> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let added = add_attachment_in(
+        &mut tx,
+        company_id,
+        actor,
+        fiscal_year_start,
+        number,
+        attachment,
+        today,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(added)
+}
+
+/// [`add_attachment`] in the caller's IMMEDIATE transaction. The file goes
+/// in before the event, whose projection refers to it.
+async fn add_attachment_in(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    number: u32,
+    new: NewAttachment,
+    today: Date,
+) -> Result<Attachment> {
+    let company = member_company(conn, company_id, actor).await?;
+    let fiscal_year =
+        fiscal_year_at(&company, fiscal_year_start, today).ok_or(DomainError::VoucherNotFound)?;
+    let (ledger, version) = load_ledger(conn, company_id, fiscal_year).await?;
+    let attachment = Attachment::new(&new.file_name, &new.data, sha256_hex(&new.data))?;
+    let event = domain::add_attachment(&ledger, number, attachment.clone())?;
+    sqlx::query("INSERT OR IGNORE INTO attachment_files (sha256, size, data) VALUES (?, ?, ?)")
+        .bind(&attachment.sha256)
+        .bind(new.data.len() as i64)
+        .bind(&new.data)
+        .execute(&mut *conn)
+        .await?;
+    let stream = ledger_stream(company_id, fiscal_year.start);
+    append(conn, &stream, version, &[event], actor).await?;
+    Ok(attachment)
+}
+
+/// Lowercase hex SHA-256.
+fn sha256_hex(data: &[u8]) -> String {
+    Sha256::digest(data)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// The company's fiscal year starting on `start`, if there is one by
