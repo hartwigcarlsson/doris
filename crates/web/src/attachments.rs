@@ -58,9 +58,11 @@ pub fn open_in(tab: &web_sys::Window, content_type: &str, data: &[u8]) {
     let options = web_sys::BlobPropertyBag::new();
     options.set_type(content_type);
     let Ok(blob) = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options) else {
+        let _ = tab.close();
         return;
     };
     let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
+        let _ = tab.close();
         return;
     };
     let _ = tab.location().set_href(&url);

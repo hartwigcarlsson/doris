@@ -197,14 +197,18 @@ fn VoucherRow(
             return;
         };
         // Opened by the click itself: browsers block window.open after an await.
-        let tab = window()
+        let Some(tab) = window()
             .open_with_url_and_target("", "_blank")
             .ok()
-            .flatten();
+            .flatten()
+        else {
+            return error.set(Some(describe_code("popup_blocked")));
+        };
+        let company = company_id.get_value();
         spawn_local(async move {
             let result = ledger_api()
                 .get_attachment(lpb::GetAttachmentRequest {
-                    company_id: company_id.get_value(),
+                    company_id: company.clone(),
                     fiscal_year_start: year.start,
                     number,
                     id,
@@ -217,16 +221,12 @@ fn VoucherRow(
                         .attachment
                         .map(|a| a.content_type)
                         .unwrap_or_default();
-                    if let Some(tab) = tab {
-                        open_in(&tab, &mime, &response.data);
-                    }
+                    open_in(&tab, &mime, &response.data);
                 }
                 Err(status) => {
-                    if let Some(tab) = tab {
-                        let _ = tab.close();
-                    }
-                    if company_id.get_value() == companies.active.get_untracked() {
-                        error.set(Some(describe(&status)));
+                    let _ = tab.close();
+                    if company == companies.active.get_untracked() {
+                        error.try_set(Some(describe(&status)));
                     }
                 }
             }
@@ -238,18 +238,20 @@ fn VoucherRow(
         let Some(year) = fiscal_year.get_value() else {
             return;
         };
+        let company = company_id.get_value();
         spawn_local(async move {
             let picked = read_files(&input).await;
             if let Err(code) = picked
                 .iter()
                 .try_for_each(|f| check_sizes(std::slice::from_ref(f)))
             {
-                return error.set(Some(describe_code(code)));
+                error.try_set(Some(describe_code(code)));
+                return;
             }
             for file in picked {
                 let result = ledger_api()
                     .add_attachment(lpb::AddAttachmentRequest {
-                        company_id: company_id.get_value(),
+                        company_id: company.clone(),
                         fiscal_year_start: year.start.clone(),
                         number,
                         attachment: Some(file),
@@ -258,12 +260,15 @@ fn VoucherRow(
                 match result {
                     Ok(response) => {
                         if let Some(added) = response.into_inner().attachment {
-                            attachments.update(|list| list.push(added));
+                            // The row is gone (company or year switched): stop.
+                            if attachments.try_update(|list| list.push(added)).is_none() {
+                                return;
+                            }
                         }
                     }
                     Err(status) => {
-                        if company_id.get_value() == companies.active.get_untracked() {
-                            error.set(Some(describe(&status)));
+                        if company == companies.active.get_untracked() {
+                            error.try_set(Some(describe(&status)));
                         }
                         return;
                     }

@@ -94,6 +94,9 @@ fn message(code: &str) -> &'static str {
         "attachment_too_large" => "Underlaget är för stort (högst 10 MB per fil och 20 MB totalt).",
         "duplicate_attachment" => "Underlaget finns redan på verifikationen.",
         "attachment_not_found" => "Underlaget hittades inte.",
+        "popup_blocked" => {
+            "Webbläsaren blockerade det nya fönstret. Tillåt popup-fönster för Doris och försök igen."
+        }
         _ => "Något gick fel. Försök igen.",
     }
 }
@@ -188,6 +191,7 @@ mod tests {
             "attachment_too_large",
             "duplicate_attachment",
             "attachment_not_found",
+            "popup_blocked",
         ] {
             assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
         }
