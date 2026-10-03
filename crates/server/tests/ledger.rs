@@ -1,6 +1,6 @@
 mod common;
 
-use common::{TestServer, authed, device};
+use common::{Ledger, TestServer, authed, device};
 use doris_proto::company::v1 as cpb;
 use doris_proto::ledger::v1 as pb;
 use tonic::Code;
@@ -53,6 +53,7 @@ fn sale(company_id: &str, ore: i64) -> pb::RecordVoucherRequest {
                 credit: ore,
             },
         ],
+        attachments: vec![],
     }
 }
 
@@ -195,6 +196,7 @@ async fn a_member_keeps_the_chart_and_books_and_corrects_vouchers() {
             lines: sale("", 12_500).lines,
             corrects: 0,
             corrected_by: 2,
+            attachments: vec![],
         }
     );
     assert_eq!(
@@ -816,4 +818,240 @@ async fn closing_errors_have_stable_codes() {
         .await
         .unwrap_err();
     expect(err, Code::FailedPrecondition, "fiscal_year_not_ended");
+}
+
+const MIB: usize = 1 << 20;
+
+/// A PDF of exactly `size` bytes.
+fn pdf(size: usize) -> Vec<u8> {
+    let mut data = b"%PDF-1.7\n".to_vec();
+    data.resize(size, b'x');
+    data
+}
+
+fn upload(name: &str, data: Vec<u8>) -> pb::NewAttachment {
+    pb::NewAttachment {
+        file_name: name.into(),
+        data,
+    }
+}
+
+fn with_files(company_id: &str, files: Vec<pb::NewAttachment>) -> pb::RecordVoucherRequest {
+    pb::RecordVoucherRequest {
+        attachments: files,
+        ..sale(company_id, 100)
+    }
+}
+
+async fn refusal(
+    api: &mut Ledger,
+    session: &str,
+    request: pb::RecordVoucherRequest,
+) -> (Code, String) {
+    code_of(
+        api.record_voucher(authed(request, session))
+            .await
+            .unwrap_err(),
+    )
+}
+
+#[tokio::test]
+async fn underlag_go_up_with_a_voucher_and_come_back_byte_for_byte() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.ledger();
+    let big = pdf(10 * MIB);
+
+    let booked = api
+        .record_voucher(authed(
+            with_files(&id, vec![upload("kvitto.pdf", big.clone())]),
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let listed = api
+        .list_vouchers(authed(
+            pb::ListVouchersRequest {
+                company_id: id.clone(),
+                fiscal_year_start: booked.fiscal_year_start.clone(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .vouchers[0]
+        .attachments
+        .clone();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (
+            listed[0].file_name.as_str(),
+            listed[0].content_type.as_str(),
+            listed[0].size
+        ),
+        ("kvitto.pdf", "application/pdf", (10 * MIB) as u64)
+    );
+    assert_eq!(listed[0].id.len(), 64);
+
+    let got = api
+        .get_attachment(authed(
+            pb::GetAttachmentRequest {
+                company_id: id.clone(),
+                fiscal_year_start: booked.fiscal_year_start.clone(),
+                number: booked.number,
+                id: listed[0].id.clone(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(got.attachment.as_ref(), Some(&listed[0]));
+    assert!(got.data == big, "the bytes differ");
+
+    let added = api
+        .add_attachment(authed(
+            pb::AddAttachmentRequest {
+                company_id: id.clone(),
+                fiscal_year_start: booked.fiscal_year_start,
+                number: booked.number,
+                attachment: Some(upload("foto.png", b"\x89PNG\r\n\x1a\nbild".to_vec())),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .attachment
+        .unwrap();
+    assert_eq!(
+        (added.file_name.as_str(), added.content_type.as_str()),
+        ("foto.png", "image/png")
+    );
+
+    // Two files of 10 MiB fit in one request.
+    let mut other = pdf(10 * MIB);
+    other[20] = b'y';
+    api.record_voucher(authed(
+        with_files(
+            &id,
+            vec![upload("a.pdf", pdf(10 * MIB)), upload("b.pdf", other)],
+        ),
+        &anna,
+    ))
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn attachment_errors_have_stable_codes() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.ledger();
+    let invalid = |code: &str| (Code::InvalidArgument, code.to_owned());
+    let mut other = pdf(10 * MIB);
+    other[20] = b'y';
+
+    assert_eq!(
+        refusal(
+            &mut api,
+            &anna,
+            with_files(&id, vec![upload("kvitto.pdf", pdf(10 * MIB + 1))])
+        )
+        .await,
+        invalid("attachment_too_large")
+    );
+    // 20 MiB + 10 bytes: over the per-request total, under the 21 MiB message limit.
+    assert_eq!(
+        refusal(
+            &mut api,
+            &anna,
+            with_files(
+                &id,
+                vec![
+                    upload("a.pdf", pdf(10 * MIB)),
+                    upload("b.pdf", other),
+                    upload("c.pdf", pdf(10))
+                ]
+            )
+        )
+        .await,
+        invalid("attachment_too_large")
+    );
+    assert_eq!(
+        refusal(
+            &mut api,
+            &anna,
+            with_files(&id, vec![upload("bild.gif", b"GIF89a".to_vec())])
+        )
+        .await,
+        invalid("unsupported_attachment_type")
+    );
+    assert_eq!(
+        refusal(&mut api, &anna, with_files(&id, vec![upload(" ", pdf(10))])).await,
+        invalid("invalid_attachment_name")
+    );
+    assert_eq!(
+        refusal(
+            &mut api,
+            &anna,
+            with_files(&id, vec![upload("tom.pdf", vec![])])
+        )
+        .await,
+        invalid("empty_attachment")
+    );
+
+    let booked = api
+        .record_voucher(authed(
+            with_files(&id, vec![upload("kvitto.pdf", pdf(10))]),
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let add = |number: u32| pb::AddAttachmentRequest {
+        company_id: id.clone(),
+        fiscal_year_start: booked.fiscal_year_start.clone(),
+        number,
+        attachment: Some(upload("kopia.pdf", pdf(10))),
+    };
+    assert_eq!(
+        code_of(
+            api.add_attachment(authed(add(booked.number), &anna))
+                .await
+                .unwrap_err()
+        ),
+        invalid("duplicate_attachment")
+    );
+    assert_eq!(
+        code_of(
+            api.add_attachment(authed(add(99), &anna))
+                .await
+                .unwrap_err()
+        ),
+        (Code::NotFound, "voucher_not_found".into())
+    );
+    let get = pb::GetAttachmentRequest {
+        company_id: id.clone(),
+        fiscal_year_start: booked.fiscal_year_start.clone(),
+        number: booked.number,
+        id: "0".repeat(64),
+    };
+    assert_eq!(
+        code_of(
+            api.get_attachment(authed(get.clone(), &anna))
+                .await
+                .unwrap_err()
+        ),
+        (Code::NotFound, "attachment_not_found".into())
+    );
+    let bertil = server.invite(&anna, "bertil@example.se").await;
+    assert_eq!(
+        code_of(api.get_attachment(authed(get, &bertil)).await.unwrap_err()),
+        (Code::NotFound, "company_not_found".into())
+    );
 }

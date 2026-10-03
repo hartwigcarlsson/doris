@@ -35,7 +35,11 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
 ) -> Router {
     let mut app = Routes::new(AuthServiceServer::new(api))
         .add_service(CompanyServiceServer::new(companies))
-        .add_service(LedgerServiceServer::new(ledger))
+        .add_service(
+            LedgerServiceServer::new(ledger)
+                .max_decoding_message_size(ledger::MAX_REQUEST)
+                .max_encoding_message_size(ledger::MAX_RESPONSE),
+        )
         .into_axum_router()
         .layer(GrpcWebLayer::new())
         .layer(axum::middleware::map_response(hide_internal_messages));

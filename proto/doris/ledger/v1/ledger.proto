@@ -17,6 +17,8 @@ service LedgerService {
   // Books a reversing voucher in the original's fiscal year.
   rpc CorrectVoucher(CorrectVoucherRequest) returns (CorrectVoucherResponse);
   // The grundbok for one fiscal year, by number.
+  rpc AddAttachment(AddAttachmentRequest) returns (AddAttachmentResponse);
+  rpc GetAttachment(GetAttachmentRequest) returns (GetAttachmentResponse);
   rpc ListVouchers(ListVouchersRequest) returns (ListVouchersResponse);
   // The saldobalans for one fiscal year: debit and credit per account with
   // lines in it, by account number.
@@ -99,6 +101,7 @@ message RecordVoucherRequest {
   string date = 2;
   string text = 3;
   repeated VoucherLine lines = 4;
+  repeated NewAttachment attachments = 5;
 }
 
 message RecordVoucherResponse {
@@ -131,6 +134,7 @@ message Voucher {
   repeated VoucherLine lines = 4;
   uint32 corrects = 5;
   uint32 corrected_by = 6;
+  repeated Attachment attachments = 7;
 }
 
 message ListVouchersResponse {
@@ -210,3 +214,39 @@ message ReopenFiscalYearRequest {
 }
 
 message ReopenFiscalYearResponse {}
+
+// An underlag as uploaded. The server decides its type from the bytes.
+message NewAttachment {
+  string file_name = 1;
+  bytes data = 2;
+}
+
+message Attachment {
+  string id = 1;           // sha256, lowercase hex
+  string file_name = 2;
+  string content_type = 3; // application/pdf, image/jpeg or image/png
+  uint64 size = 4;
+}
+
+message AddAttachmentRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+  uint32 number = 3;
+  NewAttachment attachment = 4;
+}
+
+message AddAttachmentResponse {
+  Attachment attachment = 1;
+}
+
+message GetAttachmentRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+  uint32 number = 3;
+  string id = 4;
+}
+
+message GetAttachmentResponse {
+  Attachment attachment = 1;
+  bytes data = 2;
+}

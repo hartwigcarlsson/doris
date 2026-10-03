@@ -70,6 +70,7 @@ pub fn NewVoucher() -> impl IntoView {
                 date: date.get_untracked(),
                 text: text.get_untracked(),
                 lines: request_lines,
+                attachments: Vec::new(),
             };
             let result = ledger_api().record_voucher(request).await;
             busy.set(false);

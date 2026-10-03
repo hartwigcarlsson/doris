@@ -89,7 +89,9 @@ impl TestServer {
     }
 
     pub fn ledger(&self) -> Ledger {
+        // Room for a 10 MiB underlag coming back from GetAttachment.
         LedgerServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
+            .max_decoding_message_size(11 << 20)
     }
 
     pub fn companies(&self) -> Companies {
