@@ -35,8 +35,8 @@ AttachmentAdded { voucher: u32, attachment: Attachment },
 ### Tillstånd
 `Voucher` får `attachments: Vec<Attachment>` i den ordning de lades till. `Ledger::apply` lägger till underlaget på verifikationen.
 
-### `record_voucher(ledger, chart, cmd)`
-`RecordVoucher` får `attachments: Vec<Attachment>`. Funktionen returnerar `Vec<LedgerEvent>`: först `VoucherRecorded` och sedan ett `AttachmentAdded` per underlag, med verifikationens nya nummer. Samma hash två gånger i samma kommando ger `DuplicateAttachment`. `correct_voucher` tar inga underlag.
+### Bokföring med underlag
+`RecordVoucher` och `domain::record_voucher` ändras inte. Lib-lagret bokför verifikationen och lägger sedan till varje underlag med `add_attachment`, i samma `BEGIN IMMEDIATE`-transaktion. Varje underlag blir ett eget `AttachmentAdded` direkt efter `VoucherRecorded`. Om något underlag avvisas, till exempel samma fil två gånger (`DuplicateAttachment`), rullas hela bokföringen tillbaka. `correct_voucher` tar inga underlag.
 
 ### `add_attachment(ledger, voucher, attachment)`
 - Om verifikationen saknas blir det `VoucherNotFound`.
@@ -80,9 +80,9 @@ CREATE TABLE voucher_attachments (
 ```
 
 ### Skrivflöde (`crates/ledger/src/lib.rs`)
-- `NewAttachment { file_name: String, data: Vec<u8> }` är indata från API:t. Funktionen `prepare(new) -> Result<(Attachment, Vec<u8>)>` räknar SHA-256 och anropar `Attachment::new`.
-- `record_voucher`: underlagen förbereds, `domain::record_voucher` körs, och i samma `BEGIN IMMEDIATE` görs `INSERT OR IGNORE INTO attachment_files` per fil följt av `append` av alla event. Om något misslyckas rullas allt tillbaka, och då blir varken någon fil eller något nummer kvar.
-- `add_attachment(pool, company_id, actor, fiscal_year_start, number, NewAttachment) -> Result<Attachment>` följer samma mönster som `correct_voucher`: `member_company`, `fiscal_year_at`, `load_ledger`, `domain::add_attachment`, insert av filen och `append`.
+- `NewAttachment { file_name: String, data: Vec<u8> }` är indata från API:t. `add_attachment_in` räknar SHA-256, anropar `Attachment::new` och `domain::add_attachment`, gör `INSERT OR IGNORE INTO attachment_files` och sedan `append`.
+- `record_voucher_with_attachments(pool, company_id, actor, cmd, attachments, today)` kör `record_voucher_in` och därefter `add_attachment_in` per underlag i samma `BEGIN IMMEDIATE`. Om något misslyckas rullas allt tillbaka, och då blir varken någon fil eller något nummer kvar. `record_voucher` finns kvar oförändrad.
+- `add_attachment(pool, company_id, actor, fiscal_year_start, number, NewAttachment, today) -> Result<Attachment>` följer samma mönster som `correct_voucher`: `member_company`, `fiscal_year_at` (ett år som saknas ger `VoucherNotFound`), `load_ledger`, `domain::add_attachment`, insert av filen och `append`.
 - Projektionen (`projections.rs`) lägger in en rad i `voucher_attachments` för varje `AttachmentAdded`, med `position` = antalet befintliga rader + 1. `added_at` och `added_by` kommer från eventets metadata.
 - `rebuild_projections` tömmer och bygger om `voucher_attachments`. `attachment_files` rörs inte.
 
@@ -138,16 +138,16 @@ message GetAttachmentResponse {
 ## Frontend
 
 ### `/vouchers/new`, Ny verifikation
-- Fältet "Underlag" ligger under Text: `<input type="file" multiple accept="application/pdf,image/jpeg,image/png">`. På mobilen erbjuder det kameran.
+- Fältet "Underlag" ligger under Text. Det är en synlig, nativ filväljare (komponenten `FileInput` i `ui.rs`): `<input type="file" multiple accept="application/pdf,image/jpeg,image/png">`. På mobilen erbjuder det kameran.
 - De valda filerna listas med namn och storlek, var och en med knappen "Ta bort". Filer som väljs vid flera tillfällen läggs till i listan.
 - Innan filerna skickas kontrollerar klienten 10 MiB per fil och 20 MiB totalt. Felet visas med samma text som koden `attachment_too_large`.
 - Byten läses med `File.arrayBuffer()` och skickas i `RecordVoucherRequest.attachments`.
 
 ### `/vouchers`, Verifikationer (grundboken)
 - En ny smal kolumn visar lucide-ikonen `paperclip` (inlinad SVG) och antalet underlag. Den är tom för verifikationer utan underlag.
-- När en rad expanderas visas rubriken "Underlag" under konteringsraderna, med en lista av länkar i formen "kvitto.pdf (120 kB)".
+- När en rad expanderas visas rubriken "Underlag" under konteringsraderna, med en lista av knappar i formen "kvitto.pdf (1 kB)". Det är knappar och inte länkar, eftersom de saknar `href`. Storleken anges i kB, eller i MB med en decimal från 1 MB.
 - Ett klick anropar `GetAttachment`. Svaret blir en `Blob` med `content_type` från servern och öppnas via `URL.createObjectURL` med `window.open(url, "_blank")`. URL:en släpps med `revokeObjectURL` efter en kort fördröjning.
-- I den expanderade vyn finns också knappen "Lägg till underlag", en dold filväljare som anropar `AddAttachment` en gång per vald fil och sedan läser om listan. Den visas även för stängda år.
+- I den expanderade vyn finns också filväljaren "Lägg till underlag till ver N", som anropar `AddAttachment` en gång per vald fil och sedan läser om listan. Den visas även för stängda år.
 
 ### Övrigt
 - `web-sys` får features för `File`, `FileList`, `HtmlInputElement`, `Blob`, `BlobPropertyBag` och `Url`.
@@ -165,15 +165,14 @@ Varje beteende utvecklas med TDD: rött, grönt, refaktorering och commit.
 ### Domän (`crates/ledger/tests/domain.rs`)
 - `sniff` känner igen PDF, JPEG och PNG och avvisar GIF, text och tom indata.
 - `Attachment::new`: en fil på exakt 10 MiB går igenom och en byte till ger `AttachmentTooLarge`. En tom fil ger `EmptyAttachment`. Namnregler: tomt namn, 256 tecken, `/`, `\` och `\n`.
-- Givet en tom liggare, när en verifikation med två underlag bokförs, så blir det `VoucherRecorded` följt av två `AttachmentAdded` med samma nummer.
-- Samma hash två gånger i `record_voucher` ger `DuplicateAttachment`.
 - `add_attachment`: en verifikation som saknas ger `VoucherNotFound`, och en hash som redan finns ger `DuplicateAttachment`. Givet ett stängt år lyckas det.
 - `evolve` ger `Voucher.attachments` i ordningen de lades till.
 
 ### Lagring (`crates/ledger/tests/store.rs`)
 - Samma fil på två verifikationer ger en rad i `attachment_files` och två i `voucher_attachments`.
 - `UPDATE` och `DELETE` på `attachment_files` avvisas.
-- `record_voucher` som inte balanserar men har underlag lämnar `attachment_files` tom.
+- En bokföring med två underlag ger `VoucherRecorded` följt av två `AttachmentAdded`.
+- En bokföring som inte balanserar men har underlag, en som har en GIF eller en som har samma fil två gånger lämnar både `events` och `attachment_files` tomma.
 - `rebuild_projections` från `read_all` ger samma `voucher_attachments`.
 - `get_attachment` med rätt hash men ett annat företags verifikation ger `AttachmentNotFound`. Den som inte är medlem får `Error::NotFound`, som för andra läsningar.
 - `add_attachment` i ett stängt år lyckas.
