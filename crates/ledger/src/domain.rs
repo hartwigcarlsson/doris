@@ -57,6 +57,18 @@ pub enum DomainError {
     PreviousFiscalYearOpen,
     #[error("a later fiscal year is closed")]
     LaterFiscalYearClosed,
+    #[error("an underlag must be a PDF, JPEG or PNG")]
+    UnsupportedAttachmentType,
+    #[error("file name must be 1-255 characters, without / \\ or control characters")]
+    InvalidAttachmentName,
+    #[error("the file is empty")]
+    EmptyAttachment,
+    #[error("the file is too large")]
+    AttachmentTooLarge,
+    #[error("the voucher already has this file")]
+    DuplicateAttachment,
+    #[error("no such underlag")]
+    AttachmentNotFound,
     /// A sum outgrew `i64`; no real ledger gets there.
     #[error("amount overflow")]
     Overflow,
@@ -280,6 +292,101 @@ impl VoucherLine {
     fn is_valid(&self) -> bool {
         let in_range = |amount: i64| (0..=MAX_AMOUNT).contains(&amount);
         in_range(self.debit) && in_range(self.credit) && (self.debit == 0) != (self.credit == 0)
+    }
+}
+
+/// The most one underlag may weigh: 10 MiB.
+pub const MAX_ATTACHMENT_SIZE: usize = 10 * 1024 * 1024;
+
+/// The file types an underlag may have. All open in a browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentType {
+    Pdf,
+    Jpeg,
+    Png,
+}
+
+impl ContentType {
+    pub fn as_mime(self) -> &'static str {
+        match self {
+            ContentType::Pdf => "application/pdf",
+            ContentType::Jpeg => "image/jpeg",
+            ContentType::Png => "image/png",
+        }
+    }
+
+    pub fn from_mime(mime: &str) -> Option<Self> {
+        [ContentType::Pdf, ContentType::Jpeg, ContentType::Png]
+            .into_iter()
+            .find(|t| t.as_mime() == mime)
+    }
+}
+
+/// The file's type, from its first bytes. What a client claims is never
+/// trusted.
+pub fn sniff(data: &[u8]) -> Result<ContentType, DomainError> {
+    if data.starts_with(b"%PDF-") {
+        Ok(ContentType::Pdf)
+    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Ok(ContentType::Jpeg)
+    } else if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Ok(ContentType::Png)
+    } else {
+        Err(DomainError::UnsupportedAttachmentType)
+    }
+}
+
+/// An underlag's file name, as the user picked it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AttachmentName(String);
+
+impl AttachmentName {
+    pub fn parse(raw: &str) -> Result<Self, DomainError> {
+        let name = raw.trim();
+        let safe = !name
+            .chars()
+            .any(|c| c == '/' || c == '\\' || c.is_control());
+        if safe && (1..=255).contains(&name.chars().count()) {
+            Ok(Self(name.to_owned()))
+        } else {
+            Err(DomainError::InvalidAttachmentName)
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// An underlag (BFL 5 kap. 6–7 §). The bytes are stored once per `sha256`,
+/// apart from the event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    pub sha256: String,
+    pub file_name: AttachmentName,
+    pub content_type: ContentType,
+    pub size: u64,
+}
+
+impl Attachment {
+    /// `sha256` is the lowercase hex SHA-256 of `data`, worked out by the
+    /// caller so the domain stays free of crypto.
+    pub fn new(file_name: &str, data: &[u8], sha256: String) -> Result<Self, DomainError> {
+        let file_name = AttachmentName::parse(file_name)?;
+        if data.is_empty() {
+            return Err(DomainError::EmptyAttachment);
+        }
+        if data.len() > MAX_ATTACHMENT_SIZE {
+            return Err(DomainError::AttachmentTooLarge);
+        }
+        Ok(Self {
+            sha256,
+            file_name,
+            content_type: sniff(data)?,
+            size: data.len() as u64,
+        })
     }
 }
 

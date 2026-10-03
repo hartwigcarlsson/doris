@@ -339,6 +339,12 @@ fn domain_status(err: DomainError) -> Status {
         FiscalYearNotEnded => Status::failed_precondition("fiscal_year_not_ended"),
         PreviousFiscalYearOpen => Status::failed_precondition("previous_fiscal_year_open"),
         LaterFiscalYearClosed => Status::failed_precondition("later_fiscal_year_closed"),
+        UnsupportedAttachmentType => Status::invalid_argument("unsupported_attachment_type"),
+        InvalidAttachmentName => Status::invalid_argument("invalid_attachment_name"),
+        EmptyAttachment => Status::invalid_argument("empty_attachment"),
+        AttachmentTooLarge => Status::invalid_argument("attachment_too_large"),
+        DuplicateAttachment => Status::invalid_argument("duplicate_attachment"),
+        AttachmentNotFound => Status::not_found("attachment_not_found"),
         Overflow => {
             tracing::error!("ledger: amount overflow");
             Status::internal("internal")
