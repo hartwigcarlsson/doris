@@ -291,6 +291,7 @@ async fn assert_closing_consistent(pool: &SqlitePool, company: Uuid, anna: Uuid,
                 closed = false;
             }
             LedgerEvent::OpeningBalancesSet { .. } => {}
+            LedgerEvent::AttachmentAdded { .. } => {}
         }
     }
     drop(conn);

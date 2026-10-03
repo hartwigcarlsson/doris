@@ -409,6 +409,12 @@ pub enum LedgerEvent {
     FiscalYearClosed { result_voucher: Option<u32> },
     /// The year is open again; the result voucher's reversal follows.
     FiscalYearReopened { reason: String },
+    /// An underlag for voucher `voucher` (BFL 5 kap. 6–7 §). Never removed;
+    /// who added it, and when, is in the event metadata.
+    AttachmentAdded {
+        voucher: u32,
+        attachment: Attachment,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -419,6 +425,8 @@ pub struct Voucher {
     pub lines: Vec<VoucherLine>,
     pub corrects: Option<u32>,
     pub corrected_by: Option<u32>,
+    /// In the order they were added.
+    pub attachments: Vec<Attachment>,
 }
 
 /// One account's figures in a fiscal year (saldobalans). `opening` is its
@@ -534,6 +542,7 @@ impl Ledger {
                     lines,
                     corrects,
                     corrected_by: None,
+                    attachments: Vec::new(),
                 });
             }
             LedgerEvent::OpeningBalancesSet { lines } => self.opening_balances = lines,
@@ -544,6 +553,14 @@ impl Ledger {
             LedgerEvent::FiscalYearReopened { .. } => {
                 self.closed = false;
                 self.result_voucher = None;
+            }
+            LedgerEvent::AttachmentAdded {
+                voucher,
+                attachment,
+            } => {
+                if let Some(v) = self.vouchers.iter_mut().find(|v| v.number == voucher) {
+                    v.attachments.push(attachment);
+                }
             }
         }
     }
@@ -664,6 +681,29 @@ pub fn correct_voucher(
         return Err(DomainError::CorrectionDateOutsideFiscalYear);
     }
     Ok(reversal(ledger, original, date))
+}
+
+/// Adds an underlag to a voucher. A closed year takes it too: it changes no
+/// amount, and the event records who added it and when.
+pub fn add_attachment(
+    ledger: &Ledger,
+    voucher: u32,
+    attachment: Attachment,
+) -> Result<LedgerEvent, DomainError> {
+    let existing = ledger
+        .voucher(voucher)
+        .ok_or(DomainError::VoucherNotFound)?;
+    if existing
+        .attachments
+        .iter()
+        .any(|a| a.sha256 == attachment.sha256)
+    {
+        return Err(DomainError::DuplicateAttachment);
+    }
+    Ok(LedgerEvent::AttachmentAdded {
+        voucher,
+        attachment,
+    })
 }
 
 /// The most lines the first year's opening balances may have.

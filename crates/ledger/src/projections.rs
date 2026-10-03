@@ -175,6 +175,7 @@ async fn apply_ledger(
             .execute(&mut *conn)
             .await?;
         }
+        LedgerEvent::AttachmentAdded { .. } => {}
     }
     Ok(())
 }

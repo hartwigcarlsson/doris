@@ -996,3 +996,68 @@ fn an_attachment_is_1_byte_to_10_mib_of_pdf_jpeg_or_png() {
         Err(DomainError::InvalidAttachmentName)
     );
 }
+
+fn attachment(name: &str, sha256: &str) -> Attachment {
+    Attachment::new(name, b"%PDF-1.7\n", sha256.into()).unwrap()
+}
+
+#[test]
+fn an_attachment_is_added_to_an_existing_voucher_once_in_order() {
+    let booked = record(&[], &seeded(), sale("2025-03-01", 100)).unwrap();
+    let ledger = Ledger::from_events(first_year(), std::slice::from_ref(&booked));
+    let (a, b) = (
+        attachment("kvitto.pdf", "aa"),
+        attachment("faktura.pdf", "bb"),
+    );
+
+    let first = add_attachment(&ledger, 1, a.clone()).unwrap();
+    assert_eq!(
+        first,
+        LedgerEvent::AttachmentAdded {
+            voucher: 1,
+            attachment: a.clone()
+        }
+    );
+    assert_eq!(
+        add_attachment(&ledger, 2, a.clone()),
+        Err(DomainError::VoucherNotFound)
+    );
+
+    let ledger = Ledger::from_events(first_year(), &[booked.clone(), first.clone()]);
+    assert_eq!(
+        add_attachment(&ledger, 1, attachment("kopia.pdf", "aa")),
+        Err(DomainError::DuplicateAttachment)
+    );
+    let second = add_attachment(&ledger, 1, b.clone()).unwrap();
+    let ledger = Ledger::from_events(first_year(), &[booked, first, second]);
+    assert_eq!(ledger.voucher(1).unwrap().attachments, vec![a, b]);
+}
+
+#[test]
+fn a_closed_year_still_takes_an_attachment() {
+    let booked = record(&[], &seeded(), sale("2025-03-01", 100)).unwrap();
+    let ledger = closed_year(vec![booked]);
+
+    assert!(add_attachment(&ledger, 1, attachment("kvitto.pdf", "aa")).is_ok());
+}
+
+#[test]
+fn attachment_events_are_readable_json() {
+    let event = LedgerEvent::AttachmentAdded {
+        voucher: 1,
+        attachment: attachment("kvitto.pdf", "aa"),
+    };
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        serde_json::json!({
+            "type": "AttachmentAdded",
+            "voucher": 1,
+            "attachment": {
+                "sha256": "aa",
+                "file_name": "kvitto.pdf",
+                "content_type": "pdf",
+                "size": 9
+            }
+        })
+    );
+}

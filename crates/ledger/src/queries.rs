@@ -109,6 +109,7 @@ pub async fn list_vouchers(
             lines: Vec::new(),
             corrects,
             corrected_by,
+            attachments: Vec::new(),
         })
         .collect();
     attach_lines(&mut vouchers, lines);
@@ -289,6 +290,7 @@ mod tests {
             lines: Vec::new(),
             corrects: None,
             corrected_by: None,
+            attachments: Vec::new(),
         }];
         // Voucher 2 was committed after the heads were read.
         attach_lines(
