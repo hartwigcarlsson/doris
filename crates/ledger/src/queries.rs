@@ -2,7 +2,8 @@
 
 use crate::domain::{
     Account, AccountLedger, AccountName, AccountNumber, Attachment, AttachmentName, Chart,
-    ContentType, FiscalYearStatus, TrialBalanceRow, Voucher, VoucherLine, running_balance,
+    ContentType, DomainError, FiscalYearStatus, TrialBalanceRow, Voucher, VoucherLine,
+    running_balance,
 };
 use crate::{Error, Result};
 use jiff::civil::Date;
@@ -128,6 +129,35 @@ pub async fn list_vouchers(
         }
     }
     Ok(vouchers)
+}
+
+/// One underlag and its bytes, found through the company's own voucher: a
+/// hash alone never reads another company's file.
+pub async fn get_attachment(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    user_id: Uuid,
+    fiscal_year_start: Date,
+    number: u32,
+    sha256: &str,
+) -> Result<(Attachment, Vec<u8>)> {
+    doris_company::get_company(pool, company_id, user_id).await?;
+    let row: Option<(String, String, i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT a.file_name, a.content_type, a.size, f.data
+         FROM voucher_attachments a JOIN attachment_files f ON f.sha256 = a.sha256
+         WHERE a.company_id = ? AND a.fiscal_year_start = ? AND a.number = ? AND a.sha256 = ?",
+    )
+    .bind(company_id.to_string())
+    .bind(fiscal_year_start.to_string())
+    .bind(number)
+    .bind(sha256)
+    .fetch_optional(pool)
+    .await?;
+    let (file_name, content_type, size, data) = row.ok_or(DomainError::AttachmentNotFound)?;
+    Ok((
+        projected_attachment(sha256.to_owned(), &file_name, &content_type, size),
+        data,
+    ))
 }
 
 /// The saldobalans for one fiscal year, by account number: every account

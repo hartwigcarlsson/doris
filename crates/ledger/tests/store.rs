@@ -3,8 +3,8 @@ use doris_company::domain::{AccountingMethod, LegalForm};
 use doris_ledger::domain::{ContentType, DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
 use doris_ledger::{
     Error, NewAttachment, VoucherRef, account_ledger, add_account, add_attachment,
-    close_fiscal_year, correct_voucher, list_accounts, list_fiscal_years, list_vouchers,
-    opening_balances, rebuild_projections, record_voucher, record_voucher_in,
+    close_fiscal_year, correct_voucher, get_attachment, list_accounts, list_fiscal_years,
+    list_vouchers, opening_balances, rebuild_projections, record_voucher, record_voucher_in,
     record_voucher_with_attachments, rename_account, reopen_fiscal_year, set_account_active,
     set_opening_balances, trial_balance,
 };
@@ -1374,4 +1374,63 @@ async fn attachments_rebuild_from_the_events() {
     assert_eq!(before.len(), 3);
     assert_eq!(table(&pool, sql).await, before);
     assert_eq!(list_vouchers(&pool, id, anna, start).await.unwrap(), listed);
+}
+
+#[tokio::test]
+async fn an_attachment_is_read_only_through_the_companys_own_voucher() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let other = second_company(&pool, anna).await;
+    let (start, today) = (d("2025-01-01"), d(TODAY));
+    record_voucher_with_attachments(
+        &pool,
+        id,
+        anna,
+        sale("2025-03-01", 100),
+        vec![file("kvitto.pdf", "a")],
+        today,
+    )
+    .await
+    .unwrap();
+    record_voucher(&pool, other, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+    let sha = list_vouchers(&pool, id, anna, start).await.unwrap()[0].attachments[0]
+        .sha256
+        .clone();
+
+    let (attachment, data) = get_attachment(&pool, id, anna, start, 1, &sha)
+        .await
+        .unwrap();
+    assert_eq!(attachment.file_name.as_str(), "kvitto.pdf");
+    assert_eq!(attachment.content_type, ContentType::Pdf);
+    assert_eq!(data, file("", "a").data);
+
+    // The right hash on another company's voucher, or on another voucher.
+    for (company_id, number) in [(other, 1), (id, 2)] {
+        assert!(matches!(
+            get_attachment(&pool, company_id, anna, start, number, &sha).await,
+            Err(Error::Domain(DomainError::AttachmentNotFound))
+        ));
+    }
+    assert!(matches!(
+        get_attachment(&pool, id, Uuid::new_v4(), start, 1, &sha).await,
+        Err(Error::NotFound)
+    ));
+
+    // The same file in the other company: stored once, read there by its own name.
+    add_attachment(&pool, other, anna, start, 1, file("kopia.pdf", "a"), today)
+        .await
+        .unwrap();
+    let (theirs, _) = get_attachment(&pool, other, anna, start, 1, &sha)
+        .await
+        .unwrap();
+    assert_eq!(theirs.file_name.as_str(), "kopia.pdf");
+    assert_eq!(
+        table(&pool, "SELECT sha256 FROM attachment_files")
+            .await
+            .len(),
+        1
+    );
 }
