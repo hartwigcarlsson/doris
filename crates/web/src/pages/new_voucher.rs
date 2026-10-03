@@ -23,6 +23,8 @@ pub fn NewVoucher() -> impl IntoView {
     let error = RwSignal::new(None::<String>);
     let booked = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
+    // Picks still being read; booking waits for them.
+    let reading = RwSignal::new(0u32);
     // The company this form was filled for; a submit only ever goes there.
     let form_company = StoredValue::new(String::new());
     let clear = move || {
@@ -32,8 +34,10 @@ pub fn NewVoucher() -> impl IntoView {
     };
     let pick = move |input: web_sys::HtmlInputElement| {
         let company_id = form_company.get_value();
+        reading.update(|n| *n += 1);
         spawn_local(async move {
             let picked = read_files(&input).await;
+            reading.try_update(|n| *n -= 1);
             // Picked for a company that is no longer the form's: drop them.
             if company_id != form_company.get_value() {
                 return;
@@ -77,6 +81,9 @@ pub fn NewVoucher() -> impl IntoView {
         ev.prevent_default();
         error.set(None);
         booked.set(None);
+        if reading.get_untracked() > 0 {
+            return;
+        }
         let Some(request_lines) = lines.request() else {
             return error.set(Some("Skriv beloppen som 1 234,50.".into()));
         };
@@ -161,7 +168,9 @@ pub fn NewVoucher() -> impl IntoView {
                     }}
                 </datalist>
                 <LineRows lines=lines list="accounts" />
-                <Button disabled=busy>"Bokför"</Button>
+                <Button disabled=Signal::derive(move || busy.get() || reading.get() > 0)>
+                    "Bokför"
+                </Button>
             </form>
         </Card>
     }
