@@ -100,8 +100,9 @@ impl LedgerService for LedgerApi {
             .map_err(status)?
             .into_iter()
             .map(|y| pb::FiscalYear {
-                start: y.start.to_string(),
-                end: y.end.to_string(),
+                start: y.fiscal_year.start.to_string(),
+                end: y.fiscal_year.end.to_string(),
+                closed: y.closed,
             })
             .collect();
         Ok(Response::new(pb::ListFiscalYearsResponse { fiscal_years }))
@@ -116,12 +117,7 @@ impl LedgerService for LedgerApi {
         let cmd = RecordVoucher {
             date: date(&req.date)?,
             text: req.text,
-            lines: req
-                .lines
-                .iter()
-                .map(|l| VoucherLine::new(l.account, l.debit, l.credit))
-                .collect::<Result<_, _>>()
-                .map_err(domain_status)?,
+            lines: domain_lines(&req.lines)?,
         };
         let booked = doris_ledger::record_voucher(&self.pool, company, user, cmd, today())
             .await
@@ -184,6 +180,7 @@ impl LedgerService for LedgerApi {
                 name: r.name,
                 debit: r.debit,
                 credit: r.credit,
+                opening: r.opening,
             })
             .collect();
         Ok(Response::new(pb::GetTrialBalanceResponse { rows }))
@@ -196,22 +193,98 @@ impl LedgerService for LedgerApi {
         let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
         let req = request.get_ref();
         let fiscal_year_start = date(&req.fiscal_year_start)?;
-        let entries =
+        let ledger =
             doris_ledger::account_ledger(&self.pool, company, user, fiscal_year_start, req.account)
                 .await
-                .map_err(status)?
-                .into_iter()
-                .map(|e| pb::LedgerEntry {
-                    date: e.date.to_string(),
-                    number: e.number,
-                    text: e.text,
-                    debit: e.debit,
-                    credit: e.credit,
-                    balance: e.balance,
-                })
-                .collect();
-        Ok(Response::new(pb::GetAccountLedgerResponse { entries }))
+                .map_err(status)?;
+        let entries = ledger
+            .entries
+            .into_iter()
+            .map(|e| pb::LedgerEntry {
+                date: e.date.to_string(),
+                number: e.number,
+                text: e.text,
+                debit: e.debit,
+                credit: e.credit,
+                balance: e.balance,
+            })
+            .collect();
+        Ok(Response::new(pb::GetAccountLedgerResponse {
+            entries,
+            opening: ledger.opening,
+        }))
     }
+
+    async fn get_opening_balances(
+        &self,
+        request: Request<pb::GetOpeningBalancesRequest>,
+    ) -> Result<Response<pb::GetOpeningBalancesResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let lines = doris_ledger::opening_balances(&self.pool, company, user)
+            .await
+            .map_err(status)?
+            .iter()
+            .map(line_message)
+            .collect();
+        Ok(Response::new(pb::GetOpeningBalancesResponse { lines }))
+    }
+
+    async fn set_opening_balances(
+        &self,
+        request: Request<pb::SetOpeningBalancesRequest>,
+    ) -> Result<Response<pb::SetOpeningBalancesResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let lines = domain_lines(&request.get_ref().lines)?;
+        doris_ledger::set_opening_balances(&self.pool, company, user, lines)
+            .await
+            .map_err(status)?;
+        Ok(Response::new(pb::SetOpeningBalancesResponse {}))
+    }
+
+    async fn close_fiscal_year(
+        &self,
+        request: Request<pb::CloseFiscalYearRequest>,
+    ) -> Result<Response<pb::CloseFiscalYearResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let start = date(&request.get_ref().fiscal_year_start)?;
+        let result_voucher =
+            doris_ledger::close_fiscal_year(&self.pool, company, user, start, today())
+                .await
+                .map_err(status)?;
+        Ok(Response::new(pb::CloseFiscalYearResponse {
+            result_voucher: result_voucher.unwrap_or(0),
+        }))
+    }
+
+    async fn reopen_fiscal_year(
+        &self,
+        request: Request<pb::ReopenFiscalYearRequest>,
+    ) -> Result<Response<pb::ReopenFiscalYearResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let req = request.get_ref();
+        let start = date(&req.fiscal_year_start)?;
+        doris_ledger::reopen_fiscal_year(&self.pool, company, user, start, &req.reason, today())
+            .await
+            .map_err(status)?;
+        Ok(Response::new(pb::ReopenFiscalYearResponse {}))
+    }
+}
+
+fn line_message(l: &VoucherLine) -> pb::VoucherLine {
+    pb::VoucherLine {
+        account: l.account.get().into(),
+        debit: l.debit,
+        credit: l.credit,
+    }
+}
+
+/// An out-of-range account is refused as `account_not_found`.
+fn domain_lines(lines: &[pb::VoucherLine]) -> Result<Vec<VoucherLine>, Status> {
+    lines
+        .iter()
+        .map(|l| VoucherLine::new(l.account, l.debit, l.credit))
+        .collect::<Result<_, _>>()
+        .map_err(domain_status)
 }
 
 fn voucher_message(v: Voucher) -> pb::Voucher {
@@ -219,15 +292,7 @@ fn voucher_message(v: Voucher) -> pb::Voucher {
         number: v.number,
         date: v.date.to_string(),
         text: v.text,
-        lines: v
-            .lines
-            .iter()
-            .map(|l| pb::VoucherLine {
-                account: l.account.get().into(),
-                debit: l.debit,
-                credit: l.credit,
-            })
-            .collect(),
+        lines: v.lines.iter().map(line_message).collect(),
         corrects: v.corrects.unwrap_or(0),
         corrected_by: v.corrected_by.unwrap_or(0),
     }
@@ -264,6 +329,20 @@ fn domain_status(err: DomainError) -> Status {
         VoucherNotFound => Status::not_found("voucher_not_found"),
         AlreadyCorrected => Status::failed_precondition("already_corrected"),
         CannotCorrectCorrection => Status::failed_precondition("cannot_correct_correction"),
+        NotBalanceSheetAccount => Status::invalid_argument("not_balance_sheet_account"),
+        DuplicateAccount => Status::invalid_argument("duplicate_account"),
+        OpeningBalancesUnbalanced => Status::invalid_argument("opening_balances_unbalanced"),
+        InvalidReason => Status::invalid_argument("invalid_reason"),
+        FiscalYearNotFound => Status::not_found("fiscal_year_not_found"),
+        FiscalYearClosed => Status::failed_precondition("fiscal_year_closed"),
+        FiscalYearOpen => Status::failed_precondition("fiscal_year_open"),
+        FiscalYearNotEnded => Status::failed_precondition("fiscal_year_not_ended"),
+        PreviousFiscalYearOpen => Status::failed_precondition("previous_fiscal_year_open"),
+        LaterFiscalYearClosed => Status::failed_precondition("later_fiscal_year_closed"),
+        Overflow => {
+            tracing::error!("ledger: amount overflow");
+            Status::internal("internal")
+        }
     }
 }
 

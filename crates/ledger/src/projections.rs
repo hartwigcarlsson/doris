@@ -84,55 +84,97 @@ async fn apply_ledger(
     fiscal_year_start: &str,
     event: &RecordedEvent,
 ) -> crate::Result<()> {
-    let LedgerEvent::VoucherRecorded {
-        number,
-        date,
-        text,
-        lines,
-        corrects,
-    } = event.decode()?;
-    sqlx::query(
-        "INSERT INTO vouchers (company_id, fiscal_year_start, number, date, text, corrects,
-             recorded_at, recorded_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(company_id)
-    .bind(fiscal_year_start)
-    .bind(number)
-    .bind(date.to_string())
-    .bind(&text)
-    .bind(corrects)
-    .bind(&event.recorded_at)
-    .bind(event.metadata.actor.as_deref().unwrap_or_default())
-    .execute(&mut *conn)
-    .await?;
-    for (line_no, line) in (1_i64..).zip(&lines) {
-        sqlx::query(
-            "INSERT INTO voucher_lines (company_id, fiscal_year_start, number, line_no, account,
-                 debit, credit)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(company_id)
-        .bind(fiscal_year_start)
-        .bind(number)
-        .bind(line_no)
-        .bind(line.account.get())
-        .bind(line.debit)
-        .bind(line.credit)
-        .execute(&mut *conn)
-        .await?;
-    }
-    if let Some(original) = corrects {
-        sqlx::query(
-            "UPDATE vouchers SET corrected_by = ?
-             WHERE company_id = ? AND fiscal_year_start = ? AND number = ?",
-        )
-        .bind(number)
-        .bind(company_id)
-        .bind(fiscal_year_start)
-        .bind(original)
-        .execute(&mut *conn)
-        .await?;
+    match event.decode()? {
+        LedgerEvent::VoucherRecorded {
+            number,
+            date,
+            text,
+            lines,
+            corrects,
+        } => {
+            sqlx::query(
+                "INSERT INTO vouchers (company_id, fiscal_year_start, number, date, text, corrects,
+                 recorded_at, recorded_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(company_id)
+            .bind(fiscal_year_start)
+            .bind(number)
+            .bind(date.to_string())
+            .bind(&text)
+            .bind(corrects)
+            .bind(&event.recorded_at)
+            .bind(event.metadata.actor.as_deref().unwrap_or_default())
+            .execute(&mut *conn)
+            .await?;
+            for (line_no, line) in (1_i64..).zip(&lines) {
+                sqlx::query(
+                "INSERT INTO voucher_lines (company_id, fiscal_year_start, number, line_no, account,
+                     debit, credit)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(company_id)
+            .bind(fiscal_year_start)
+            .bind(number)
+            .bind(line_no)
+            .bind(line.account.get())
+            .bind(line.debit)
+            .bind(line.credit)
+            .execute(&mut *conn)
+            .await?;
+            }
+            if let Some(original) = corrects {
+                sqlx::query(
+                    "UPDATE vouchers SET corrected_by = ?
+                 WHERE company_id = ? AND fiscal_year_start = ? AND number = ?",
+                )
+                .bind(number)
+                .bind(company_id)
+                .bind(fiscal_year_start)
+                .bind(original)
+                .execute(&mut *conn)
+                .await?;
+            }
+        }
+        LedgerEvent::OpeningBalancesSet { lines } => {
+            sqlx::query("DELETE FROM opening_balances WHERE company_id = ?")
+                .bind(company_id)
+                .execute(&mut *conn)
+                .await?;
+            for line in &lines {
+                sqlx::query(
+                    "INSERT INTO opening_balances (company_id, account, debit, credit)
+                     VALUES (?, ?, ?, ?)",
+                )
+                .bind(company_id)
+                .bind(line.account.get())
+                .bind(line.debit)
+                .bind(line.credit)
+                .execute(&mut *conn)
+                .await?;
+            }
+        }
+        LedgerEvent::FiscalYearClosed { .. } => {
+            sqlx::query(
+                "INSERT INTO closed_fiscal_years (company_id, fiscal_year_start, closed_at, closed_by)
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(company_id)
+            .bind(fiscal_year_start)
+            .bind(&event.recorded_at)
+            .bind(event.metadata.actor.as_deref().unwrap_or_default())
+            .execute(&mut *conn)
+            .await?;
+        }
+        LedgerEvent::FiscalYearReopened { .. } => {
+            sqlx::query(
+                "DELETE FROM closed_fiscal_years WHERE company_id = ? AND fiscal_year_start = ?",
+            )
+            .bind(company_id)
+            .bind(fiscal_year_start)
+            .execute(&mut *conn)
+            .await?;
+        }
     }
     Ok(())
 }
@@ -141,6 +183,8 @@ async fn apply_ledger(
 pub async fn rebuild_projections(pool: &sqlx::SqlitePool) -> crate::Result<()> {
     let mut tx = doris_eventstore::begin(pool).await?;
     for statement in [
+        "DELETE FROM opening_balances",
+        "DELETE FROM closed_fiscal_years",
         "DELETE FROM voucher_lines",
         "DELETE FROM vouchers",
         "DELETE FROM accounts",

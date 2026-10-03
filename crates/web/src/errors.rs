@@ -66,6 +66,22 @@ fn message(code: &str) -> &'static str {
         "cannot_correct_correction" => {
             "En rättelse kan inte rättas. Bokför en ny verifikation i stället."
         }
+        "not_balance_sheet_account" => {
+            "Ingående balanser får bara finnas på balanskonton, 1000–2999."
+        }
+        "duplicate_account" => "Varje konto får bara förekomma en gång.",
+        "opening_balances_unbalanced" => {
+            "De ingående balanserna måste balansera: debet och kredit ska vara lika stora."
+        }
+        "invalid_reason" => "Anledningen måste vara 1–200 tecken.",
+        "fiscal_year_not_found" => "Räkenskapsåret finns inte.",
+        "fiscal_year_closed" => {
+            "Räkenskapsåret är stängt. Bokför i ett öppet år eller öppna året igen."
+        }
+        "fiscal_year_open" => "Räkenskapsåret är redan öppet.",
+        "fiscal_year_not_ended" => "Räkenskapsåret är inte slut än.",
+        "previous_fiscal_year_open" => "Stäng föregående räkenskapsår först.",
+        "later_fiscal_year_closed" => "Öppna det senare räkenskapsåret först.",
         "invalid_date" => "Ange ett giltigt datum.",
         _ => "Något gick fel. Försök igen.",
     }
@@ -74,6 +90,27 @@ fn message(code: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::message;
+    #[test]
+    fn closing_codes_have_swedish_messages() {
+        for code in [
+            "not_balance_sheet_account",
+            "duplicate_account",
+            "opening_balances_unbalanced",
+            "invalid_reason",
+            "fiscal_year_not_found",
+            "fiscal_year_closed",
+            "fiscal_year_open",
+            "fiscal_year_not_ended",
+            "previous_fiscal_year_open",
+            "later_fiscal_year_closed",
+        ] {
+            assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
+        }
+        assert_eq!(
+            message("fiscal_year_closed"),
+            "Räkenskapsåret är stängt. Bokför i ett öppet år eller öppna året igen."
+        );
+    }
     #[test]
     fn ledger_codes_have_swedish_messages() {
         for code in [

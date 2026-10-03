@@ -9,6 +9,7 @@ mod format;
 mod pages;
 mod passkey;
 mod ui;
+mod voucher_lines;
 
 fn main() {
     console_error_panic_hook::set_once();

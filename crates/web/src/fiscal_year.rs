@@ -56,11 +56,36 @@ pub fn pick_year(years: &[lpb::FiscalYear], preferred: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Whether `start` is a later year than the company's first (the oldest,
-/// listed last). Opening balances don't exist yet, so from the second year
-/// on the balance-sheet accounts show only that year's movements.
-pub fn opening_balances_missing(years: &[lpb::FiscalYear], start: &str) -> bool {
-    !start.is_empty() && years.last().is_some_and(|first| first.start != start)
+/// Whether `start`'s opening balances are still preliminary: the year
+/// before it (listed next, years are newest first) is open, so its result
+/// is not on equity yet.
+pub fn opening_balances_preliminary(years: &[lpb::FiscalYear], start: &str) -> bool {
+    years
+        .iter()
+        .position(|y| y.start == start)
+        .and_then(|i| years.get(i + 1))
+        .is_some_and(|previous| !previous.closed)
+}
+
+/// Whether the listed year starting on `start` is closed.
+pub fn is_closed(years: &[lpb::FiscalYear], start: &str) -> bool {
+    years.iter().any(|y| y.start == start && y.closed)
+}
+
+/// The year that can be closed next: the oldest open one, once it has ended
+/// (`end < today`, both `YYYY-MM-DD`).
+pub fn closable(years: &[lpb::FiscalYear], today: &str) -> Option<String> {
+    years
+        .iter()
+        .rev()
+        .find(|y| !y.closed)
+        .filter(|y| y.end.as_str() < today)
+        .map(|y| y.start.clone())
+}
+
+/// The year that can be reopened: the newest closed one.
+pub fn reopenable(years: &[lpb::FiscalYear]) -> Option<String> {
+    years.iter().find(|y| y.closed).map(|y| y.start.clone())
 }
 
 /// The active company's räkenskapsår (newest first) and the chosen one's
@@ -169,8 +194,62 @@ mod tests {
             .map(|s| lpb::FiscalYear {
                 start: (*s).into(),
                 end: String::new(),
+                closed: false,
             })
             .collect()
+    }
+
+    fn fy(start: &str, end: &str, closed: bool) -> lpb::FiscalYear {
+        lpb::FiscalYear {
+            start: start.into(),
+            end: end.into(),
+            closed,
+        }
+    }
+
+    /// 2027 and 2026 open, 2025 (the first) closed; newest first.
+    fn three_years() -> Vec<lpb::FiscalYear> {
+        vec![
+            fy("2027-01-01", "2027-12-31", false),
+            fy("2026-01-01", "2026-12-31", false),
+            fy("2025-01-01", "2025-12-31", true),
+        ]
+    }
+
+    #[test]
+    fn opening_balances_are_preliminary_while_the_year_before_is_open() {
+        let ys = three_years();
+        assert!(opening_balances_preliminary(&ys, "2027-01-01"));
+        assert!(!opening_balances_preliminary(&ys, "2026-01-01"));
+        // The first year has no year before it.
+        assert!(!opening_balances_preliminary(&ys, "2025-01-01"));
+        assert!(!opening_balances_preliminary(&ys, ""));
+    }
+
+    #[test]
+    fn a_listed_year_is_closed_or_not() {
+        let ys = three_years();
+        assert!(is_closed(&ys, "2025-01-01"));
+        assert!(!is_closed(&ys, "2026-01-01"));
+        assert!(!is_closed(&ys, "2024-01-01"));
+    }
+
+    #[test]
+    fn the_oldest_open_year_can_be_closed_once_it_has_ended() {
+        let ys = three_years();
+        assert_eq!(closable(&ys, "2027-03-01").as_deref(), Some("2026-01-01"));
+        assert_eq!(closable(&ys, "2026-12-31"), None);
+        let all_closed: Vec<_> = ys.iter().map(|y| fy(&y.start, &y.end, true)).collect();
+        assert_eq!(closable(&all_closed, "2030-01-01"), None);
+    }
+
+    #[test]
+    fn the_newest_closed_year_can_be_reopened() {
+        let mut ys = three_years();
+        assert_eq!(reopenable(&ys).as_deref(), Some("2025-01-01"));
+        ys[1].closed = true;
+        assert_eq!(reopenable(&ys).as_deref(), Some("2026-01-01"));
+        assert_eq!(reopenable(&[fy("2025-01-01", "2025-12-31", false)]), None);
     }
 
     #[test]
@@ -185,15 +264,6 @@ mod tests {
         assert_eq!(pick_year(&ys, ""), "2027-01-01");
         assert_eq!(pick_year(&ys, "nonsense"), "2027-01-01");
         assert_eq!(pick_year(&[], "2026-01-01"), "");
-    }
-
-    #[test]
-    fn opening_balances_are_missing_after_the_first_year() {
-        let ys = years(&["2027-01-01", "2026-01-01"]);
-        assert!(opening_balances_missing(&ys, "2027-01-01"));
-        assert!(!opening_balances_missing(&ys, "2026-01-01"));
-        assert!(!opening_balances_missing(&ys, ""));
-        assert!(!opening_balances_missing(&[], "2026-01-01"));
     }
 
     #[test]

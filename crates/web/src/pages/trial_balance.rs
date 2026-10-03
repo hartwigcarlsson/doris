@@ -5,7 +5,7 @@ use crate::active_company::Companies;
 use crate::api::{ledger_api, lpb};
 use crate::errors::describe;
 use crate::fiscal_year::{
-    FiscalYearSelect, keep_year_in_url, opening_balances_missing, use_fiscal_years,
+    FiscalYearSelect, is_closed, keep_year_in_url, opening_balances_preliminary, use_fiscal_years,
 };
 use crate::format::amount;
 use crate::ui::{
@@ -21,13 +21,15 @@ use leptos_router::hooks::use_query_map;
 #[derive(Debug, Default, PartialEq)]
 pub struct Part {
     pub rows: Vec<lpb::TrialBalanceRow>,
+    pub opening: i64,
     pub debit: i64,
     pub credit: i64,
 }
 
 impl Part {
-    pub fn balance(&self) -> i64 {
-        self.debit - self.credit
+    /// The utgående balans.
+    pub fn closing(&self) -> i64 {
+        self.opening + self.debit - self.credit
     }
 }
 
@@ -41,11 +43,23 @@ pub fn split(rows: Vec<lpb::TrialBalanceRow>) -> (Part, Part) {
         } else {
             &mut income
         };
+        part.opening += row.opening;
         part.debit += row.debit;
         part.credit += row.credit;
         part.rows.push(row);
     }
     (balance, income)
+}
+
+/// The year's result as a profit is positive, leaving out 8999: once the
+/// year is closed, the result voucher on 8999 would cancel it to 0.
+pub fn computed_result(income: &Part) -> i64 {
+    -income
+        .rows
+        .iter()
+        .filter(|r| r.account != 8999)
+        .map(|r| r.debit - r.credit)
+        .sum::<i64>()
 }
 
 #[component]
@@ -84,16 +98,22 @@ pub fn TrialBalance() -> impl IntoView {
             }
         });
     });
-    let missing = move || years.with(|ys| opening_balances_missing(ys, &year.get()));
+    let preliminary = move || years.with(|ys| opening_balances_preliminary(ys, &year.get()));
+    let closed = move || years.with(|ys| is_closed(ys, &year.get()));
 
     view! {
         <div class="grid gap-6" data-wide>
             <h1 class="text-sm font-medium">"Saldobalans"</h1>
             <ErrorAlert message=error />
-            <FiscalYearSelect years=years year=year />
-            <Show when=missing>
+            <div class="flex items-end gap-4">
+                <FiscalYearSelect years=years year=year />
+                <Show when=closed>
+                    <span class="pb-2 text-xs/relaxed text-muted-foreground">"Stängt"</span>
+                </Show>
+            </div>
+            <Show when=preliminary>
                 <p class="text-xs/relaxed text-muted-foreground">
-                    "Ingående balanser saknas än, så saldon för balansräkningens konton visar bara årets rörelser."
+                    "Föregående räkenskapsår är inte stängt, så de ingående balanserna är preliminära."
                 </p>
             </Show>
             {move || {
@@ -106,8 +126,8 @@ pub fn TrialBalance() -> impl IntoView {
                     }
                     let start = year.get_untracked();
                     let (balance, income) = split(rows);
-                    let total = balance.balance() + income.balance();
-                    let result = -income.balance();
+                    let total = balance.closing() + income.closing();
+                    let result = computed_result(&income);
                     view! {
                         <PartTable title="Balansräkning" part=balance year=start.clone() />
                         <PartTable title="Resultaträkning" part=income year=start />
@@ -126,7 +146,7 @@ pub fn TrialBalance() -> impl IntoView {
 /// One part of the saldobalans. Each account links to its huvudbok for `year`.
 #[component]
 fn PartTable(title: &'static str, part: Part, year: String) -> impl IntoView {
-    let (debit, credit, balance) = (part.debit, part.credit, part.balance());
+    let (opening, debit, credit, closing) = (part.opening, part.debit, part.credit, part.closing());
     view! {
         <section class="grid gap-2">
             <h2 class="text-sm font-medium">{title}</h2>
@@ -135,9 +155,10 @@ fn PartTable(title: &'static str, part: Part, year: String) -> impl IntoView {
                     <tr class=TABLE_ROW>
                         <th class=TABLE_HEADER_CELL>"Konto"</th>
                         <th class=TABLE_HEADER_CELL>"Namn"</th>
+                        <th class=format!("{TABLE_HEADER_CELL} text-right")>"Ingående"</th>
                         <th class=format!("{TABLE_HEADER_CELL} text-right")>"Debet"</th>
                         <th class=format!("{TABLE_HEADER_CELL} text-right")>"Kredit"</th>
-                        <th class=format!("{TABLE_HEADER_CELL} text-right")>"Saldo"</th>
+                        <th class=format!("{TABLE_HEADER_CELL} text-right")>"Utgående"</th>
                     </tr>
                 </thead>
                 <tbody class=TABLE_BODY>
@@ -153,18 +174,20 @@ fn PartTable(title: &'static str, part: Part, year: String) -> impl IntoView {
                                         </A>
                                     </td>
                                     <td class=TABLE_CELL>{row.name.clone()}</td>
+                                    <td class=TABLE_AMOUNT_CELL>{amount(row.opening)}</td>
                                     <td class=TABLE_AMOUNT_CELL>{amount(row.debit)}</td>
                                     <td class=TABLE_AMOUNT_CELL>{amount(row.credit)}</td>
-                                    <td class=TABLE_AMOUNT_CELL>{amount(row.debit - row.credit)}</td>
+                                    <td class=TABLE_AMOUNT_CELL>{amount(row.opening + row.debit - row.credit)}</td>
                                 </tr>
                             }
                         })
                         .collect_view()}
                     <tr class=TABLE_ROW>
                         <td class=format!("{TABLE_CELL} font-medium") colspan="2">"Summa"</td>
+                        <td class=TABLE_AMOUNT_CELL>{amount(opening)}</td>
                         <td class=TABLE_AMOUNT_CELL>{amount(debit)}</td>
                         <td class=TABLE_AMOUNT_CELL>{amount(credit)}</td>
-                        <td class=TABLE_AMOUNT_CELL>{amount(balance)}</td>
+                        <td class=TABLE_AMOUNT_CELL>{amount(closing)}</td>
                     </tr>
                 </tbody>
             </Table>
@@ -176,10 +199,11 @@ fn PartTable(title: &'static str, part: Part, year: String) -> impl IntoView {
 mod tests {
     use super::*;
 
-    fn row(account: u32, debit: i64, credit: i64) -> lpb::TrialBalanceRow {
+    fn row(account: u32, opening: i64, debit: i64, credit: i64) -> lpb::TrialBalanceRow {
         lpb::TrialBalanceRow {
             account,
             name: String::new(),
+            opening,
             debit,
             credit,
         }
@@ -188,10 +212,10 @@ mod tests {
     #[test]
     fn accounts_below_3000_belong_to_the_balance_sheet() {
         let (balance, income) = split(vec![
-            row(1930, 1000, 300),
-            row(2999, 0, 50),
-            row(3000, 0, 900),
-            row(5010, 250, 0),
+            row(1930, 500, 1000, 300),
+            row(2999, -500, 0, 50),
+            row(3000, 0, 0, 900),
+            row(5010, 0, 250, 0),
         ]);
 
         assert_eq!(
@@ -199,21 +223,41 @@ mod tests {
             [1930, 2999]
         );
         assert_eq!(
-            (balance.debit, balance.credit, balance.balance()),
-            (1000, 350, 650)
+            (
+                balance.opening,
+                balance.debit,
+                balance.credit,
+                balance.closing()
+            ),
+            (0, 1000, 350, 650)
         );
         assert_eq!(
             income.rows.iter().map(|r| r.account).collect::<Vec<_>>(),
             [3000, 5010]
         );
         assert_eq!(
-            (income.debit, income.credit, income.balance()),
-            (250, 900, -650)
+            (
+                income.opening,
+                income.debit,
+                income.credit,
+                income.closing()
+            ),
+            (0, 250, 900, -650)
         );
     }
 
     #[test]
     fn no_rows_give_two_empty_parts() {
         assert_eq!(split(Vec::new()), (Part::default(), Part::default()));
+    }
+
+    #[test]
+    fn the_computed_result_leaves_out_8999_so_it_survives_closing() {
+        let (_, income) = split(vec![
+            row(3001, 0, 0, 1000),
+            row(5010, 0, 300, 0),
+            row(8999, 0, 700, 0),
+        ]);
+        assert_eq!(computed_result(&income), 700);
     }
 }

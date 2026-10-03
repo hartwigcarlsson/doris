@@ -35,8 +35,8 @@ pub fn AccountLedger() -> impl IntoView {
         keep_year_in_url(format!("/trial-balance/{account}"), year);
     }
     let name = RwSignal::new(String::new());
-    // None until the chosen year's entries have arrived.
-    let entries = RwSignal::new(None::<Vec<lpb::LedgerEntry>>);
+    // The opening balance and entries; None until the chosen year's arrive.
+    let entries = RwSignal::new(None::<(i64, Vec<lpb::LedgerEntry>)>);
 
     Effect::new(move |_| {
         let company_id = companies.active.get();
@@ -84,7 +84,10 @@ pub fn AccountLedger() -> impl IntoView {
                 return;
             }
             match result {
-                Ok(response) => entries.set(Some(response.into_inner().entries)),
+                Ok(response) => {
+                    let r = response.into_inner();
+                    entries.set(Some((r.opening, r.entries)))
+                }
                 Err(status) => error.set(Some(describe(&status))),
             }
         });
@@ -101,8 +104,8 @@ pub fn AccountLedger() -> impl IntoView {
             <ErrorAlert message=error />
             <FiscalYearSelect years=years year=year />
             {move || {
-                entries.get().map(|entries| {
-                    if entries.is_empty() {
+                entries.get().map(|(opening, entries)| {
+                    if entries.is_empty() && opening == 0 {
                         return view! {
                             <p class="text-xs/relaxed text-muted-foreground">"Inga transaktioner på kontot under räkenskapsåret."</p>
                         }
@@ -110,7 +113,7 @@ pub fn AccountLedger() -> impl IntoView {
                     }
                     let debit: i64 = entries.iter().map(|e| e.debit).sum();
                     let credit: i64 = entries.iter().map(|e| e.credit).sum();
-                    let balance = entries.last().map(|e| e.balance).unwrap_or_default();
+                    let balance = entries.last().map_or(opening, |e| e.balance);
                     view! {
                         <Table>
                             <thead class=TABLE_HEAD>
@@ -124,6 +127,16 @@ pub fn AccountLedger() -> impl IntoView {
                                 </tr>
                             </thead>
                             <tbody class=TABLE_BODY>
+                                {(opening != 0).then(|| view! {
+                                    <tr class=TABLE_ROW>
+                                        <td class=TABLE_CELL></td>
+                                        <td class=TABLE_CELL></td>
+                                        <td class=TABLE_CELL>"Ingående balans"</td>
+                                        <td class=TABLE_AMOUNT_CELL></td>
+                                        <td class=TABLE_AMOUNT_CELL></td>
+                                        <td class=TABLE_AMOUNT_CELL>{amount(opening)}</td>
+                                    </tr>
+                                })}
                                 {entries
                                     .into_iter()
                                     .map(|e| {

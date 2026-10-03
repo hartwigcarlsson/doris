@@ -35,7 +35,7 @@ migrations/         sqlx migrations, NNNN_name.sql, shared by all crates
 crates/company      doris-company: companies, members, fiscal year and accounting method
 crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
 crates/identity     doris-identity: users, passkeys, invitations, sessions
-crates/ledger       doris-ledger: chart of accounts and vouchers (verifikationer)
+crates/ledger       doris-ledger: chart of accounts, vouchers, opening balances and year closing
 crates/proto        doris-proto: generated code (feature `server` for stubs)
 crates/server       doris-server: binary, gRPC services, embedded frontend
 crates/web          doris-web: Leptos CSR app, UI components
@@ -66,9 +66,15 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   every line reversed and `corrects` pointing at the original.
 - The saldobalans and huvudbok (`trial_balance`, `account_ledger` in
   `crates/ledger/src/queries.rs`) are plain queries over the voucher
-  projections, one fiscal year at a time. There are no opening balances
-  yet, so from the second year on balance-sheet accounts show only that
-  year's movements.
+  projections, one fiscal year at a time. Ingående balanser are never
+  stored for later years: they are the first year's typed-in
+  `opening_balances` plus every earlier year's lines on accounts 1000–2999.
+- Closing a year (`FiscalYearClosed`) first books "Årets resultat", 8999
+  against 2099 (2019 for enskild firma, HB and KB), then locks the year:
+  no voucher or rättelse goes into a closed year. Years close oldest first,
+  once they have ended. Reopening (`FiscalYearReopened`, with a reason)
+  comes before the reversal of that voucher and goes newest first, so no
+  voucher is ever recorded while its year is closed.
 
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.
@@ -121,6 +127,12 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `domain_code`). Company codes are mapped in `crates/server/src/company.rs`
   (`status`, `domain_status`). Ledger codes are mapped in
   `crates/server/src/ledger.rs` (`status`, `domain_status`).
+- `LedgerService` also has `GetOpeningBalances`, `SetOpeningBalances`,
+  `CloseFiscalYear` and `ReopenFiscalYear`. Their codes are
+  `not_balance_sheet_account`, `duplicate_account`,
+  `opening_balances_unbalanced`, `invalid_reason`, `fiscal_year_not_found`,
+  `fiscal_year_closed`, `fiscal_year_open`, `fiscal_year_not_ended`,
+  `previous_fiscal_year_open` and `later_fiscal_year_closed`.
 - Company lookup uses Bolagsverket's free "värdefulla datamängder" API (OAuth2
   client credentials, register at portal.api.bolagsverket.se). Without
   credentials the lookup answers `lookup_unavailable` and details are typed in.
