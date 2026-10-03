@@ -24,7 +24,8 @@ pub fn company_api() -> CompanyApi {
 }
 
 pub fn ledger_api() -> LedgerApi {
-    LedgerServiceClient::new(client())
+    // Room for a 10 MiB underlag coming back from GetAttachment.
+    LedgerServiceClient::new(client()).max_decoding_message_size(11 << 20)
 }
 
 /// Cookies are always sent, so the session also works when the frontend is

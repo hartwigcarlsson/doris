@@ -3,6 +3,7 @@
 mod active_company;
 mod api;
 mod app;
+mod attachments;
 mod errors;
 mod fiscal_year;
 mod format;

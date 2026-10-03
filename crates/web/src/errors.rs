@@ -5,6 +5,11 @@ pub fn describe(status: &tonic::Status) -> String {
     message(status.message()).to_owned()
 }
 
+/// The text for an error code found in the browser, before any API call.
+pub fn describe_code(code: &str) -> String {
+    message(code).to_owned()
+}
+
 fn message(code: &str) -> &'static str {
     match code {
         "invalid_email" => "Ange en giltig e-postadress.",
@@ -83,6 +88,12 @@ fn message(code: &str) -> &'static str {
         "previous_fiscal_year_open" => "Stäng föregående räkenskapsår först.",
         "later_fiscal_year_closed" => "Öppna det senare räkenskapsåret först.",
         "invalid_date" => "Ange ett giltigt datum.",
+        "unsupported_attachment_type" => "Underlaget måste vara en PDF, JPEG eller PNG.",
+        "invalid_attachment_name" => "Filnamnet är ogiltigt.",
+        "empty_attachment" => "Filen är tom.",
+        "attachment_too_large" => "Underlaget är för stort (högst 10 MB per fil och 20 MB totalt).",
+        "duplicate_attachment" => "Underlaget finns redan på verifikationen.",
+        "attachment_not_found" => "Underlaget hittades inte.",
         _ => "Något gick fel. Försök igen.",
     }
 }
@@ -166,5 +177,23 @@ mod tests {
         ] {
             assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
         }
+    }
+
+    #[test]
+    fn attachment_codes_have_swedish_messages() {
+        for code in [
+            "unsupported_attachment_type",
+            "invalid_attachment_name",
+            "empty_attachment",
+            "attachment_too_large",
+            "duplicate_attachment",
+            "attachment_not_found",
+        ] {
+            assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
+        }
+        assert_eq!(
+            message("unsupported_attachment_type"),
+            "Underlaget måste vara en PDF, JPEG eller PNG."
+        );
     }
 }
