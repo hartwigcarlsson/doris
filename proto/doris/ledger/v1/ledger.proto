@@ -17,9 +17,11 @@ service LedgerService {
   // Books a reversing voucher in the original's fiscal year.
   rpc CorrectVoucher(CorrectVoucherRequest) returns (CorrectVoucherResponse);
   // The grundbok for one fiscal year, by number.
-  rpc AddAttachment(AddAttachmentRequest) returns (AddAttachmentResponse);
-  rpc GetAttachment(GetAttachmentRequest) returns (GetAttachmentResponse);
   rpc ListVouchers(ListVouchersRequest) returns (ListVouchersResponse);
+  // Adds an underlag to a voucher, also in a closed year.
+  rpc AddAttachment(AddAttachmentRequest) returns (AddAttachmentResponse);
+  // One underlag of a voucher, with its bytes.
+  rpc GetAttachment(GetAttachmentRequest) returns (GetAttachmentResponse);
   // The saldobalans for one fiscal year: debit and credit per account with
   // lines in it, by account number.
   rpc GetTrialBalance(GetTrialBalanceRequest) returns (GetTrialBalanceResponse);

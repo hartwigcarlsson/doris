@@ -147,6 +147,12 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `invalid_attachment_name`, `empty_attachment`, `attachment_too_large`,
   `duplicate_attachment` and `attachment_not_found`. File names are never
   logged.
+- tonic reserves the size a frame header claims before a handler runs, so
+  `session_gate` (`crates/server/src/lib.rs`) answers `LedgerService` calls
+  without a valid session with `not_signed_in` before the body is read. The
+  handlers still check the session themselves.
+- A reverse proxy in front of Doris must allow request bodies of about
+  21 MiB (nginx's default `client_max_body_size` is 1 MiB).
 - Company lookup uses Bolagsverket's free "värdefulla datamängder" API (OAuth2
   client credentials, register at portal.api.bolagsverket.se). Without
   credentials the lookup answers `lookup_unavailable` and details are typed in.
@@ -188,8 +194,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   stale tab never books in the wrong company.
 - `src/errors.rs` maps API error codes to Swedish text. Add a line there for
   every new code.
-- `src/attachments.rs` reads picked files, checks the size limits before
-  upload, and opens an underlag as a Blob URL in a new tab. The tab is
+- `src/attachments.rs` reads picked files (one over 10 MiB is refused
+  before it is read), checks the size limits before upload, and opens an underlag as a Blob URL in a new tab. The tab is
   opened on the click and navigated once `GetAttachment` returns; a blocked
   popup shows `popup_blocked`. `ledger_api()` raises its decode limit to
   11 MiB for that.

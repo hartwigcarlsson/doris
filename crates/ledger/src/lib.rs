@@ -288,6 +288,8 @@ pub async fn record_voucher_with_attachments(
 ) -> Result<VoucherRef> {
     let mut tx = doris_eventstore::begin(pool).await?;
     let voucher = record_voucher_in(&mut tx, company_id, actor, cmd, today).await?;
+    // ponytail: each add_attachment_in reloads membership and the year's
+    // ledger; fine for a few files, load them once if vouchers get many.
     for attachment in attachments {
         add_attachment_in(
             &mut tx,
