@@ -1,8 +1,8 @@
 //! Read-only views over the ledger projections. Each checks membership first.
 
 use crate::domain::{
-    Account, AccountLedger, AccountName, AccountNumber, Chart, FiscalYearStatus, TrialBalanceRow,
-    Voucher, VoucherLine, running_balance,
+    Account, AccountLedger, AccountName, AccountNumber, Attachment, AttachmentName, Chart,
+    ContentType, FiscalYearStatus, TrialBalanceRow, Voucher, VoucherLine, running_balance,
 };
 use crate::{Error, Result};
 use jiff::civil::Date;
@@ -99,6 +99,14 @@ pub async fn list_vouchers(
     .bind(&fiscal_year_start)
     .fetch_all(&mut *tx)
     .await?;
+    let attachments: Vec<(u32, String, String, String, i64)> = sqlx::query_as(
+        "SELECT number, sha256, file_name, content_type, size FROM voucher_attachments
+         WHERE company_id = ? AND fiscal_year_start = ? ORDER BY number, position",
+    )
+    .bind(&company_id)
+    .bind(&fiscal_year_start)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     let mut vouchers: Vec<Voucher> = heads
         .into_iter()
@@ -113,6 +121,12 @@ pub async fn list_vouchers(
         })
         .collect();
     attach_lines(&mut vouchers, lines);
+    for (number, sha256, file_name, content_type, size) in attachments {
+        if let Some(voucher) = voucher_at(&mut vouchers, number) {
+            let attachment = projected_attachment(sha256, &file_name, &content_type, size);
+            voucher.attachments.push(attachment);
+        }
+    }
     Ok(vouchers)
 }
 
@@ -260,20 +274,39 @@ pub async fn opening_balances(
         .collect())
 }
 
+/// Voucher `number` in `vouchers`. Numbers run 1..=n (the trigger
+/// guarantees it), so number - 1 is the index. A row whose head is missing
+/// (committed after the heads were read) gives `None`, never a panic.
+fn voucher_at(vouchers: &mut [Voucher], number: u32) -> Option<&mut Voucher> {
+    (number as usize)
+        .checked_sub(1)
+        .and_then(|i| vouchers.get_mut(i))
+        .filter(|v| v.number == number)
+}
+
 /// Puts each `(number, account, debit, credit)` line on its voucher.
 fn attach_lines(vouchers: &mut [Voucher], lines: Vec<(u32, u32, i64, i64)>) {
     for (number, account, debit, credit) in lines {
-        // Numbers run 1..=n (the trigger guarantees it), so number - 1 is the
-        // index. A line whose head is missing is skipped, never a panic.
-        if let Some(voucher) = (number as usize)
-            .checked_sub(1)
-            .and_then(|i| vouchers.get_mut(i))
-            .filter(|v| v.number == number)
-        {
+        if let Some(voucher) = voucher_at(vouchers, number) {
             voucher.lines.push(
                 VoucherLine::new(account, debit, credit).expect("projected accounts are valid"),
             );
         }
+    }
+}
+
+/// An underlag as the projection holds it.
+fn projected_attachment(
+    sha256: String,
+    file_name: &str,
+    content_type: &str,
+    size: i64,
+) -> Attachment {
+    Attachment {
+        sha256,
+        file_name: AttachmentName::parse(file_name).expect("projected names are valid"),
+        content_type: ContentType::from_mime(content_type).expect("projected types are valid"),
+        size: size as u64,
     }
 }
 

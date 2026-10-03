@@ -175,7 +175,34 @@ async fn apply_ledger(
             .execute(&mut *conn)
             .await?;
         }
-        LedgerEvent::AttachmentAdded { .. } => {}
+        LedgerEvent::AttachmentAdded {
+            voucher,
+            attachment,
+        } => {
+            // MAX without GROUP BY always yields one row, so the first
+            // underlag of a voucher gets position 1.
+            sqlx::query(
+                "INSERT INTO voucher_attachments (company_id, fiscal_year_start, number, position,
+                     sha256, file_name, content_type, size, added_at, added_by)
+                 SELECT ?, ?, ?, COALESCE(MAX(position), 0) + 1, ?, ?, ?, ?, ?, ?
+                 FROM voucher_attachments
+                 WHERE company_id = ? AND fiscal_year_start = ? AND number = ?",
+            )
+            .bind(company_id)
+            .bind(fiscal_year_start)
+            .bind(voucher)
+            .bind(&attachment.sha256)
+            .bind(attachment.file_name.as_str())
+            .bind(attachment.content_type.as_mime())
+            .bind(attachment.size as i64)
+            .bind(&event.recorded_at)
+            .bind(event.metadata.actor.as_deref().unwrap_or_default())
+            .bind(company_id)
+            .bind(fiscal_year_start)
+            .bind(voucher)
+            .execute(&mut *conn)
+            .await?;
+        }
     }
     Ok(())
 }
@@ -186,6 +213,7 @@ pub async fn rebuild_projections(pool: &sqlx::SqlitePool) -> crate::Result<()> {
     for statement in [
         "DELETE FROM opening_balances",
         "DELETE FROM closed_fiscal_years",
+        "DELETE FROM voucher_attachments",
         "DELETE FROM voucher_lines",
         "DELETE FROM vouchers",
         "DELETE FROM accounts",
