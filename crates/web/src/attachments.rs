@@ -2,7 +2,7 @@
 //! before upload, and opening one in a new tab.
 
 use crate::api::lpb;
-use leptos::prelude::{set_timeout, window};
+use leptos::prelude::set_timeout;
 use std::time::Duration;
 
 /// The server's limits, mirrored so a pick that is too large is refused
@@ -51,8 +51,9 @@ pub async fn read_files(input: &web_sys::HtmlInputElement) -> Vec<lpb::NewAttach
     picked
 }
 
-/// Opens the file in a new tab, in the browser's own PDF or image viewer.
-pub fn open(content_type: &str, data: &[u8]) {
+/// Shows the file in `tab`, in the browser's own PDF or image viewer. The tab
+/// is opened by the click itself (browsers block `window.open` after an await).
+pub fn open_in(tab: &web_sys::Window, content_type: &str, data: &[u8]) {
     let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(data));
     let options = web_sys::BlobPropertyBag::new();
     options.set_type(content_type);
@@ -62,7 +63,7 @@ pub fn open(content_type: &str, data: &[u8]) {
     let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
         return;
     };
-    let _ = window().open_with_url_and_target(&url, "_blank");
+    let _ = tab.location().set_href(&url);
     // The tab has loaded it long before then; free the memory.
     set_timeout(
         move || {
