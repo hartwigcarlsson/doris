@@ -1055,3 +1055,47 @@ async fn attachment_errors_have_stable_codes() {
         (Code::NotFound, "company_not_found".into())
     );
 }
+
+#[tokio::test]
+async fn a_huge_frame_without_a_session_is_refused_before_its_body_is_read() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let server = TestServer::start().await;
+    // The frame header claims 21 MiB, but only the header itself is sent.
+    let claimed: u32 = 21 << 20;
+    let mut header = vec![0u8];
+    header.extend_from_slice(&claimed.to_be_bytes());
+    let mut stream = tokio::net::TcpStream::connect(server.base.trim_start_matches("http://"))
+        .await
+        .unwrap();
+    let request = format!(
+        "POST /doris.ledger.v1.LedgerService/RecordVoucher HTTP/1.1\r\n\
+         host: localhost\r\n\
+         content-type: application/grpc-web+proto\r\n\
+         x-grpc-web: 1\r\n\
+         content-length: {}\r\n\r\n",
+        claimed as usize + header.len()
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    stream.write_all(&header).await.unwrap();
+
+    let mut response = Vec::new();
+    let mut buf = [0u8; 1024];
+    let head = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !response.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = stream.read(&mut buf).await.unwrap();
+            assert!(n > 0, "connection closed without an answer");
+            response.extend_from_slice(&buf[..n]);
+        }
+        String::from_utf8_lossy(&response).to_lowercase()
+    })
+    .await
+    .expect("the server waited for the body instead of answering");
+
+    assert!(head.starts_with("http/1.1 200"), "{head}");
+    assert!(head.contains("grpc-status: 16"), "{head}");
+    assert!(head.contains("grpc-message: not_signed_in"), "{head}");
+    assert!(
+        head.contains("content-type: application/grpc-web"),
+        "{head}"
+    );
+}

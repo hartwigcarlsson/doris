@@ -20,7 +20,7 @@ pub(crate) const MAX_RESPONSE: usize = 11 << 20;
 const MAX_ATTACHMENTS_PER_REQUEST: usize = 20 << 20;
 
 pub struct LedgerApi {
-    pool: SqlitePool,
+    pub(crate) pool: SqlitePool,
 }
 
 impl LedgerApi {

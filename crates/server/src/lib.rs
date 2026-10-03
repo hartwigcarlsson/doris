@@ -7,6 +7,8 @@ mod grpc;
 mod ledger;
 
 use axum::Router;
+use axum::extract::State;
+use axum::middleware::Next;
 use axum::routing::get;
 use doris_proto::auth::v1::auth_service_server::AuthServiceServer;
 use doris_proto::company::v1::company_service_server::CompanyServiceServer;
@@ -14,6 +16,7 @@ use doris_proto::ledger::v1::ledger_service_server::LedgerServiceServer;
 use http::header::CONTENT_TYPE;
 use http::{HeaderName, HeaderValue, Method, StatusCode};
 use rust_embed::RustEmbed;
+use sqlx::SqlitePool;
 use std::time::Duration;
 use tonic::service::Routes;
 use tonic_web::GrpcWebLayer;
@@ -33,6 +36,7 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
     cors_origins: Vec<HeaderValue>,
     serve_frontend: bool,
 ) -> Router {
+    let pool = ledger.pool.clone();
     let mut app = Routes::new(AuthServiceServer::new(api))
         .add_service(CompanyServiceServer::new(companies))
         .add_service(
@@ -41,6 +45,7 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
                 .max_encoding_message_size(ledger::MAX_RESPONSE),
         )
         .into_axum_router()
+        .layer(axum::middleware::from_fn_with_state(pool, session_gate))
         .layer(GrpcWebLayer::new())
         .layer(axum::middleware::map_response(hide_internal_messages));
     app = if serve_frontend {
@@ -53,6 +58,24 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
         app = app.layer(cors(cors_origins));
     }
     app
+}
+
+/// LedgerService accepts bodies of up to 21 MiB, and tonic reserves the size
+/// a frame header claims before any handler runs. So its calls need a valid
+/// session before the body is read; the handlers still check it themselves.
+async fn session_gate(
+    State(pool): State<SqlitePool>,
+    request: axum::extract::Request,
+    next: Next,
+) -> axum::response::Response {
+    let ledger = request
+        .uri()
+        .path()
+        .starts_with("/doris.ledger.v1.LedgerService/");
+    if ledger && let Err(status) = grpc::session_user(&pool, request.headers()).await {
+        return status.into_http();
+    }
+    next.run(request).await
 }
 
 /// Our statuses carry stable codes. tonic's own internal errors (e.g. a
