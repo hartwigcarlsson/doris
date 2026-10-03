@@ -2,7 +2,7 @@
 
 use crate::active_company::Companies;
 use crate::api::{ledger_api, lpb};
-use crate::attachments::{check_sizes, open_in, read_files, size_label};
+use crate::attachments::{open_in, read_files, size_label};
 use crate::errors::{describe, describe_code};
 use crate::fiscal_year::is_closed;
 use crate::format::{amount, today};
@@ -240,14 +240,13 @@ fn VoucherRow(
         };
         let company = company_id.get_value();
         spawn_local(async move {
-            let picked = read_files(&input).await;
-            if let Err(code) = picked
-                .iter()
-                .try_for_each(|f| check_sizes(std::slice::from_ref(f)))
-            {
-                error.try_set(Some(describe_code(code)));
-                return;
-            }
+            let picked = match read_files(&input).await {
+                Ok(picked) => picked,
+                Err(code) => {
+                    error.try_set(Some(describe_code(code)));
+                    return;
+                }
+            };
             for file in picked {
                 let result = ledger_api()
                     .add_attachment(lpb::AddAttachmentRequest {

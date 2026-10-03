@@ -82,3 +82,16 @@ test("picked underlag stay with the company they were picked for", async ({ page
 
   await expect(page.getByText("kvitto.pdf")).toHaveCount(0);
 });
+
+test("a file over 10 MB is refused when picked, before it is read", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+
+  await page.goto(`${app}/vouchers/new`);
+  const big = { name: "stor.pdf", mimeType: "application/pdf", buffer: Buffer.alloc((10 << 20) + 1) };
+  await page.getByLabel("Underlag").setInputFiles([big]);
+  await expect(page.getByRole("alert")).toHaveText(
+    "Underlaget är för stort (högst 10 MB per fil och 20 MB totalt).",
+  );
+  await expect(page.getByText("stor.pdf")).toHaveCount(0);
+});

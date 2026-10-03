@@ -21,6 +21,12 @@ pub fn check_sizes(files: &[lpb::NewAttachment]) -> Result<(), &'static str> {
     }
 }
 
+/// A picked file's `size()` over [`MAX_FILE`]: it is refused unread, so a
+/// huge pick never has to fit in wasm memory.
+pub fn too_large(size: f64) -> bool {
+    size > MAX_FILE as f64
+}
+
 /// "120 kB", or "1,5 MB" from 1 MB up. Rounded up, never to 0.
 pub fn size_label(bytes: u64) -> String {
     if bytes <= 999_000 {
@@ -31,24 +37,31 @@ pub fn size_label(bytes: u64) -> String {
     }
 }
 
-/// The files picked in `input`, read into memory. The input is cleared so
-/// the same file can be picked again.
-pub async fn read_files(input: &web_sys::HtmlInputElement) -> Vec<lpb::NewAttachment> {
-    let mut picked = Vec::new();
-    if let Some(files) = input.files() {
-        for i in 0..files.length() {
-            let Some(file) = files.get(i) else { continue };
-            let Ok(buffer) = wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await else {
-                continue;
-            };
-            picked.push(lpb::NewAttachment {
-                file_name: file.name(),
-                data: js_sys::Uint8Array::new(&buffer).to_vec(),
-            });
-        }
-    }
+/// The files picked in `input`, read into memory, or
+/// `Err("attachment_too_large")` before anything is read when one is over
+/// [`MAX_FILE`]. The input is cleared so the same file can be picked again.
+pub async fn read_files(
+    input: &web_sys::HtmlInputElement,
+) -> Result<Vec<lpb::NewAttachment>, &'static str> {
+    let files: Vec<web_sys::File> = input
+        .files()
+        .map(|list| (0..list.length()).filter_map(|i| list.get(i)).collect())
+        .unwrap_or_default();
     input.set_value("");
-    picked
+    if files.iter().any(|file| too_large(file.size())) {
+        return Err("attachment_too_large");
+    }
+    let mut picked = Vec::new();
+    for file in files {
+        let Ok(buffer) = wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await else {
+            continue;
+        };
+        picked.push(lpb::NewAttachment {
+            file_name: file.name(),
+            data: js_sys::Uint8Array::new(&buffer).to_vec(),
+        });
+    }
+    Ok(picked)
 }
 
 /// Shows the file in `tab`, in the browser's own PDF or image viewer. The tab
@@ -98,6 +111,14 @@ mod tests {
             check_sizes(&[file(MAX_FILE), file(MAX_FILE), file(1)]),
             Err("attachment_too_large")
         );
+    }
+
+    #[test]
+    fn a_picked_file_over_the_limit_is_too_large_to_read() {
+        assert!(!too_large(0.0));
+        assert!(!too_large(MAX_FILE as f64));
+        assert!(too_large(MAX_FILE as f64 + 1.0));
+        assert!(too_large(5e9));
     }
 
     #[test]

@@ -35,8 +35,12 @@ pub fn NewVoucher() -> impl IntoView {
         spawn_local(async move {
             let picked = read_files(&input).await;
             // Picked for a company that is no longer the form's: drop them.
-            if company_id == form_company.get_value() {
-                files.update(|f| f.extend(picked));
+            if company_id != form_company.get_value() {
+                return;
+            }
+            match picked {
+                Ok(picked) => files.update(|f| f.extend(picked)),
+                Err(code) => error.set(Some(describe_code(code))),
             }
         });
     };
