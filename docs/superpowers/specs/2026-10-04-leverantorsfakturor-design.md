@@ -26,14 +26,14 @@ Fakturans egen logik får en egen modul, så att `domain.rs` (registren) inte v�
 ### Värdeobjekt
 - `VatRate`: `Rate25`, `Rate12`, `Rate6` eller `Rate0`. Proton har 25, 12, 6 och 0 som heltal, och andra värden ger `InvalidVatRate`.
 - `InvoiceLine { account: AccountNumber, net: i64, vat_rate: VatRate }`. `net` är i öre och ska vara > 0, annars `InvalidInvoiceLines`. `AccountNumber` kommer från `doris_ledger::domain`.
-- `InvoiceLines`: 1–50 rader, annars `InvalidInvoiceLines`. Ett konto som är 2440 eller ligger i 2600–2699 ger `InvalidInvoiceAccount`. Att kontot finns och är aktivt kontrolleras av ledger när verifikationen bokförs. Med kontantmetoden kontrolleras det redan vid registreringen, mot kontoplanen.
+- `InvoiceLines`: 1–50 rader, annars `InvalidInvoiceLines`. Ett konto som är 2440, ligger i 2600–2699 eller ligger utanför 1000–8999 ger `InvalidInvoiceAccount`. Att kontot finns och är aktivt kontrolleras av ledger när verifikationen bokförs. Med kontantmetoden kontrolleras det redan vid registreringen, mot kontoplanen.
 - `vat::computed(lines) -> i64`: summan av nettot per momssats, gånger satsen, avrundad till hela ören (halva ören avrundas uppåt). Summan räknas med kontrollerad aritmetik.
 - `vat::check(lines, given: Option<i64>) -> Result<i64>`: utan angivet belopp blir det det uträknade. Med angivet belopp måste det ligga inom ±100 öre från det uträknade och vara ≥ 0, annars `InvalidVatAmount`.
 - `InvoiceNumber`: leverantörens fakturanummer, trimmat och 1–50 tecken, annars `InvalidInvoiceNumber`.
 - `PaymentReference`: valfri, trimmad och högst 50 tecken, annars `InvalidReference`.
 - Datum: förfallodatum före fakturadatum ger `InvalidDueDate`. Att fakturadatum inte ligger i framtiden kontrolleras av `doris_ledger` (`voucher_date_in_future`) med faktureringsmetoden, och av invoicing med samma kod med kontantmetoden.
 - `PaymentAccount`: ett kontonummer 1900–1999, annars `InvalidPaymentAccount`. Att kontot är aktivt kontrolleras av ledger.
-- `Reason`: återanvänder ledgers regel och kod (`invalid_reason`, 1–200 tecken).
+- Anledning: samma regel och kod som i ledger (`invalid_reason`, 1–200 tecken), men från invoicings egen `DomainError::InvalidReason`. Ett fakturadatum i framtiden ger likaså `DomainError::InvoiceDateInFuture`, som mappas till `voucher_date_in_future`.
 
 ### Leverantörskopian
 `SupplierSnapshot { number, name, org_nr, bankgiro, plusgiro, iban, bic }` byggs från `Supplier` vid registreringen. En inaktiv leverantör ger `SupplierInactive`, och en okänd ger `SupplierNotFound`.
@@ -44,14 +44,9 @@ Fakturans egen logik får en egen modul, så att `domain.rs` (registren) inte v�
 pub enum SupplierInvoiceEvent {
     SupplierInvoiceRegistered {
         number: u32,
-        supplier: SupplierSnapshot,
-        invoice_number: InvoiceNumber,
-        invoice_date: Date,
-        due_date: Date,
-        reference: Option<PaymentReference>,
-        lines: Vec<InvoiceLine>,
-        vat: i64,
-        total: i64,
+        // supplier, invoice_number, invoice_date, due_date, reference,
+        // lines, vat and total, as one struct.
+        invoice: Registration,
         attachments: Vec<Attachment>,   // doris_ledger::domain::Attachment
         voucher: Option<VoucherRef>,    // None with kontantmetoden
     },
@@ -117,18 +112,8 @@ CREATE TABLE supplier_invoices (
 CREATE UNIQUE INDEX supplier_invoices_no_duplicates
     ON supplier_invoices (company_id, supplier_number, invoice_number)
     WHERE status <> 'cancelled';
-
-CREATE TABLE supplier_invoice_attachments (
-    company_id   TEXT    NOT NULL,
-    number       INTEGER NOT NULL,
-    sha256       TEXT    NOT NULL REFERENCES attachment_files(sha256),
-    file_name    TEXT    NOT NULL,
-    content_type TEXT    NOT NULL,
-    size         INTEGER NOT NULL,
-    PRIMARY KEY (company_id, number, sha256)
-);
 ```
-Båda projektionerna går att bygga om från `read_all`. En fil kan bara läsas via `supplier_invoice_attachments` för företagets egen faktura, aldrig enbart med hashen.
+Projektionen går att bygga om från `read_all`. Fakturans JSON listar redan dess underlag. En fil läses därför genom att först hämta företagets egen faktura, hitta hashen i den och sedan läsa `attachment_files`, aldrig enbart med hashen. Ingen separat tabell för fakturans underlag behövs.
 
 ## API (`InvoicingService`)
 ```proto
@@ -182,7 +167,7 @@ message ReverseSupplierInvoicePaymentRequest { string company_id = 1; uint32 num
 message GetSupplierInvoiceAttachmentRequest { string company_id = 1; uint32 number = 2; string sha256 = 3; }
 message GetSupplierInvoiceAttachmentResponse { doris.ledger.v1.Attachment attachment = 1; bytes data = 2; }
 ```
-`ListSupplierInvoices` returnerar alla fakturor, sorterade med nyast först.
+`ListSupplierInvoices` returnerar alla fakturor, sorterade med nyast först, och `cash_method`: om företaget använder kontantmetoden. Varningen på sidan Räkenskapsår behöver det.
 `// ponytail: no pagination; add it when a company has thousands of invoices.`
 Datum skickas som `YYYY-MM-DD`, och ett ogiltigt datum ger `invalid_date`.
 
@@ -215,7 +200,7 @@ Datum skickas som `YYYY-MM-DD`, och ett ogiltigt datum ger `invalid_date`.
   - Knappen "Ny leverantörsfaktura" leder till formuläret.
   - En rad kan fällas ut och visar:
     - raderna (konto, netto och momssats), moms och att betala, samt leverantörens bankgiro, plusgiro och IBAN
-    - verifikationerna som länkar till grundboken
+    - verifikationerna som text, "Ver 3 (2026-01-01)", med en länk till Verifikationer (grundboken har ingen direktlänk till en enskild verifikation)
     - underlagen, som öppnas i ny flik via `attachments.rs`
     - knapparna *Betala* (formulär med datum i dag och betalkonto 1930), *Makulera* och *Ångra betalning*. De två sista visar ett fält för anledning och en knapp för att bekräfta.
 - **`/supplier-invoices/new`, Ny leverantörsfaktura:**
