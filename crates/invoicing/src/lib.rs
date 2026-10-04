@@ -6,6 +6,7 @@
 //! transaction, so concurrent writers never share one.
 
 pub mod domain;
+pub mod invoices;
 mod projections;
 pub mod supplier_invoices;
 pub mod vat;
@@ -307,14 +308,7 @@ pub async fn register_supplier_invoice(
     }
     let (state, version) = load_invoices(&mut tx, company_id).await?;
     let number = supplier_invoices::register(&state, &invoice)?;
-    let mut stored: Vec<Attachment> = Vec::new();
-    for new in attachments {
-        let attachment = doris_ledger::store_attachment_in(&mut tx, new).await?;
-        if stored.iter().any(|s| s.sha256 == attachment.sha256) {
-            return Err(ledger(LedgerError::DuplicateAttachment));
-        }
-        stored.push(attachment);
-    }
+    let stored = store_all(&mut tx, attachments).await?;
     let voucher = match company.accounting_method {
         AccountingMethod::Invoice => {
             let booked = doris_ledger::record_voucher_in(
@@ -528,6 +522,23 @@ pub async fn supplier_invoice_attachment(
         .fetch_one(pool)
         .await?;
     Ok((attachment, data))
+}
+
+/// Stores each underlag in the caller's transaction; the same file twice in
+/// one request is `duplicate_attachment`.
+async fn store_all(
+    conn: &mut SqliteConnection,
+    attachments: Vec<NewAttachment>,
+) -> Result<Vec<Attachment>> {
+    let mut stored: Vec<Attachment> = Vec::new();
+    for new in attachments {
+        let attachment = doris_ledger::store_attachment_in(conn, new).await?;
+        if stored.iter().any(|s| s.sha256 == attachment.sha256) {
+            return Err(ledger(LedgerError::DuplicateAttachment));
+        }
+        stored.push(attachment);
+    }
+    Ok(stored)
 }
 
 async fn link_all(

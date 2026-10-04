@@ -4,6 +4,8 @@
 use crate::domain::{
     Bankgiro, Bic, DomainError, Iban, Party, PartyName, Plusgiro, SupplierDetails, optional,
 };
+use crate::invoices::{self, InvoiceKind, Side};
+pub use crate::invoices::{Status, correction_date};
 use crate::vat::{self, InvoiceLine};
 use doris_company::domain::{AccountingMethod, OrgNr};
 use doris_ledger::VoucherRef;
@@ -14,7 +16,6 @@ use std::collections::BTreeMap;
 
 const ACCOUNTS_PAYABLE: u32 = 2440;
 const INPUT_VAT: u32 = 2640;
-const MAX_VOUCHER_TEXT: usize = 200;
 
 fn account(number: u32) -> AccountNumber {
     AccountNumber::parse(number).expect("a BAS account")
@@ -193,18 +194,6 @@ impl SupplierInvoiceEvent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum Status {
-    Unpaid,
-    Paid {
-        date: Date,
-        account: AccountNumber,
-        voucher: VoucherRef,
-    },
-    Cancelled,
-}
-
 /// A supplier invoice and what has happened to it. Also the projection's
 /// `details` JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -329,16 +318,22 @@ pub fn register(state: &SupplierInvoices, invoice: &Registration) -> Result<u32,
     Ok(state.next_number())
 }
 
+/// Supplier invoices' transition errors.
+pub struct SupplierInvoiceKind;
+
+impl InvoiceKind for SupplierInvoiceKind {
+    const PAID: DomainError = DomainError::SupplierInvoicePaid;
+    const NOT_PAID: DomainError = DomainError::SupplierInvoiceNotPaid;
+    const CANCELLED: DomainError = DomainError::SupplierInvoiceCancelled;
+}
+
 /// An unpaid invoice, the only kind that can be paid or cancelled.
 pub fn unpaid(state: &SupplierInvoices, number: u32) -> Result<&SupplierInvoice, DomainError> {
     let invoice = state
         .get(number)
         .ok_or(DomainError::SupplierInvoiceNotFound)?;
-    match invoice.status {
-        Status::Unpaid => Ok(invoice),
-        Status::Paid { .. } => Err(DomainError::SupplierInvoicePaid),
-        Status::Cancelled => Err(DomainError::SupplierInvoiceCancelled),
-    }
+    invoices::check_unpaid::<SupplierInvoiceKind>(&invoice.status)?;
+    Ok(invoice)
 }
 
 /// A paid invoice and its payment voucher, for reversing the payment.
@@ -349,56 +344,38 @@ pub fn paid(
     let invoice = state
         .get(number)
         .ok_or(DomainError::SupplierInvoiceNotFound)?;
-    match invoice.status {
-        Status::Paid { voucher, .. } => Ok((invoice, voucher)),
-        Status::Unpaid => Err(DomainError::SupplierInvoiceNotPaid),
-        Status::Cancelled => Err(DomainError::SupplierInvoiceCancelled),
-    }
+    let voucher = invoices::check_paid::<SupplierInvoiceKind>(&invoice.status)?;
+    Ok((invoice, voucher))
 }
 
 /// "Leverantörsfaktura 12, Lev AB (F-4711)", cut to a voucher text's 200
 /// characters.
 pub fn text(number: u32, invoice: &Registration) -> String {
-    format!(
+    invoices::voucher_text(format!(
         "Leverantörsfaktura {number}, {} ({})",
         invoice.supplier.name.as_str(),
         invoice.invoice_number.as_str()
-    )
-    .chars()
-    .take(MAX_VOUCHER_TEXT)
-    .collect()
+    ))
 }
 
 /// Each line's net and the VAT, debited: the cost side, the same under
 /// both methods.
 fn cost_side(invoice: &Registration) -> Vec<VoucherLine> {
-    let mut lines: Vec<VoucherLine> = invoice
-        .lines
-        .iter()
-        .map(|l| VoucherLine {
-            account: l.account,
-            debit: l.net,
-            credit: 0,
-        })
+    let vat: Vec<_> = (invoice.vat > 0)
+        .then(|| (account(INPUT_VAT), invoice.vat))
+        .into_iter()
         .collect();
-    if invoice.vat > 0 {
-        lines.push(VoucherLine {
-            account: account(INPUT_VAT),
-            debit: invoice.vat,
-            credit: 0,
-        });
-    }
-    lines
+    invoices::posting(&invoice.lines, &vat, Side::Debit)
 }
 
 /// Faktureringsmetoden, at registration: the cost against 2440.
 pub fn registration_lines(invoice: &Registration) -> Vec<VoucherLine> {
     let mut lines = cost_side(invoice);
-    lines.push(VoucherLine {
-        account: account(ACCOUNTS_PAYABLE),
-        debit: 0,
-        credit: invoice.total,
-    });
+    lines.push(invoices::entry(
+        account(ACCOUNTS_PAYABLE),
+        invoice.total,
+        Side::Credit,
+    ));
     lines
 }
 
@@ -410,23 +387,13 @@ pub fn payment_lines(
     paid_from: AccountNumber,
 ) -> Vec<VoucherLine> {
     let mut lines = match method {
-        AccountingMethod::Invoice => vec![VoucherLine {
-            account: account(ACCOUNTS_PAYABLE),
-            debit: invoice.total,
-            credit: 0,
-        }],
+        AccountingMethod::Invoice => vec![invoices::entry(
+            account(ACCOUNTS_PAYABLE),
+            invoice.total,
+            Side::Debit,
+        )],
         AccountingMethod::Cash => cost_side(invoice),
     };
-    lines.push(VoucherLine {
-        account: paid_from,
-        debit: 0,
-        credit: invoice.total,
-    });
+    lines.push(invoices::entry(paid_from, invoice.total, Side::Credit));
     lines
-}
-
-/// A correction is dated today, or the last day of the corrected voucher's
-/// fiscal year once today is past it (it must stay in that year).
-pub fn correction_date(fiscal_year_end: Date, today: Date) -> Date {
-    today.min(fiscal_year_end)
 }
