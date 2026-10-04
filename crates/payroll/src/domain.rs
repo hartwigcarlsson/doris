@@ -1,6 +1,7 @@
 //! Pure payroll rules: employees, payroll runs and arbetsgivaravgifter.
 //! No I/O, no clock.
 
+use crate::agi::{AgiContact, AgiLine, AgiSubmission, Period};
 use doris_ledger::domain::{AccountNumber, RecordVoucher, VoucherLine};
 use jiff::civil::{Date, date};
 use serde::{Deserialize, Serialize};
@@ -259,6 +260,18 @@ pub enum PayrollEvent {
         payroll_run_id: Uuid,
         voucher: BookedVoucher,
     },
+    /// Who Skatteverket may contact about the company's AGI.
+    AgiContactChanged {
+        contact: AgiContact,
+    },
+    /// What was submitted for a period, as the user confirms after uploading
+    /// the file. The latest per period is what Skatteverket has.
+    AgiMonthSubmitted {
+        period: Period,
+        lines: Vec<AgiLine>,
+        fee_sum: i64,
+        tax_sum: i64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -338,6 +351,9 @@ pub struct Payroll {
     pub employees: Vec<Employee>,
     pub runs: Vec<PayrollRun>,
     pub reversed: HashSet<BookedVoucher>,
+    pub agi_contact: Option<AgiContact>,
+    /// The latest submission per period.
+    pub agi_submissions: BTreeMap<Period, AgiSubmission>,
 }
 
 impl Payroll {
@@ -428,6 +444,22 @@ impl Payroll {
                 if let Some(run) = self.run_mut(payroll_run_id) {
                     run.bookings.push(voucher);
                 }
+            }
+            PayrollEvent::AgiContactChanged { contact } => self.agi_contact = Some(contact),
+            PayrollEvent::AgiMonthSubmitted {
+                period,
+                lines,
+                fee_sum,
+                tax_sum,
+            } => {
+                self.agi_submissions.insert(
+                    period,
+                    AgiSubmission {
+                        lines,
+                        fee_sum,
+                        tax_sum,
+                    },
+                );
             }
         }
     }

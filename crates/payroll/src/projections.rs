@@ -157,6 +157,8 @@ pub(crate) async fn apply(conn: &mut SqliteConnection, event: &RecordedEvent) ->
             .execute(&mut *conn)
             .await?;
         }
+        // Projected by Task 4 of plan 14, which replaces this arm.
+        PayrollEvent::AgiContactChanged { .. } | PayrollEvent::AgiMonthSubmitted { .. } => {}
     }
     Ok(())
 }

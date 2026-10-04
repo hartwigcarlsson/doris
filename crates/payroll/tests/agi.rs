@@ -71,3 +71,341 @@ fn a_contact_follows_skatteverkets_schema() {
         }
     }
 }
+
+use doris_payroll::domain::*;
+use doris_payroll::tax::TaxBasis;
+use jiff::civil::Date;
+use std::collections::HashSet;
+use uuid::Uuid;
+
+const KR: i64 = 100;
+
+/// A company's payroll events, plus the corrected (reversed) vouchers.
+#[derive(Default)]
+struct World {
+    events: Vec<PayrollEvent>,
+    reversed: HashSet<BookedVoucher>,
+    vouchers: u32,
+}
+
+impl World {
+    fn payroll(&self) -> Payroll {
+        Payroll::from_events(&self.events, self.reversed.clone())
+    }
+
+    fn hire(&mut self, name: &str, personnummer: &str) -> Uuid {
+        let id = Uuid::new_v4();
+        self.events.push(PayrollEvent::EmployeeAdded {
+            employee_id: id,
+            name: EmployeeName::parse(name).unwrap(),
+            personal_identity_number: PersonalIdentityNumber::parse(personnummer).unwrap(),
+            monthly_salary: 1,
+            salary_account: SalaryAccount::DEFAULT,
+        });
+        id
+    }
+
+    /// A run finalized with `lines` (employee, gross öre, tax öre; fee 1 öre
+    /// each) and booked; returns its voucher.
+    fn booked(&mut self, pay_date: Date, lines: &[(Uuid, i64, i64)]) -> BookedVoucher {
+        let run = Uuid::new_v4();
+        let draft = PayrollRunDraft {
+            pay_date,
+            text: "Lön".into(),
+            lines: lines
+                .iter()
+                .map(|&(employee_id, gross, tax)| DraftLine {
+                    employee_id,
+                    gross,
+                    tax: Some(tax),
+                })
+                .collect(),
+        };
+        let locked = lines
+            .iter()
+            .map(|&(employee_id, gross, tax)| PayrollRunLine {
+                employee_id,
+                salary_account: SalaryAccount::DEFAULT,
+                gross,
+                tax,
+                fee_rate: FULL_RATE,
+                fee: 1,
+                net: gross - tax,
+                tax_basis: TaxBasis::Manual,
+            })
+            .collect();
+        self.vouchers += 1;
+        let voucher = BookedVoucher {
+            fiscal_year_start: date(2026, 1, 1),
+            number: self.vouchers,
+        };
+        self.events.push(PayrollEvent::PayrollRunCreated {
+            payroll_run_id: run,
+            draft,
+        });
+        self.events.push(PayrollEvent::PayrollRunFinalized {
+            payroll_run_id: run,
+            lines: locked,
+        });
+        self.events.push(PayrollEvent::PayrollRunBooked {
+            payroll_run_id: run,
+            voucher,
+        });
+        voucher
+    }
+
+    fn contact(&mut self) {
+        let contact =
+            AgiContact::parse("Anna Andersson", "070-123 45 67", "anna@example.se").unwrap();
+        self.events
+            .extend(set_agi_contact(&self.payroll(), contact));
+    }
+
+    fn submit(&mut self, period: Period) {
+        let event = submit_agi_month(&self.payroll(), period).unwrap();
+        self.events.push(event);
+    }
+}
+
+fn oct() -> Period {
+    Period::parse("202610").unwrap()
+}
+
+fn amounts(month: &AgiMonth) -> Vec<(u64, i64, i64, AgiChange)> {
+    month
+        .lines
+        .iter()
+        .map(|(l, c)| (l.specification_number, l.gross, l.tax, *c))
+        .collect()
+}
+
+#[test]
+fn only_booked_runs_in_the_month_count_summed_per_employee() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    let bo = w.hire("Bo Ek", "19500301-1235");
+    w.booked(
+        date(2026, 10, 25),
+        &[
+            (asa, 20_000 * KR + 50, 4_000 * KR),
+            (bo, 20_000 * KR, 3_000 * KR),
+        ],
+    );
+    w.booked(date(2026, 10, 31), &[(asa, 15_000 * KR + 50, 3_134 * KR)]);
+    w.booked(date(2026, 11, 25), &[(asa, 99_999 * KR, 0)]);
+    let reversed = w.booked(date(2026, 10, 28), &[(bo, 99_999 * KR, 0)]);
+    w.reversed.insert(reversed);
+    // Open and finalized-only runs don't count either.
+    w.events.push(PayrollEvent::PayrollRunCreated {
+        payroll_run_id: Uuid::new_v4(),
+        draft: PayrollRunDraft {
+            pay_date: date(2026, 10, 20),
+            text: "Öppen".into(),
+            lines: vec![DraftLine {
+                employee_id: bo,
+                gross: 99_999 * KR,
+                tax: Some(0),
+            }],
+        },
+    });
+
+    let lines = agi_lines(&w.payroll(), oct());
+
+    // Öre are summed first, then dropped: 20 000,50 + 15 000,50 = 35 001 kr.
+    let got: Vec<_> = lines
+        .iter()
+        .map(|l| (l.employee_id, l.gross, l.tax))
+        .collect();
+    assert_eq!(got.len(), 2);
+    assert!(got.contains(&(asa, 35_001, 7_134)));
+    assert!(got.contains(&(bo, 20_000, 3_000)));
+}
+
+#[test]
+fn the_fee_sum_follows_skatteverkets_calculation() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    let bo = w.hire("Bo Ek", "19500301-1235");
+    let ung = w.hire("Unga Ung", "20050615-1232");
+    w.booked(
+        date(2026, 10, 25),
+        &[(asa, 35_000 * KR, 0), (bo, 20_000 * KR, 0)],
+    );
+    // 35 000 × 31,42 % + 20 000 × 10,21 % = 10 997 + 2 042.
+    let p = w.payroll();
+    assert_eq!(agi_fee_sum(&p, oct(), &agi_lines(&p, oct())), 13_039);
+
+    // Two runs for the young employee the same month: one IU of 40 000 kr,
+    // 25 000 × 20,81 % + 15 000 × 31,42 % = 9 915,5 → 9 915.
+    w.booked(date(2026, 11, 10), &[(ung, 20_000 * KR, 0)]);
+    w.booked(date(2026, 11, 25), &[(ung, 20_000 * KR, 0)]);
+    let p = w.payroll();
+    let nov = Period::parse("202611").unwrap();
+    assert_eq!(agi_fee_sum(&p, nov, &agi_lines(&p, nov)), 9_915);
+
+    // Before the reduction (March 2026): full rate, 30 000 × 31,42 %.
+    w.booked(date(2026, 3, 25), &[(ung, 30_000 * KR, 0)]);
+    let p = w.payroll();
+    let mar = Period::parse("202603").unwrap();
+    assert_eq!(agi_fee_sum(&p, mar, &agi_lines(&p, mar)), 9_426);
+}
+
+#[test]
+fn a_month_goes_not_submitted_submitted_changed() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    let bo = w.hire("Bo Ek", "19500301-1235");
+    w.contact();
+    let first = w.booked(
+        date(2026, 10, 25),
+        &[
+            (asa, 35_000 * KR, 7_134 * KR),
+            (bo, 20_000 * KR, 3_000 * KR),
+        ],
+    );
+    let month = agi_month(&w.payroll(), oct());
+    assert_eq!(month.status, AgiStatus::NotSubmitted);
+    // Specification numbers go by name for those never declared: Bo, then Åsa.
+    assert_eq!(
+        amounts(&month),
+        [
+            (1, 20_000, 3_000, AgiChange::New),
+            (2, 35_000, 7_134, AgiChange::New)
+        ]
+    );
+    assert_eq!(
+        (month.fee_sum, month.tax_sum, month.booked_fees),
+        (13_039, 10_134, 2)
+    );
+
+    w.submit(oct());
+    let month = agi_month(&w.payroll(), oct());
+    assert_eq!(month.status, AgiStatus::Submitted);
+    assert!(month.lines.iter().all(|(_, c)| *c == AgiChange::Unchanged));
+    assert_eq!(
+        submit_agi_month(&w.payroll(), oct()),
+        Err(DomainError::AgiUnchanged)
+    );
+
+    // The run is backed out and Åsa alone is paid again: Åsa changes,
+    // Bo is removed with his number.
+    w.reversed.insert(first);
+    w.booked(date(2026, 10, 30), &[(asa, 36_000 * KR, 7_400 * KR)]);
+    let month = agi_month(&w.payroll(), oct());
+    assert_eq!(month.status, AgiStatus::Changed);
+    assert_eq!(amounts(&month), [(2, 36_000, 7_400, AgiChange::Changed)]);
+    assert_eq!(
+        month
+            .removed
+            .iter()
+            .map(|l| (l.employee_id, l.specification_number))
+            .collect::<Vec<_>>(),
+        [(bo, 1)]
+    );
+    w.submit(oct());
+    assert_eq!(agi_month(&w.payroll(), oct()).status, AgiStatus::Submitted);
+}
+
+#[test]
+fn a_month_with_everything_backed_out_can_be_declared_empty() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    w.contact();
+    let run = w.booked(date(2026, 10, 25), &[(asa, 35_000 * KR, 7_134 * KR)]);
+    w.submit(oct());
+    w.reversed.insert(run);
+
+    let month = agi_month(&w.payroll(), oct());
+
+    assert_eq!(month.status, AgiStatus::Changed);
+    assert!(month.lines.is_empty());
+    assert_eq!(month.removed.len(), 1);
+    assert_eq!((month.fee_sum, month.tax_sum), (0, 0));
+    assert!(agi_periods(&w.payroll()).contains(&oct()));
+    w.submit(oct());
+    assert_eq!(agi_month(&w.payroll(), oct()).status, AgiStatus::Submitted);
+}
+
+#[test]
+fn an_employee_in_two_runs_one_backed_out_is_changed_not_removed() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    w.contact();
+    w.booked(date(2026, 10, 10), &[(asa, 20_000 * KR, 4_000 * KR)]);
+    let second = w.booked(date(2026, 10, 25), &[(asa, 15_000 * KR, 3_134 * KR)]);
+    w.submit(oct());
+    w.reversed.insert(second);
+
+    let month = agi_month(&w.payroll(), oct());
+
+    assert_eq!(amounts(&month), [(1, 20_000, 4_000, AgiChange::Changed)]);
+    assert!(month.removed.is_empty());
+}
+
+#[test]
+fn specification_numbers_stay_put_and_new_employees_get_the_next() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    let bo = w.hire("Bo Ek", "19500301-1235");
+    w.contact();
+    w.booked(date(2026, 10, 25), &[(asa, 100 * KR, 0), (bo, 100 * KR, 0)]);
+    w.submit(oct());
+    let cy = w.hire("Cy Al", "19800102-1230");
+    w.booked(date(2026, 11, 25), &[(asa, 100 * KR, 0), (cy, 100 * KR, 0)]);
+
+    let nov = agi_month(&w.payroll(), Period::parse("202611").unwrap());
+
+    let numbers: Vec<_> = nov
+        .lines
+        .iter()
+        .map(|(l, _)| (l.employee_id, l.specification_number))
+        .collect();
+    assert_eq!(numbers, [(asa, 2), (cy, 3)]);
+}
+
+#[test]
+fn submitting_needs_something_and_a_contact() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    assert_eq!(
+        submit_agi_month(&w.payroll(), oct()),
+        Err(DomainError::AgiPeriodEmpty)
+    );
+    w.booked(date(2026, 10, 25), &[(asa, 100 * KR, 0)]);
+    assert_eq!(
+        submit_agi_month(&w.payroll(), oct()),
+        Err(DomainError::AgiContactMissing)
+    );
+    w.contact();
+    assert!(matches!(
+        submit_agi_month(&w.payroll(), oct()),
+        Ok(PayrollEvent::AgiMonthSubmitted { .. })
+    ));
+}
+
+#[test]
+fn the_contact_is_set_once_and_changed() {
+    let mut w = World::default();
+    w.contact();
+    assert_eq!(
+        w.payroll().agi_contact.as_ref().unwrap().phone,
+        "070-123 45 67"
+    );
+    let same = AgiContact::parse("Anna Andersson", "070-123 45 67", "anna@example.se").unwrap();
+    assert!(set_agi_contact(&w.payroll(), same).is_empty());
+    let other = AgiContact::parse("Bo Ek", "08-123", "bo@example.se").unwrap();
+    assert_eq!(
+        set_agi_contact(&w.payroll(), other.clone()),
+        [PayrollEvent::AgiContactChanged { contact: other }]
+    );
+}
+
+#[test]
+fn periods_list_booked_months_and_submissions_newest_first() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    w.booked(date(2026, 9, 25), &[(asa, 100 * KR, 0)]);
+    w.booked(date(2026, 11, 25), &[(asa, 100 * KR, 0)]);
+    let periods: Vec<_> = agi_periods(&w.payroll()).iter().map(|p| p.get()).collect();
+    assert_eq!(periods, [202611, 202609]);
+}
