@@ -88,6 +88,7 @@ pub async fn add_employee(
         personal_identity_number: PersonalIdentityNumber::parse(new.personal_identity_number)?,
         monthly_salary: new.monthly_salary,
         salary_account: SalaryAccount::parse(new.salary_account)?,
+        tax: None,
     };
     let employee_id = cmd.employee_id;
     change(pool, company_id, actor, |payroll| {
@@ -147,7 +148,7 @@ pub async fn preview_payroll_run(
     let mut conn = pool.acquire().await?;
     let (_, payroll, _) = load(&mut conn, company_id, actor).await?;
     let draft = domain::validate_draft(&payroll, draft)?;
-    let lines = domain::compute_lines(&payroll, None, &draft)?;
+    let lines = domain::compute_lines(&payroll, None, &draft, None)?;
     Ok(Preview {
         text: draft.text,
         lines,
@@ -196,7 +197,11 @@ pub async fn finalize_payroll_run(
     payroll_run_id: Uuid,
 ) -> Result<()> {
     change(pool, company_id, actor, |payroll| {
-        Ok(vec![domain::finalize_payroll_run(payroll, payroll_run_id)?])
+        Ok(vec![domain::finalize_payroll_run(
+            payroll,
+            payroll_run_id,
+            None,
+        )?])
     })
     .await
 }

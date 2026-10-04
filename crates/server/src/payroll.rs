@@ -341,7 +341,7 @@ fn draft(message: Option<pb::PayrollRunDraft>) -> Result<PayrollRunDraft, Status
                 Ok(DraftLine {
                     employee_id: employee_id(&l.employee_id)?,
                     gross: l.gross,
-                    tax: l.tax,
+                    tax: Some(l.tax),
                 })
             })
             .collect::<Result<_, Status>>()?,

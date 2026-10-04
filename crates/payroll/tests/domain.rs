@@ -1,4 +1,5 @@
 use doris_payroll::domain::*;
+use doris_payroll::tax::{RowKind, TaxBasis, TaxSetting, TaxTable, TaxTableRow};
 
 #[test]
 fn a_personnummer_has_twelve_digits_a_date_and_a_check_digit() {
@@ -156,6 +157,7 @@ fn an_employee_is_added_once_per_personnummer() {
         personal_identity_number: pin("19800101-1231"),
         monthly_salary: 35_000 * KR,
         salary_account: SalaryAccount::DEFAULT,
+        tax: None,
     };
 
     assert_eq!(
@@ -188,6 +190,7 @@ fn a_monthly_salary_is_more_than_zero_and_at_most_the_ledgers_limit() {
             personal_identity_number: pin("19800101-1231"),
             monthly_salary: bad,
             salary_account: SalaryAccount::DEFAULT,
+            tax: None,
         };
         assert_eq!(
             add_employee(&given(&[]), cmd),
@@ -287,7 +290,7 @@ impl World {
     }
 
     fn finalize(&mut self, run: Uuid) {
-        let event = finalize_payroll_run(&self.payroll(), run).unwrap();
+        let event = finalize_payroll_run(&self.payroll(), run, None).unwrap();
         self.then(event);
     }
 
@@ -315,7 +318,7 @@ fn draft(pay_date: Date, lines: &[(Uuid, i64, i64)]) -> PayrollRunDraft {
             .map(|&(employee_id, gross, tax)| DraftLine {
                 employee_id,
                 gross,
-                tax,
+                tax: Some(tax),
             })
             .collect(),
     }
@@ -399,7 +402,7 @@ fn lines_carry_the_account_fee_and_net_pay() {
         ],
     );
 
-    let lines = compute_lines(&w.payroll(), None, &d).unwrap();
+    let lines = compute_lines(&w.payroll(), None, &d, None).unwrap();
 
     assert_eq!(
         lines,
@@ -412,6 +415,7 @@ fn lines_carry_the_account_fee_and_net_pay() {
                 fee_rate: FULL_RATE,
                 fee: 1_099_700,
                 net: 27_000 * KR,
+                tax_basis: TaxBasis::Manual,
             },
             PayrollRunLine {
                 employee_id: ung,
@@ -421,6 +425,7 @@ fn lines_carry_the_account_fee_and_net_pay() {
                 fee_rate: YOUTH_RATE,
                 fee: 416_200,
                 net: 16_500 * KR,
+                tax_basis: TaxBasis::Manual,
             },
         ]
     );
@@ -436,6 +441,7 @@ fn the_voucher_balances_grouped_by_account_without_zero_lines() {
         fee_rate: FULL_RATE,
         fee,
         net: gross - tax,
+        tax_basis: TaxBasis::Manual,
     };
     let lines = [
         line(7210, 35_000 * KR, 8_000 * KR, 1_099_700),
@@ -520,7 +526,7 @@ fn each_step_needs_the_right_status() {
         Err(DomainError::PayrollRunNotFound)
     );
     assert_eq!(
-        finalize_payroll_run(&p, missing),
+        finalize_payroll_run(&p, missing, None),
         Err(DomainError::PayrollRunNotFound)
     );
     assert_eq!(
@@ -558,7 +564,7 @@ fn each_step_needs_the_right_status() {
         Err(DomainError::PayrollRunNotOpen)
     );
     assert_eq!(
-        finalize_payroll_run(&p, run),
+        finalize_payroll_run(&p, run, None),
         Err(DomainError::PayrollRunNotOpen)
     );
     assert_eq!(
@@ -573,7 +579,7 @@ fn each_step_needs_the_right_status() {
         Err(DomainError::PayrollRunBooked)
     );
     assert_eq!(
-        finalize_payroll_run(&p, run),
+        finalize_payroll_run(&p, run, None),
         Err(DomainError::PayrollRunBooked)
     );
     assert_eq!(
@@ -633,7 +639,7 @@ fn an_open_run_with_a_deactivated_employee_cannot_be_finalized() {
     w.then(PayrollEvent::EmployeeDeactivated { employee_id: asa });
 
     assert_eq!(
-        finalize_payroll_run(&w.payroll(), run),
+        finalize_payroll_run(&w.payroll(), run, None),
         Err(DomainError::EmployeeInactive)
     );
 }
@@ -648,26 +654,26 @@ fn the_youth_cap_counts_only_booked_runs_in_the_same_month() {
     let d = draft(oct(25), &[(ung, 20_000 * KR, 0)]);
     // Finalized but not booked: not counted.
     assert_eq!(
-        compute_lines(&w.payroll(), None, &d).unwrap()[0].fee,
+        compute_lines(&w.payroll(), None, &d, None).unwrap()[0].fee,
         416_200
     );
 
     let voucher = w.book(other, 1);
     // 5 000 kr left under the cap: 1 040,50 + 4 713 = 5 753,50 kr.
     assert_eq!(
-        compute_lines(&w.payroll(), None, &d).unwrap()[0].fee,
+        compute_lines(&w.payroll(), None, &d, None).unwrap()[0].fee,
         575_350
     );
     // Another month is not counted.
     let nov = draft(date(2026, 11, 25), &[(ung, 20_000 * KR, 0)]);
     assert_eq!(
-        compute_lines(&w.payroll(), None, &nov).unwrap()[0].fee,
+        compute_lines(&w.payroll(), None, &nov, None).unwrap()[0].fee,
         416_200
     );
 
     w.reversed.insert(voucher);
     assert_eq!(
-        compute_lines(&w.payroll(), None, &d).unwrap()[0].fee,
+        compute_lines(&w.payroll(), None, &d, None).unwrap()[0].fee,
         416_200
     );
 }
@@ -692,4 +698,260 @@ fn a_booking_that_would_change_the_fee_is_outdated() {
     w.then(event);
     w.finalize(late);
     assert!(book_payroll_run(&w.payroll(), late, date(2026, 10, 4)).is_ok());
+}
+
+/// Every table 29–42 with one amount band (1–80 000 kr: `kronor` in every
+/// column) and one open 40 % band: enough for the domain, which only looks
+/// rows up.
+fn flat_table(year: i16, kronor: i64) -> TaxTable {
+    let rows = (29..=42u8)
+        .flat_map(|table| {
+            [
+                TaxTableRow {
+                    table,
+                    kind: RowKind::Amount,
+                    from: 1,
+                    to: Some(80_000),
+                    columns: [kronor; 6],
+                },
+                TaxTableRow {
+                    table,
+                    kind: RowKind::Percent,
+                    from: 80_001,
+                    to: None,
+                    columns: [40; 6],
+                },
+            ]
+        })
+        .collect();
+    TaxTable::validate(year, rows).unwrap()
+}
+
+fn computed(employee_id: Uuid, gross: i64) -> DraftLine {
+    DraftLine {
+        employee_id,
+        gross,
+        tax: None,
+    }
+}
+
+#[test]
+fn an_employee_is_added_with_a_tax_setting_and_can_change_it() {
+    let id = Uuid::new_v4();
+    let t33 = TaxSetting::table(33, 1).unwrap();
+    let cmd = AddEmployee {
+        employee_id: id,
+        name: name("Åsa Öberg"),
+        personal_identity_number: pin("19800101-1231"),
+        monthly_salary: 35_000 * KR,
+        salary_account: SalaryAccount::DEFAULT,
+        tax: Some(t33),
+    };
+    assert_eq!(
+        add_employee(&given(&[]), cmd),
+        Ok(vec![
+            hired(id, "19800101-1231", 35_000 * KR),
+            PayrollEvent::EmployeeTaxChanged {
+                employee_id: id,
+                tax: t33
+            },
+        ])
+    );
+
+    let p = given(&[
+        hired(id, "19800101-1231", 35_000 * KR),
+        PayrollEvent::EmployeeTaxChanged {
+            employee_id: id,
+            tax: t33,
+        },
+    ]);
+    assert_eq!(p.employee(id).unwrap().tax, Some(t33));
+    assert_eq!(set_employee_tax(&p, id, t33), Ok(vec![]));
+    let thirty = TaxSetting::percent(30).unwrap();
+    assert_eq!(
+        set_employee_tax(&p, id, thirty),
+        Ok(vec![PayrollEvent::EmployeeTaxChanged {
+            employee_id: id,
+            tax: thirty
+        }])
+    );
+    assert_eq!(
+        set_employee_tax(&p, Uuid::new_v4(), thirty),
+        Err(DomainError::EmployeeNotFound)
+    );
+    let gone = given(&[
+        hired(id, "19800101-1231", 35_000 * KR),
+        PayrollEvent::EmployeeDeactivated { employee_id: id },
+    ]);
+    assert_eq!(
+        set_employee_tax(&gone, id, thirty),
+        Err(DomainError::EmployeeInactive)
+    );
+    assert_eq!(gone.employee(id).unwrap().tax, None);
+}
+
+#[test]
+fn a_blank_tax_is_computed_from_the_setting_and_a_typed_one_is_manual() {
+    let mut w = World::default();
+    let asa = w.hire("19800101-1231", 35_000 * KR);
+    let bo = w.hire("19850709-9870", 30_000 * KR);
+    let ung = w.hire("20050615-1232", 20_000 * KR);
+    w.then(PayrollEvent::EmployeeTaxChanged {
+        employee_id: asa,
+        tax: TaxSetting::table(33, 1).unwrap(),
+    });
+    w.then(PayrollEvent::EmployeeTaxChanged {
+        employee_id: bo,
+        tax: TaxSetting::percent(30).unwrap(),
+    });
+    let oct = date(2026, 10, 25);
+    let table = flat_table(2026, 7_000);
+    let d = PayrollRunDraft {
+        pay_date: oct,
+        text: String::new(),
+        lines: vec![
+            computed(asa, 35_000 * KR),
+            computed(bo, 30_000 * KR),
+            DraftLine {
+                employee_id: ung,
+                gross: 20_000 * KR,
+                tax: Some(3_500 * KR),
+            },
+        ],
+    };
+
+    let lines = compute_lines(&w.payroll(), None, &d, Some(&table)).unwrap();
+
+    let taxes: Vec<_> = lines.iter().map(|l| (l.tax, l.tax_basis, l.net)).collect();
+    assert_eq!(
+        taxes,
+        vec![
+            (
+                7_000 * KR,
+                TaxBasis::Table {
+                    year: 2026,
+                    table: 33,
+                    column: 1
+                },
+                28_000 * KR
+            ),
+            (9_000 * KR, TaxBasis::Percent { percent: 30 }, 21_000 * KR),
+            (3_500 * KR, TaxBasis::Manual, 16_500 * KR),
+        ]
+    );
+}
+
+#[test]
+fn a_blank_tax_without_a_setting_or_a_table_is_refused() {
+    let mut w = World::default();
+    let asa = w.hire("19800101-1231", 35_000 * KR);
+    let bo = w.hire("19850709-9870", 30_000 * KR);
+    w.then(PayrollEvent::EmployeeTaxChanged {
+        employee_id: bo,
+        tax: TaxSetting::table(33, 1).unwrap(),
+    });
+    let oct = date(2026, 10, 25);
+    let one = |line| PayrollRunDraft {
+        pay_date: oct,
+        text: String::new(),
+        lines: vec![line],
+    };
+
+    // A blank tax is a valid draft; it is computed when the lines are.
+    assert!(validate_draft(&w.payroll(), one(computed(asa, 100))).is_ok());
+    assert_eq!(
+        compute_lines(&w.payroll(), None, &one(computed(asa, 35_000 * KR)), None),
+        Err(DomainError::TaxRequired)
+    );
+    assert_eq!(
+        compute_lines(&w.payroll(), None, &one(computed(bo, 30_000 * KR)), None),
+        Err(DomainError::TaxTableMissing(2026))
+    );
+    // Last year's table is not this year's.
+    assert_eq!(
+        compute_lines(
+            &w.payroll(),
+            None,
+            &one(computed(bo, 30_000 * KR)),
+            Some(&flat_table(2025, 1))
+        ),
+        Err(DomainError::TaxTableMissing(2026))
+    );
+    // A typed tax keeps its old checks.
+    assert_eq!(
+        validate_draft(
+            &w.payroll(),
+            one(DraftLine {
+                employee_id: asa,
+                gross: 100,
+                tax: Some(101)
+            })
+        ),
+        Err(DomainError::InvalidTax)
+    );
+}
+
+#[test]
+fn finalizing_locks_the_computed_tax_and_booking_keeps_it() {
+    let mut w = World::default();
+    let asa = w.hire("19800101-1231", 35_000 * KR);
+    w.then(PayrollEvent::EmployeeTaxChanged {
+        employee_id: asa,
+        tax: TaxSetting::table(33, 1).unwrap(),
+    });
+    let d = PayrollRunDraft {
+        pay_date: date(2026, 10, 25),
+        text: String::new(),
+        lines: vec![computed(asa, 35_000 * KR)],
+    };
+    let run = Uuid::new_v4();
+    let event = create_payroll_run(&w.payroll(), run, d).unwrap();
+    w.then(event);
+    assert_eq!(
+        finalize_payroll_run(&w.payroll(), run, None),
+        Err(DomainError::TaxTableMissing(2026))
+    );
+    let event = finalize_payroll_run(&w.payroll(), run, Some(&flat_table(2026, 7_000))).unwrap();
+    w.then(event);
+    // A later change of setting does not touch the locked line.
+    w.then(PayrollEvent::EmployeeTaxChanged {
+        employee_id: asa,
+        tax: TaxSetting::percent(50).unwrap(),
+    });
+
+    let voucher = book_payroll_run(&w.payroll(), run, date(2026, 10, 25)).unwrap();
+
+    let locked = w.payroll().run(run).unwrap().lines.clone().unwrap();
+    assert_eq!(
+        (locked[0].tax, locked[0].tax_basis),
+        (
+            7_000 * KR,
+            TaxBasis::Table {
+                year: 2026,
+                table: 33,
+                column: 1
+            }
+        )
+    );
+    assert!(
+        voucher
+            .lines
+            .iter()
+            .any(|l| l.account.get() == 2710 && l.credit == 7_000 * KR)
+    );
+}
+
+#[test]
+fn events_from_before_tax_settings_read_as_manual() {
+    let line: PayrollRunLine = serde_json::from_str(
+        r#"{"employee_id":"7d0e1a2b-0000-4000-8000-000000000001","salary_account":7210,
+            "gross":3500000,"tax":800000,"fee_rate":3142,"fee":1099700,"net":2700000}"#,
+    )
+    .unwrap();
+    assert_eq!(line.tax_basis, TaxBasis::Manual);
+    let draft: DraftLine = serde_json::from_str(
+        r#"{"employee_id":"7d0e1a2b-0000-4000-8000-000000000001","gross":3500000,"tax":800000}"#,
+    )
+    .unwrap();
+    assert_eq!(draft.tax, Some(800_000));
 }

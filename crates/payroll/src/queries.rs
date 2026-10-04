@@ -34,6 +34,7 @@ pub async fn list_employees(
                 monthly_salary,
                 salary_account: SalaryAccount::parse(account)?,
                 active,
+                tax: None, // Task 3 reads it from the projection.
             })
         })
         .collect()
@@ -142,6 +143,7 @@ pub async fn list_payroll_runs(
                 fee_rate,
                 fee,
                 net,
+                tax_basis: crate::tax::TaxBasis::Manual,
             }),
             _ => None,
         };

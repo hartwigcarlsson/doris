@@ -50,6 +50,8 @@ pub(crate) async fn apply(conn: &mut SqliteConnection, event: &RecordedEvent) ->
             .execute(&mut *conn)
             .await?;
         }
+        // Projected by Task 3 of plan 13, which replaces this arm.
+        PayrollEvent::EmployeeTaxChanged { .. } => {}
         PayrollEvent::EmployeeDeactivated { employee_id } => {
             sqlx::query("UPDATE employees SET active = 0 WHERE company_id = ? AND employee_id = ?")
                 .bind(company_id)

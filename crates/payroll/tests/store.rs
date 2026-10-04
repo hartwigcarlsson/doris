@@ -221,6 +221,7 @@ async fn the_employee_projection_rebuilds_from_the_events() {
 use doris_payroll::domain::{
     DraftLine, FULL_RATE, PayrollRunDraft, PayrollRunLine, PayrollRunStatus, SalaryAccount,
 };
+use doris_payroll::tax::TaxBasis;
 use jiff::civil::Date;
 
 fn d(s: &str) -> Date {
@@ -236,7 +237,7 @@ fn draft(pay_date: &str, lines: &[(Uuid, i64, i64)]) -> PayrollRunDraft {
             .map(|&(employee_id, gross, tax)| DraftLine {
                 employee_id,
                 gross,
-                tax,
+                tax: Some(tax),
             })
             .collect(),
     }
@@ -269,6 +270,7 @@ async fn a_preview_computes_the_lines_and_writes_nothing() {
             fee_rate: FULL_RATE,
             fee: 1_099_700,
             net: 27_000 * KR,
+            tax_basis: TaxBasis::Manual,
         }]
     );
     assert_eq!(events_of(&pool, "payroll-").await, ["EmployeeAdded"]);
