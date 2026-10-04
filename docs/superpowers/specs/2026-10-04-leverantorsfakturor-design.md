@@ -97,7 +97,7 @@ Varje skrivning sker i en `BEGIN IMMEDIATE`-transaktion:
 
 Allt sker eller inget. En avvisad registrering förbrukar inget verifikationsnummer och inget fakturanummer.
 
-### Migration `migrations/0011_supplier_invoices.sql`
+### Migration `migrations/0012_supplier_invoices.sql`
 ```sql
 CREATE TABLE supplier_invoices (
     company_id      TEXT    NOT NULL REFERENCES companies(company_id),
