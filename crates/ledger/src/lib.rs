@@ -362,7 +362,8 @@ async fn add_attachment_in(
 }
 
 /// Lowercase hex SHA-256.
-fn sha256_hex(data: &[u8]) -> String {
+/// Lowercase hex SHA-256.
+pub fn sha256_hex(data: &[u8]) -> String {
     Sha256::digest(data)
         .iter()
         .map(|b| format!("{b:02x}"))

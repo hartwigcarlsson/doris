@@ -170,9 +170,15 @@ impl World {
     }
 
     fn submit(&mut self, period: Period) {
-        let event = submit_agi_month(&self.payroll(), period).unwrap();
+        let event =
+            submit_agi_month(&self.payroll(), period, &shown(&self.payroll(), period)).unwrap();
         self.events.push(event);
     }
+}
+
+/// The fingerprint of the month as it would be shown now.
+fn shown(payroll: &Payroll, period: Period) -> String {
+    agi_month(payroll, period).fingerprint()
 }
 
 fn oct() -> Period {
@@ -291,7 +297,7 @@ fn a_month_goes_not_submitted_submitted_changed() {
     assert_eq!(month.status, AgiStatus::Submitted);
     assert!(month.lines.iter().all(|(_, c)| *c == AgiChange::Unchanged));
     assert_eq!(
-        submit_agi_month(&w.payroll(), oct()),
+        submit_agi_month(&w.payroll(), oct(), &shown(&w.payroll(), oct())),
         Err(DomainError::AgiUnchanged)
     );
 
@@ -402,19 +408,57 @@ fn submitting_needs_something_and_a_contact() {
     let mut w = World::default();
     let asa = w.hire("Åsa Öberg", "19800101-1231");
     assert_eq!(
-        submit_agi_month(&w.payroll(), oct()),
+        submit_agi_month(&w.payroll(), oct(), ""),
         Err(DomainError::AgiPeriodEmpty)
     );
     w.booked(date(2026, 10, 25), &[(asa, 100 * KR, 0)]);
     assert_eq!(
-        submit_agi_month(&w.payroll(), oct()),
+        submit_agi_month(&w.payroll(), oct(), &shown(&w.payroll(), oct())),
         Err(DomainError::AgiContactMissing)
     );
     w.contact();
     assert!(matches!(
-        submit_agi_month(&w.payroll(), oct()),
+        submit_agi_month(&w.payroll(), oct(), &shown(&w.payroll(), oct())),
         Ok(PayrollEvent::AgiMonthSubmitted { .. })
     ));
+}
+
+#[test]
+fn only_what_was_shown_can_be_marked() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    w.contact();
+    let first = w.booked(date(2026, 10, 25), &[(asa, 100 * KR, 0)]);
+    let before = shown(&w.payroll(), oct());
+    assert_eq!(before.len(), 64, "hex SHA-256");
+
+    // A run is booked after the file was made.
+    w.booked(date(2026, 10, 30), &[(asa, 50 * KR, 0)]);
+    assert_eq!(
+        submit_agi_month(&w.payroll(), oct(), &before),
+        Err(DomainError::AgiFileOutdated)
+    );
+    assert_eq!(
+        submit_agi_month(&w.payroll(), oct(), ""),
+        Err(DomainError::AgiFileOutdated)
+    );
+
+    // A run is backed out after the file was made.
+    let now = shown(&w.payroll(), oct());
+    assert_ne!(now, before);
+    w.reversed.insert(first);
+    assert_eq!(
+        submit_agi_month(&w.payroll(), oct(), &now),
+        Err(DomainError::AgiFileOutdated)
+    );
+
+    let now = shown(&w.payroll(), oct());
+    let Ok(PayrollEvent::AgiMonthSubmitted { lines, .. }) =
+        submit_agi_month(&w.payroll(), oct(), &now)
+    else {
+        panic!("the shown month is marked");
+    };
+    assert_eq!(lines[0].gross, 50);
 }
 
 #[test]

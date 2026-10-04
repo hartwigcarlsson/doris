@@ -205,6 +205,9 @@ fn MonthRow(
     let submitted = summary.status() == ppb::AgiStatus::Submitted;
     let expanded = RwSignal::new(false);
     let detail = RwSignal::new(None::<ppb::AgiMonth>);
+    // The fingerprint of the last file downloaded here; marking sends it, or
+    // else that of the month shown, so only what the user saw is marked.
+    let downloaded = RwSignal::new(None::<String>);
     let confirming = RwSignal::new(false);
     let label = period_label(&summary.period);
 
@@ -228,6 +231,7 @@ fn MonthRow(
                 Ok(file) => {
                     let file = file.into_inner();
                     save_as(&file.file_name, "application/xml", &file.xml);
+                    downloaded.set(Some(file.fingerprint));
                 }
                 Err(status) => error.set(Some(describe(&status))),
             }
@@ -235,7 +239,16 @@ fn MonthRow(
     };
     let submit = move |_| {
         error.set(None);
-        let request = reference.get_value();
+        let month = reference.get_value();
+        let fingerprint = downloaded
+            .get_untracked()
+            .or_else(|| detail.get_untracked().map(|m| m.fingerprint))
+            .unwrap_or_default();
+        let request = ppb::MarkAgiSubmittedRequest {
+            company_id: month.company_id,
+            period: month.period,
+            fingerprint,
+        };
         spawn_local(async move {
             match payroll_api().mark_agi_submitted(request).await {
                 Ok(_) => changed.run(()),

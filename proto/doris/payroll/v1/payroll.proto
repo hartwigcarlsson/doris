@@ -40,7 +40,7 @@ service PayrollService {
   // The file for Skatteverket's e-tjänst; contains personnummer.
   rpc ExportAgiFile(AgiMonthRef) returns (AgiFile);
   // After the file is uploaded: records what was submitted.
-  rpc MarkAgiSubmitted(AgiMonthRef) returns (MarkAgiSubmittedResponse);
+  rpc MarkAgiSubmitted(MarkAgiSubmittedRequest) returns (MarkAgiSubmittedResponse);
 }
 
 message Employee {
@@ -250,9 +250,16 @@ message AgiMonth {
   AgiMonthSummary summary = 1;
   repeated AgiLine lines = 2; // removed ones last
   int64 booked_fees = 3;      // öre on 2731, for comparison
+  string fingerprint = 4;     // what MarkAgiSubmitted must be sent
 }
 message AgiFile {
   string file_name = 1;
   string xml = 2;
+  string fingerprint = 3; // the month in the file, for MarkAgiSubmitted
+}
+message MarkAgiSubmittedRequest {
+  string company_id = 1;
+  string period = 2;      // ÅÅÅÅMM
+  string fingerprint = 3; // of the file uploaded (or the month shown)
 }
 message MarkAgiSubmittedResponse {}

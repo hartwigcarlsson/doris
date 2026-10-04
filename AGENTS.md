@@ -228,7 +228,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - `PayrollService` also has `GetAgiContact`, `SetAgiContact`,
   `ListAgiMonths`, `GetAgiMonth`, `ExportAgiFile` and
   `MarkAgiSubmitted`. Codes: `invalid_period`, `invalid_agi_contact`,
-  `agi_contact_missing`, `agi_period_empty` and `agi_unchanged`. The AGI
+  `agi_contact_missing`, `agi_period_empty`, `agi_unchanged` and
+  `agi_file_outdated` (marking sends the fingerprint, a hex SHA-256 of
+  what would be recorded, of the file downloaded or the month shown). The AGI
   file holds personnummer by design; it goes only to a member and is
   never logged.
 - A personnummer is personal data: never log it and never send it to

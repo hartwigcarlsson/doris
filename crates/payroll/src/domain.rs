@@ -70,6 +70,9 @@ pub enum DomainError {
     AgiPeriodEmpty,
     #[error("the month is submitted and unchanged")]
     AgiUnchanged,
+    /// The month changed after the user got the file (or saw the month).
+    #[error("the AGI file is outdated")]
+    AgiFileOutdated,
 }
 
 /// A personnummer or samordningsnummer, as twelve digits.

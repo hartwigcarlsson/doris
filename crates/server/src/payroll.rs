@@ -368,19 +368,25 @@ impl PayrollService for PayrollApi {
     ) -> Result<Response<pb::AgiFile>, Status> {
         let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
         let period = period(&request.get_ref().period)?;
-        let (file_name, xml) = doris_payroll::agi_file(&self.pool, company, user, period, now())
-            .await
-            .map_err(status)?;
-        Ok(Response::new(pb::AgiFile { file_name, xml }))
+        let (file_name, xml, fingerprint) =
+            doris_payroll::agi_file(&self.pool, company, user, period, now())
+                .await
+                .map_err(status)?;
+        Ok(Response::new(pb::AgiFile {
+            file_name,
+            xml,
+            fingerprint,
+        }))
     }
 
     async fn mark_agi_submitted(
         &self,
-        request: Request<pb::AgiMonthRef>,
+        request: Request<pb::MarkAgiSubmittedRequest>,
     ) -> Result<Response<pb::MarkAgiSubmittedResponse>, Status> {
         let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
         let period = period(&request.get_ref().period)?;
-        doris_payroll::submit_agi_month(&self.pool, company, user, period)
+        let fingerprint = &request.get_ref().fingerprint;
+        doris_payroll::submit_agi_month(&self.pool, company, user, period, fingerprint)
             .await
             .map_err(status)?;
         Ok(Response::new(pb::MarkAgiSubmittedResponse {}))
@@ -561,6 +567,7 @@ fn domain_status(err: DomainError) -> Status {
         AgiContactMissing => Status::failed_precondition("agi_contact_missing"),
         AgiPeriodEmpty => Status::failed_precondition("agi_period_empty"),
         AgiUnchanged => Status::failed_precondition("agi_unchanged"),
+        AgiFileOutdated => Status::failed_precondition("agi_file_outdated"),
         DuplicateEmployee => Status::failed_precondition("duplicate_employee"),
         EmployeeInactive => Status::failed_precondition("employee_inactive"),
         PayrollRunNotOpen => Status::failed_precondition("payroll_run_not_open"),
@@ -611,6 +618,7 @@ fn summary_message(s: AgiMonthSummary) -> pb::AgiMonthSummary {
 }
 
 fn month_message(month: AgiMonth, employees: &[Employee]) -> pb::AgiMonth {
+    let fingerprint = month.fingerprint();
     let line = |l: &doris_payroll::agi::AgiLine, change: pb::AgiChange| {
         let e = employees.iter().find(|e| e.id == l.employee_id);
         pb::AgiLine {
@@ -652,5 +660,6 @@ fn month_message(month: AgiMonth, employees: &[Employee]) -> pb::AgiMonth {
         }),
         lines,
         booked_fees: month.booked_fees,
+        fingerprint,
     }
 }

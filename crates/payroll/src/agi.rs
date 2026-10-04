@@ -162,6 +162,17 @@ pub struct AgiMonth {
     pub status: AgiStatus,
 }
 
+impl AgiMonth {
+    /// Hex SHA-256 of what marking the month would record (its lines,
+    /// fee_sum and tax_sum), so only a month the user saw can be marked.
+    pub fn fingerprint(&self) -> String {
+        let lines: Vec<AgiLine> = self.lines.iter().map(|(l, _)| *l).collect();
+        let json =
+            serde_json::to_vec(&(lines, self.fee_sum, self.tax_sum)).expect("AGI lines serialize");
+        doris_ledger::sha256_hex(&json)
+    }
+}
+
 /// Gross, tax and fee in öre per employee, from the locked lines of the
 /// booked runs paid in `period`.
 fn booked_amounts(payroll: &Payroll, period: Period) -> BTreeMap<Uuid, (i64, i64, i64)> {
@@ -289,8 +300,13 @@ pub fn agi_periods(payroll: &Payroll) -> Vec<Period> {
 }
 
 /// Records what the month declares now, after the user has uploaded the
-/// file. A month emptied by backed-out runs may be submitted (as removals).
-pub fn submit_agi_month(payroll: &Payroll, period: Period) -> Result<PayrollEvent, DomainError> {
+/// file whose `fingerprint` is given. A month emptied by backed-out runs
+/// may be submitted (as removals).
+pub fn submit_agi_month(
+    payroll: &Payroll,
+    period: Period,
+    fingerprint: &str,
+) -> Result<PayrollEvent, DomainError> {
     let month = agi_month(payroll, period);
     if month.lines.is_empty() && !payroll.agi_submissions.contains_key(&period) {
         return Err(DomainError::AgiPeriodEmpty);
@@ -300,6 +316,9 @@ pub fn submit_agi_month(payroll: &Payroll, period: Period) -> Result<PayrollEven
     }
     if payroll.agi_contact.is_none() {
         return Err(DomainError::AgiContactMissing);
+    }
+    if month.fingerprint() != fingerprint {
+        return Err(DomainError::AgiFileOutdated);
     }
     Ok(PayrollEvent::AgiMonthSubmitted {
         period,

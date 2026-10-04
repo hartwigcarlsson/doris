@@ -154,8 +154,8 @@ Projektionerna läggs till i `rebuild_projections`. Läsningarna bygger `AgiMont
 - `set_agi_contact(pool, company_id, actor, name, phone, email)`
 - `agi_months(pool, company_id, actor) -> Result<Vec<AgiMonthSummary>>`, för alla perioder med bokförda körningar eller en inlämning, nyast först
 - `agi_month(pool, company_id, actor, period) -> Result<AgiMonth>`
-- `agi_file(pool, company_id, actor, period, created) -> Result<(String /*name*/, String /*xml*/)>`, som läser företagets organisationsnummer och juridiska form från `doris_company`
-- `submit_agi_month(pool, company_id, actor, period)`, som kör beslutet och lägger till händelsen i en `BEGIN IMMEDIATE`
+- `agi_file(pool, company_id, actor, period, created) -> Result<(String /*name*/, String /*xml*/, String /*fingerprint*/)>`, som läser företagets organisationsnummer och juridiska form från `doris_company`
+- `submit_agi_month(pool, company_id, actor, period, fingerprint)`, som kör beslutet och lägger till händelsen i en `BEGIN IMMEDIATE`
 
 ## API (`payroll.proto`, `PayrollService`)
 ```proto
@@ -164,7 +164,7 @@ rpc SetAgiContact(SetAgiContactRequest) returns (SetAgiContactResponse);
 rpc ListAgiMonths(ListAgiMonthsRequest) returns (ListAgiMonthsResponse);
 rpc GetAgiMonth(AgiMonthRef) returns (AgiMonth);
 rpc ExportAgiFile(AgiMonthRef) returns (AgiFile);
-rpc MarkAgiSubmitted(AgiMonthRef) returns (MarkAgiSubmittedResponse);
+rpc MarkAgiSubmitted(MarkAgiSubmittedRequest) returns (MarkAgiSubmittedResponse);
 
 message AgiContact { string name = 1; string phone = 2; string email = 3; }
 message GetAgiContactRequest { string company_id = 1; }
@@ -207,13 +207,17 @@ message AgiMonth {
   AgiMonthSummary summary = 1;
   repeated AgiLine lines = 2;          // incl. removed ones
   int64 booked_fees = 3;               // öre on 2731 for comparison
+  string fingerprint = 4;
 }
-message AgiFile { string file_name = 1; string xml = 2; }
+message AgiFile { string file_name = 1; string xml = 2; string fingerprint = 3; }
+message MarkAgiSubmittedRequest { string company_id = 1; string period = 2; string fingerprint = 3; }
 message MarkAgiSubmittedResponse {}
 ```
 Nya felkoder, mappade i `crates/server/src/payroll.rs`:
 - `invalid_period` och `invalid_agi_contact` mappas till InvalidArgument.
-- `agi_contact_missing`, `agi_period_empty` och `agi_unchanged` mappas till FailedPrecondition.
+- `agi_contact_missing`, `agi_period_empty`, `agi_unchanged` och `agi_file_outdated` mappas till FailedPrecondition.
+
+`fingerprint` är hex SHA-256 över det som `AgiMonthSubmitted` skulle spara (raderna, fee_sum och tax_sum). `MarkAgiSubmitted` tar fingeravtrycket från den senast nedladdade filen, annars från månaden som visas; stämmer det inte (eller är tomt) blir det `agi_file_outdated`, så bara det användaren har sett markeras.
 
 Personnummer loggas aldrig. Filen innehåller personnummer, och det är avsikten, men den skickas bara till den inloggade medlemmen.
 
@@ -237,6 +241,7 @@ Menylänken "Arbetsgivardeklaration" ligger i bokföringsraden, efter "Anställd
 - `agi_contact_missing`: "Spara en kontaktperson först."
 - `agi_period_empty`: "Det finns inga bokförda löner den månaden."
 - `agi_unchanged`: "Månaden är redan inlämnad och har inte ändrats."
+- `agi_file_outdated`: "Filen är inaktuell, ladda ner den igen."
 
 ## Tester
 Varje beteende utvecklas med TDD: rött, grönt, refaktorering och commit.

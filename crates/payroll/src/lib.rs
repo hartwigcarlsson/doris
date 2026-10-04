@@ -538,15 +538,16 @@ pub async fn agi_month(
     Ok(agi::agi_month(&payroll, period))
 }
 
-/// The month's file for Skatteverket: its name and the XML. It carries
-/// personnummer, which is its purpose; it goes only to a member.
+/// The month's file for Skatteverket: its name, the XML and the month's
+/// fingerprint (to mark it submitted). It carries personnummer, which is
+/// its purpose; it goes only to a member.
 pub async fn agi_file(
     pool: &SqlitePool,
     company_id: Uuid,
     actor: Uuid,
     period: Period,
     created: jiff::civil::DateTime,
-) -> Result<(String, String)> {
+) -> Result<(String, String, String)> {
     let mut conn = pool.acquire().await?;
     let (company, payroll, _) = load(&mut conn, company_id, actor).await?;
     let contact = payroll
@@ -565,7 +566,7 @@ pub async fn agi_file(
         .map(|e| (e.id, e.personal_identity_number.as_str().to_owned()))
         .collect();
     let xml = agi::agi_xml(&month, &id, &contact, &personal_ids, created);
-    Ok((format!("AGI_{id}_{period}.xml"), xml))
+    Ok((format!("AGI_{id}_{period}.xml"), xml, month.fingerprint()))
 }
 
 pub async fn submit_agi_month(
@@ -573,9 +574,10 @@ pub async fn submit_agi_month(
     company_id: Uuid,
     actor: Uuid,
     period: Period,
+    fingerprint: &str,
 ) -> Result<()> {
     change(pool, company_id, actor, |payroll| {
-        Ok(vec![agi::submit_agi_month(payroll, period)?])
+        Ok(vec![agi::submit_agi_month(payroll, period, fingerprint)?])
     })
     .await
 }

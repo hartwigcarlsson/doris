@@ -140,6 +140,7 @@ fn message(code: &str) -> &'static str {
         "agi_contact_missing" => "Spara en kontaktperson först.",
         "agi_period_empty" => "Det finns inga bokförda löner den månaden.",
         "agi_unchanged" => "Månaden är redan inlämnad och har inte ändrats.",
+        "agi_file_outdated" => "Filen är inaktuell, ladda ner den igen.",
         _ => "Något gick fel. Försök igen.",
     }
 }
@@ -164,6 +165,10 @@ mod tests {
         assert_eq!(
             message("agi_unchanged"),
             "Månaden är redan inlämnad och har inte ändrats."
+        );
+        assert_eq!(
+            message("agi_file_outdated"),
+            "Filen är inaktuell, ladda ner den igen."
         );
     }
 

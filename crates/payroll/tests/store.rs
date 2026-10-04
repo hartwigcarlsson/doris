@@ -1086,7 +1086,7 @@ async fn a_month_is_declared_and_changes_are_noticed() {
     )
     .await
     .unwrap();
-    let (name, xml) = agi_file(
+    let (name, xml, fingerprint) = agi_file(
         &pool,
         id,
         anna,
@@ -1101,22 +1101,29 @@ async fn a_month_is_declared_and_changes_are_noticed() {
     ));
     assert!(xml.contains(r#"<agd:SummaArbAvgSlf faltkod="487">10997</agd:SummaArbAvgSlf>"#));
 
-    submit_agi_month(&pool, id, anna, oct25()).await.unwrap();
+    submit_agi_month(&pool, id, anna, oct25(), &fingerprint)
+        .await
+        .unwrap();
     let months = agi_months(&pool, id, anna).await.unwrap();
     assert_eq!(months[0].status, AgiStatus::Submitted);
     assert!(months[0].submitted_at.is_some());
     assert!(matches!(
-        submit_agi_month(&pool, id, anna, oct25()).await,
+        submit_agi_month(&pool, id, anna, oct25(), &fingerprint).await,
         Err(Error::Domain(DomainError::AgiUnchanged))
     ));
 
     unbook_payroll_run(&pool, id, anna, run, d("2025-10-27"))
         .await
         .unwrap();
+    // The run was backed out after the file was made: that file is outdated.
+    assert!(matches!(
+        submit_agi_month(&pool, id, anna, oct25(), &fingerprint).await,
+        Err(Error::Domain(DomainError::AgiFileOutdated))
+    ));
     let month = agi_month(&pool, id, anna, oct25()).await.unwrap();
     assert_eq!(month.status, AgiStatus::Changed);
     assert_eq!(month.removed.len(), 1);
-    let (_, xml) = agi_file(
+    let (_, xml, _) = agi_file(
         &pool,
         id,
         anna,
@@ -1161,7 +1168,10 @@ async fn agi_projections_rebuild_and_record_who_submitted() {
     set_agi_contact(&pool, id, anna, "Anna", "070", "anna@example.se")
         .await
         .unwrap();
-    submit_agi_month(&pool, id, anna, oct25()).await.unwrap();
+    let month = agi_month(&pool, id, anna, oct25()).await.unwrap();
+    submit_agi_month(&pool, id, anna, oct25(), &month.fingerprint())
+        .await
+        .unwrap();
     let contacts = "SELECT company_id || name || phone || email FROM agi_contacts";
     let submissions =
         "SELECT period || ':' || submitted_by || ':' || lines || ':' || fee_sum || ':' || tax_sum
@@ -1198,7 +1208,7 @@ async fn strangers_see_no_agi() {
         Err(Error::NotFound)
     ));
     assert!(matches!(
-        submit_agi_month(&pool, id, eve, oct25()).await,
+        submit_agi_month(&pool, id, eve, oct25(), "").await,
         Err(Error::NotFound)
     ));
 }

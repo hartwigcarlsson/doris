@@ -651,6 +651,14 @@ fn agi_ref(company_id: &str, period: &str) -> pb::AgiMonthRef {
     }
 }
 
+fn mark(company_id: &str, period: &str, fingerprint: &str) -> pb::MarkAgiSubmittedRequest {
+    pb::MarkAgiSubmittedRequest {
+        company_id: company_id.into(),
+        period: period.into(),
+        fingerprint: fingerprint.into(),
+    }
+}
+
 #[tokio::test]
 async fn a_month_is_declared_and_corrected() {
     let server = TestServer::start().await;
@@ -741,11 +749,18 @@ async fn a_month_is_declared_and_corrected() {
     );
     assert!(file.xml.contains("198001011231"));
 
-    api.mark_agi_submitted(authed(agi_ref(&id, "202601"), &anna))
+    let shown = api
+        .get_agi_month(authed(agi_ref(&id, "202601"), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(shown.fingerprint, file.fingerprint);
+    assert_eq!(file.fingerprint.len(), 64);
+    api.mark_agi_submitted(authed(mark(&id, "202601", &file.fingerprint), &anna))
         .await
         .unwrap();
     let again = api
-        .mark_agi_submitted(authed(agi_ref(&id, "202601"), &anna))
+        .mark_agi_submitted(authed(mark(&id, "202601", &file.fingerprint), &anna))
         .await
         .unwrap_err();
     assert_eq!(
@@ -756,6 +771,14 @@ async fn a_month_is_declared_and_corrected() {
     api.unbook_payroll_run(authed(run_ref(&id, &run), &anna))
         .await
         .unwrap();
+    let outdated = api
+        .mark_agi_submitted(authed(mark(&id, "202601", &file.fingerprint), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(outdated),
+        (Code::FailedPrecondition, "agi_file_outdated".into())
+    );
     let month = api
         .get_agi_month(authed(agi_ref(&id, "202601"), &anna))
         .await
@@ -810,7 +833,7 @@ async fn agi_input_is_checked() {
         (Code::InvalidArgument, "invalid_agi_contact".into())
     );
     let empty = api
-        .mark_agi_submitted(authed(agi_ref(&id, "202601"), &anna))
+        .mark_agi_submitted(authed(mark(&id, "202601", ""), &anna))
         .await
         .unwrap_err();
     assert_eq!(
