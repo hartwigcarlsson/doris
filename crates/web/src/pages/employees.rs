@@ -225,9 +225,14 @@ pub fn Employees() -> impl IntoView {
                     <Select label="Skatt" id="tax_kind" value=tax_kind>
                         <option class=SELECT_OPTION value="table">"Skattetabell"</option>
                         <option class=SELECT_OPTION value="percent">"Fast procent"</option>
-                        <Show when=move || edited_tax.get().is_none()>
-                            <option class=SELECT_OPTION value="none">"Ingen (skatten skrivs in för hand)"</option>
-                        </Show>
+                        <option
+                            class=SELECT_OPTION
+                            value="none"
+                            disabled=move || edited_tax.get().is_some()
+                            hidden=move || edited_tax.get().is_some()
+                        >
+                            "Ingen (skatten skrivs in för hand)"
+                        </option>
                     </Select>
                     <Show when=move || tax_kind.get() == "table">
                         <Select label="Tabell" id="tax_table" value=tax_table>
