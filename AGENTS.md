@@ -109,6 +109,16 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   replacing any earlier copy. Every locked line records its `tax_basis`
   (table/year/column, percent or manual); lines from before have none
   and read as manual.
+- AGI (`doris_payroll::agi`): a period ÅÅÅÅMM declares the booked runs
+  paid in it, one individuppgift per employee (whole kronor, rounded down
+  on the sum), with FK487 computed as Skatteverket does (fee rates of the
+  period, youth cap per individuppgift, rounded down; it may differ a few
+  kronor from 2731). Doris writes the file (schema
+  arbetsgivardeklaration_1.1) and the user uploads it; marking a month
+  submitted appends `AgiMonthSubmitted` with what was declared. A month
+  that changes afterwards shows as Ändrad and its next file carries the
+  changed IUs, a Borttag for each removed one and a new HU.
+  Specification numbers are per employee and never change.
 
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.
@@ -214,6 +224,12 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - The server's outbound HTTP also fetches tax tables from Skatteverket
   (`crates/server/src/skatteverket.rs`, no credentials). It never holds
   the SQLite write lock while fetching.
+- `PayrollService` also has `GetAgiContact`, `SetAgiContact`,
+  `ListAgiMonths`, `GetAgiMonth`, `ExportAgiFile` and
+  `MarkAgiSubmitted`. Codes: `invalid_period`, `invalid_agi_contact`,
+  `agi_contact_missing`, `agi_period_empty` and `agi_unchanged`. The AGI
+  file holds personnummer by design; it goes only to a member and is
+  never logged.
 - A personnummer is personal data: never log it and never send it to
   an external service. It is stored as twelve digits and never changed
   on an employee.
