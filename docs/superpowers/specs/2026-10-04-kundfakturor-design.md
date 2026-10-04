@@ -22,18 +22,14 @@ Modellen speglar leverantörsfakturorna (`docs/superpowers/specs/2026-10-04-leve
 
 ### `crates/invoicing/src/invoices.rs` (ny, ren)
 - `Status { Unpaid, Paid { date, account, voucher }, Cancelled }` flyttas hit från `supplier_invoices.rs` med samma serde-form (`#[serde(tag = "status", rename_all = "snake_case")]`). Sparade leverantörsfakturor läses alltså oförändrat.
-- `trait InvoiceKind { const NOT_FOUND, PAID, NOT_PAID, CANCELLED: DomainError; }` har en implementation per riktning.
-- `unpaid::<K>(status: Option<&Status>) -> Result<(), DomainError>` och `paid::<K>(…) -> Result<VoucherRef, DomainError>`: övergångsreglerna, skrivna en gång.
+- `trait InvoiceKind { const PAID, NOT_PAID, CANCELLED: DomainError; }` har en implementation per riktning.
+- `check_unpaid::<K>(&Status) -> Result<(), DomainError>` och `check_paid::<K>(&Status) -> Result<VoucherRef, DomainError>`: övergångsreglerna, skrivna en gång. "Finns inte" hanterar varje riktning själv med sitt eget fel.
 - `Side { Debit, Credit }` och `posting(lines: &[InvoiceLine], vat: &[(AccountNumber, i64)], side: Side) -> Vec<VoucherLine>`: raderna och momsposterna på samma sida.
 - `correction_date(fiscal_year_end, today)` och `voucher_text(String) -> String` (kapar till 200 tecken) flyttas hit.
 
 ### `vat.rs`
 - `by_rate(lines) -> Vec<(VatRate, i64)>`: momsen per sats, i fallande sats och bara satser med moms > 0. `computed` blir summan av den.
-- Kontrollen av otillåtna konton flyttas ut ur `InvoiceLine::new`. Raden kontrollerar bara 1000–8999, belopp och sats. Varje riktning spärrar sina egna konton:
-  - leverantör: 2440 och 2600–2699
-  - kund: 1510 och 2600–2699
-
-  Båda ger `InvalidInvoiceAccount`.
+- `InvoiceLine::new` spärrar 1510, 2440 och 2600–2699 i båda riktningarna, med `InvalidInvoiceAccount`. Ingen av reskontrorna hör hemma på en fakturarad.
 
 ### `lib.rs`
 `load`, `link_all` och `correct` (som följer handrättelser) används av båda riktningarna. Leverantörsfakturornas befintliga tester ska gå igenom **oförändrade** efter utbrytningen.
@@ -46,7 +42,7 @@ Modellen speglar leverantörsfakturorna (`docs/superpowers/specs/2026-10-04-leve
 - `CustomerSnapshot { number, name, org_nr, vat_number, address, email }` byggs från `Customer` vid registreringen. En inaktiv kund ger `CustomerInactive`, och en okänd ger `CustomerNotFound`.
 - `NewCustomerInvoice<'a> { invoice_number, invoice_date, due_date, reference, lines }` har inget momsfält.
 - `CustomerRegistration { customer, invoice_number, invoice_date, due_date, reference, lines, vat: Vec<(VatRate, i64)>, total }`:
-  - `CustomerRegistration::new` kontrollerar fakturanumret, förfallodatum (`InvalidDueDate`), referensen, raderna (1–50) och de otillåtna kontona.
+  - `CustomerRegistration::new` kontrollerar fakturanumret, förfallodatum (`InvalidDueDate`), referensen och raderna (1–50). De otillåtna kontona stoppas redan i `InvoiceLine::new`.
   - `total` är netto plus summan av momsen.
 - `next_invoice_number(existing: impl Iterator<Item = &InvoiceNumber>) -> String`: högsta numret som bara består av siffror + 1, annars `"1"`. Ledande nollor räknas bort, men ett förslag efter `"0017"` blir `"18"`.
 
