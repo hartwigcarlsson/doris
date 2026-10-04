@@ -150,6 +150,8 @@ impl Registration {
     }
 }
 
+// The registration carries the whole invoice; events are short-lived.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SupplierInvoiceEvent {
