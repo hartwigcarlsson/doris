@@ -49,6 +49,14 @@ fn a_contact_follows_skatteverkets_schema() {
     assert!(refused("", "070", "a@b.se"), "no name");
     assert!(refused("Anna", "   ", "a@b.se"), "blank phone");
     assert!(refused("Anna <AB>", "070", "a@b.se"), "angle brackets");
+    assert!(
+        refused("Anna\u{1}", "070", "a@b.se"),
+        "control character in name"
+    );
+    assert!(
+        refused("Anna", "070\t12", "a@b.se"),
+        "control character in phone"
+    );
     for email in [
         "",
         "a@b",

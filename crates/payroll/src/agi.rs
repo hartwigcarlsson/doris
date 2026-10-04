@@ -63,9 +63,13 @@ pub struct AgiContact {
 impl AgiContact {
     pub fn parse(name: &str, phone: &str, email: &str) -> Result<Self, DomainError> {
         let (name, phone, email) = (name.trim(), phone.trim(), email.trim());
-        // TEXT50/TEXT20: not empty, not only whitespace (trimmed), no < or >.
-        let text =
-            |s: &str, max: usize| (1..=max).contains(&s.chars().count()) && !s.contains(['<', '>']);
+        // TEXT50/TEXT20: not empty, not only whitespace (trimmed), no < or >,
+        // and no control characters (XML 1.0 forbids them even escaped).
+        let text = |s: &str, max: usize| {
+            (1..=max).contains(&s.chars().count())
+                && !s.contains(['<', '>'])
+                && !s.contains(char::is_control)
+        };
         if text(name, 50) && text(phone, 20) && is_email(email) {
             Ok(Self {
                 name: name.to_owned(),
