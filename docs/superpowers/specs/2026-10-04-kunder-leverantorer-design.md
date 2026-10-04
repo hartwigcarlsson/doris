@@ -33,7 +33,7 @@ Dessa delas av båda registren:
 
 - `PartyName::parse(raw)`: trimmas, 1–200 tecken, annars `InvalidName`.
 - `OrgNr` och `Address`: återanvänds från `doris_company::domain`. Felen `InvalidOrgNr` och `InvalidAddress` mappas om till invoicings `DomainError`. Org.nr är valfritt (`Option<OrgNr>`), så att utländska kunder fungerar. Personnummer accepteras.
-- `Email::parse(raw)`: valfri, trimmas. Högst 254 tecken, exakt ett `@` med minst ett tecken på varje sida och inga blanksteg, annars `InvalidEmail`. `Debug` är maskad.
+- `Email::parse(raw)`: valfri. Samma regel som `doris_identity::domain::Email`: trimmas och görs gemen, högst 254 tecken, exakt ett `@`, något före det, en domän med punkt (inte först eller sist) och inga blanksteg, annars `InvalidEmail`. Regeln kopieras, eftersom invoicing inte ska bero på identity och dess webauthn-beroenden. `Debug` är maskad.
 - `VatNumber::parse(raw)`: valfri. Blanksteg tas bort och bokstäverna görs versala. Numret ska vara två bokstäver följda av 2–12 tecken A–Z/0–9. Med prefixet `SE` måste det vara `SE` + tio siffror som klarar `OrgNr::parse` + `01`. Annars blir det `InvalidVatNumber`.
 
 Bara för kunder:
@@ -88,7 +88,7 @@ pub enum CustomerEvent {
 `Customers { parties: BTreeMap<u32, Customer> }`, där `Customer { number, details, active }`. `Suppliers` ser likadant ut.
 
 - `add_customer(state, details)` ger `CustomerAdded` med `number = max(number) + 1`, eller 1 i ett tomt register.
-- `update_customer(state, number, details)` ger `CustomerUpdated`. Ett okänt nummer ger `CustomerNotFound`.
+- `update_customer(state, number, details)` ger `CustomerUpdated`. Samma uppgifter som förut ger inga event (no-op), som när man byter till samma kontonamn. Ett okänt nummer ger `CustomerNotFound`.
 - `set_customer_active(state, number, active)` ger `CustomerDeactivated` eller `CustomerReactivated`. Om posten redan har det läget blir det inga event (no-op). Ett okänt nummer ger `CustomerNotFound`.
 
 Leverantörer fungerar likadant och får `SupplierNotFound` för okända nummer.
@@ -101,38 +101,15 @@ Leverantörer fungerar likadant och får `SupplierNotFound` för okända nummer.
 ### Migration `migrations/0009_invoicing.sql`
 ```sql
 CREATE TABLE customers (
-    company_id    TEXT    NOT NULL REFERENCES companies(company_id),
-    number        INTEGER NOT NULL,
-    name          TEXT    NOT NULL,
-    org_nr        TEXT,
-    vat_number    TEXT,
-    street        TEXT,
-    postal_code   TEXT,
-    city          TEXT,
-    email         TEXT,
-    payment_terms INTEGER NOT NULL,
-    active        INTEGER NOT NULL,
+    company_id TEXT    NOT NULL REFERENCES companies(company_id),
+    number     INTEGER NOT NULL,
+    details    TEXT    NOT NULL,  -- the event's details as JSON
+    active     INTEGER NOT NULL,
     PRIMARY KEY (company_id, number)
 );
-
-CREATE TABLE suppliers (
-    company_id  TEXT    NOT NULL REFERENCES companies(company_id),
-    number      INTEGER NOT NULL,
-    name        TEXT    NOT NULL,
-    org_nr      TEXT,
-    vat_number  TEXT,
-    street      TEXT,
-    postal_code TEXT,
-    city        TEXT,
-    email       TEXT,
-    bankgiro    TEXT,
-    plusgiro    TEXT,
-    iban        TEXT,
-    bic         TEXT,
-    active      INTEGER NOT NULL,
-    PRIMARY KEY (company_id, number)
-);
+-- suppliers: same columns.
 ```
+Uppgifterna lagras som JSON, i samma form som i eventet, i stället för en kolumn per fält. Det ger en enda kod för båda tabellerna, och SQLites JSON-funktioner räcker om en fråga senare behöver ett enskilt fält.
 
 Båda projektionerna går att bygga om från `read_all` (`rebuild_projections` i crate:n), och ett test kontrollerar att ombyggnaden ger samma rader.
 
@@ -216,9 +193,9 @@ Ett ogiltigt `company_id` (ingen UUID) ger `company_not_found`, som i ledger.
 ## Frontend (`crates/web`)
 - `src/api.rs`: `invoicing_api()`, med cookies som de andra klienterna.
 - `src/pages/customers.rs` på `/customers` och `src/pages/suppliers.rs` på `/suppliers`, med `accounts.rs` som förebild:
-  - En tabell med nummer, namn, org.nr, ort och status ("Aktiv"/"Inaktiv"). Raderna har knapparna "Redigera" och "Inaktivera"/"Aktivera".
+  - En tabell med nummer, namn, org.nr, ort (för leverantörer: bankgiro) och status ("Aktiv"/"Inaktiv"). Raderna har knapparna "Redigera" och "Inaktivera"/"Aktivera".
   - Knappen "Ny kund" respektive "Ny leverantör" öppnar formuläret. Samma formulär används för att redigera och är då förifyllt.
-  - Formuläret har `novalidate`. Felen visas på svenska vid rätt fält via `errors.rs`.
+  - Formuläret har `novalidate`. Felet visas på svenska överst på sidan via `errors.rs` (`ErrorAlert`), som på övriga sidor.
   - Kundformuläret: Namn, Org.nr/personnr, Momsreg.nr, Gatuadress, Postnummer, Ort, E-post och Betalningsvillkor (dagar), med 30 förifyllt.
   - Leverantörsformuläret: Namn, Org.nr, Momsreg.nr, Gatuadress, Postnummer, Ort, E-post, Bankgiro, Plusgiro, IBAN och BIC.
 - Sidorna arbetar mot det aktiva företaget från `Companies`-kontexten och skickar dess `company_id` med varje anrop.
