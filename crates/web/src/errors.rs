@@ -97,6 +97,25 @@ fn message(code: &str) -> &'static str {
         "popup_blocked" => {
             "Webbläsaren blockerade det nya fönstret. Tillåt popup-fönster för Doris och försök igen."
         }
+        "invalid_personal_identity_number" => "Personnumret är ogiltigt (ÅÅÅÅMMDD-NNNN).",
+        "invalid_employee_name" => "Ange ett namn (högst 100 tecken).",
+        "invalid_salary" => "Lönen måste vara större än noll.",
+        "invalid_salary_account" => "Välj ett lönekonto.",
+        "invalid_tax" => "Skatten får inte vara negativ eller större än bruttolönen.",
+        "empty_payroll_run" => "Välj minst en anställd.",
+        "duplicate_payroll_run_line" => "Samma anställd finns två gånger i körningen.",
+        "duplicate_employee" => "Det finns redan en anställd med det personnumret.",
+        "employee_inactive" => "Den anställda är inaktiverad.",
+        "employee_not_found" => "Den anställda hittades inte.",
+        "payroll_run_not_found" => "Lönekörningen hittades inte.",
+        "payroll_run_not_open" => "Lönekörningen är färdigställd. Öppna den för att ändra.",
+        "payroll_run_not_finalized" => "Lönekörningen är inte färdigställd.",
+        "payroll_run_booked" => "Lönekörningen är bokförd. Backa bokföringen först.",
+        "payroll_run_not_booked" => "Lönekörningen är inte bokförd.",
+        "payroll_run_not_due" => "Lönekörningen kan inte bokföras före utbetalningsdagen.",
+        "payroll_run_outdated" => {
+            "Avgifterna har ändrats sedan körningen färdigställdes. Öppna och färdigställ den igen."
+        }
         _ => "Något gick fel. Försök igen.",
     }
 }
@@ -198,6 +217,35 @@ mod tests {
         assert_eq!(
             message("unsupported_attachment_type"),
             "Underlaget måste vara en PDF, JPEG eller PNG."
+        );
+    }
+
+    #[test]
+    fn payroll_codes_have_swedish_messages() {
+        for code in [
+            "invalid_personal_identity_number",
+            "invalid_employee_name",
+            "invalid_salary",
+            "invalid_salary_account",
+            "invalid_tax",
+            "empty_payroll_run",
+            "duplicate_payroll_run_line",
+            "duplicate_employee",
+            "employee_inactive",
+            "employee_not_found",
+            "payroll_run_not_found",
+            "payroll_run_not_open",
+            "payroll_run_not_finalized",
+            "payroll_run_booked",
+            "payroll_run_not_booked",
+            "payroll_run_not_due",
+            "payroll_run_outdated",
+        ] {
+            assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
+        }
+        assert_eq!(
+            message("payroll_run_not_due"),
+            "Lönekörningen kan inte bokföras före utbetalningsdagen."
         );
     }
 }

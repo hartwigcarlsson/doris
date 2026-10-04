@@ -3,8 +3,8 @@
 use crate::active_company::{ActiveCompanySelect, Companies};
 use crate::api::{api, pb};
 use crate::pages::{
-    AccountLedger, Accounts, Companies, CompanyPage, FiscalYears, Home, Invitations, Login,
-    NewCompany, NewVoucher, OpeningBalances, Passkeys, Register, TrialBalance, Vouchers,
+    AccountLedger, Accounts, Companies, CompanyPage, Employees, FiscalYears, Home, Invitations,
+    Login, NewCompany, NewVoucher, OpeningBalances, Passkeys, Register, TrialBalance, Vouchers,
 };
 use crate::ui::{Button, Variant};
 use leptos::prelude::*;
@@ -78,6 +78,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/trial-balance/:account") view=|| view! { <SignedIn><AccountLedger /></SignedIn> } />
                         <Route path=path!("/fiscal-years") view=|| view! { <SignedIn><FiscalYears /></SignedIn> } />
                         <Route path=path!("/opening-balances") view=|| view! { <SignedIn><OpeningBalances /></SignedIn> } />
+                        <Route path=path!("/employees") view=|| view! { <SignedIn><Employees /></SignedIn> } />
                         <Route path=path!("/settings/passkeys") view=|| view! { <SignedIn><Passkeys /></SignedIn> } />
                         <Route path=path!("/admin/invitations") view=|| view! { <SignedIn admin=true><Invitations /></SignedIn> } />
                     </Routes>
@@ -129,6 +130,7 @@ fn Header() -> impl IntoView {
                         <A href="/trial-balance" attr:class="text-muted-foreground hover:text-foreground">"Saldobalans"</A>
                         <A href="/fiscal-years" attr:class="text-muted-foreground hover:text-foreground">"Räkenskapsår"</A>
                         <A href="/accounts" attr:class="text-muted-foreground hover:text-foreground">"Kontoplan"</A>
+                        <A href="/employees" attr:class="text-muted-foreground hover:text-foreground">"Anställda"</A>
                     </Show>
                     <A href="/companies" attr:class="text-muted-foreground hover:text-foreground">"Företag"</A>
                     <A href="/settings/passkeys" attr:class="text-muted-foreground hover:text-foreground">"Passkeys"</A>
