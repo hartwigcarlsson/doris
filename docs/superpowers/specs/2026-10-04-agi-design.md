@@ -126,7 +126,7 @@ AgiMonthSubmitted {
 Texten escapas för `&`, `<`, `>`, `"` och `'`. Filen är UTF-8 med XML-deklaration och har filnamnet `AGI_{arbetsgivar-id}_{ÅÅÅÅMM}.xml`. En fil kan skapas för alla statusar. För `Submitted` innehåller den bara HU, som då är oförändrad, och knappen döljs i gränssnittet.
 
 ## Lagring
-### Migration `migrations/0012_agi.sql`
+### Migration `migrations/0014_agi.sql`
 ```sql
 -- Projections of AgiContactChanged and AgiMonthSubmitted. Rebuildable.
 CREATE TABLE agi_contacts (
