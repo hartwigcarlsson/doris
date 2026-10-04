@@ -50,6 +50,5 @@ Flows worth driving:
   `events` must fail with "events are append-only".
 
 ## Gotchas
-- `make dist` fails if the wasm exceeds `WASM_BUDGET`, or if the tarball lacks
-  `index.html` or the wasm.
+- `make dist` fails if the tarball lacks `index.html` or the wasm.
 - If a debug `trunk build` serves a stale wasm, `touch crates/web/src/main.rs`.

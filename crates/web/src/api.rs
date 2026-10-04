@@ -59,3 +59,78 @@ fn base_url() -> String {
         .filter(|url| !url.is_empty())
         .unwrap_or_else(|| window().location().origin().expect("page has an origin"))
 }
+
+/// The `GetStatus` answer that `index.html` asked for while the wasm was
+/// still downloading (`window.dorisStatus`), if it came back usable.
+pub async fn prefetched_status() -> Option<pb::GetStatusResponse> {
+    use wasm_bindgen::JsCast;
+    let promise: js_sys::Promise = js_sys::Reflect::get(&window(), &"dorisStatus".into())
+        .ok()?
+        .dyn_into()
+        .ok()?;
+    let body = wasm_bindgen_futures::JsFuture::from(promise).await.ok()?;
+    if body.is_null() {
+        return None;
+    }
+    decode_status(&js_sys::Uint8Array::new(&body).to_vec())
+}
+
+/// Reads a gRPC-Web response body: the message is the first frame, with flag
+/// 0 and a 4-byte big-endian length. An error has no such frame.
+fn decode_status(body: &[u8]) -> Option<pb::GetStatusResponse> {
+    if body.first() != Some(&0) {
+        return None;
+    }
+    let len = u32::from_be_bytes(body.get(1..5)?.try_into().ok()?) as usize;
+    prost::Message::decode(body.get(5..5usize.checked_add(len)?)?).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prost::Message;
+
+    fn frame(flag: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = vec![flag];
+        out.extend((payload.len() as u32).to_be_bytes());
+        out.extend(payload);
+        out
+    }
+
+    #[test]
+    fn decode_status_reads_the_first_data_frame() {
+        let status = pb::GetStatusResponse {
+            bootstrap_required: true,
+            current_user: Some(pb::User {
+                id: "u1".into(),
+                ..Default::default()
+            }),
+        };
+        let mut body = frame(0, &status.encode_to_vec());
+        body.extend(frame(0x80, b"grpc-status:0\r\n"));
+        assert_eq!(decode_status(&body), Some(status));
+    }
+
+    #[test]
+    fn decode_status_reads_an_empty_message() {
+        assert_eq!(
+            decode_status(&frame(0, &[])),
+            Some(pb::GetStatusResponse::default())
+        );
+    }
+
+    #[test]
+    fn decode_status_refuses_anything_else() {
+        let ok = frame(0, &pb::GetStatusResponse::default().encode_to_vec());
+        for bad in [
+            Vec::new(),
+            frame(0x80, b"grpc-status:13\r\n"),
+            vec![0, 0, 0],
+            frame(0, &[0xff, 0xff])[..6].to_vec(),
+            frame(0, &[0xff]),
+        ] {
+            assert_eq!(decode_status(&bad), None, "{bad:?}");
+        }
+        assert!(decode_status(&ok).is_some());
+    }
+}

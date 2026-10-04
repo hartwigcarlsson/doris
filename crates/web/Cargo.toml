@@ -10,6 +10,7 @@ doris-proto.workspace = true
 js-sys = "0.3"
 leptos = { version = "0.8", features = ["csr"] }
 leptos_router = "0.8"
+prost.workspace = true
 serde_json.workspace = true
 tonic.workspace = true
 tonic-web-wasm-client = "0.9"
