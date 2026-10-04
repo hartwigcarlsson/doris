@@ -382,21 +382,52 @@ async fn a_correction_after_the_year_ended_is_dated_its_last_day() {
 }
 
 #[tokio::test]
-async fn a_hand_corrected_registration_cannot_be_cancelled() {
+async fn a_registration_corrected_by_hand_is_cancelled_with_that_correction() {
     let (pool, anna, id) = setup(AccountingMethod::Invoice).await;
     register(&pool, id, anna, "F-4711").await.unwrap();
     doris_ledger::correct_voucher(&pool, id, anna, d("2026-01-01"), 1, d(TODAY), d(TODAY))
         .await
         .unwrap();
 
-    let err = cancel_supplier_invoice(&pool, id, anna, 1, "Dubbel", d(TODAY))
+    cancel_supplier_invoice(&pool, id, anna, 1, "Rättad i grundboken", d(TODAY))
         .await
-        .unwrap_err();
-    assert_eq!(ledger_error(err), LedgerError::AlreadyCorrected);
+        .unwrap();
+
+    assert_eq!(vouchers(&pool, id, anna).await.len(), 2);
+    let invoice = &list_supplier_invoices(&pool, id, anna).await.unwrap()[0];
+    assert_eq!(invoice.status, Status::Cancelled);
+    assert_eq!(
+        invoice
+            .vouchers
+            .iter()
+            .map(|v| v.number)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(balance(&pool, id, anna, 2440).await, 0);
+}
+
+#[tokio::test]
+async fn a_payment_corrected_by_hand_is_reversed_with_that_correction() {
+    let (pool, anna, id) = setup(AccountingMethod::Invoice).await;
+    register(&pool, id, anna, "F-4711").await.unwrap();
+    pay(&pool, id, anna, 1).await.unwrap();
+    doris_ledger::correct_voucher(&pool, id, anna, d("2026-01-01"), 2, d(TODAY), d(TODAY))
+        .await
+        .unwrap();
+
+    reverse_supplier_invoice_payment(&pool, id, anna, 1, "Rättad i grundboken", d(TODAY))
+        .await
+        .unwrap();
+
+    assert_eq!(vouchers(&pool, id, anna).await.len(), 3);
     assert_eq!(
         list_supplier_invoices(&pool, id, anna).await.unwrap()[0].status,
         Status::Unpaid
     );
+    pay(&pool, id, anna, 1).await.unwrap();
+    assert_eq!(balance(&pool, id, anna, 2440).await, 0);
+    assert_eq!(balance(&pool, id, anna, 1930).await, -100_000);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

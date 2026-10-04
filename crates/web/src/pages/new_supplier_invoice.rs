@@ -102,8 +102,14 @@ pub fn NewSupplierInvoice() -> impl IntoView {
     });
     Effect::new(move |_| {
         let company_id = companies.active.get();
+        // Nothing typed for the previous company may be registered in this one.
         suppliers.set(Vec::new());
+        supplier.set(String::new());
         accounts.set(Vec::new());
+        invoice_number.set(String::new());
+        reference.set(String::new());
+        rows.set(vec![Row::new(next_id.get_value())]);
+        next_id.update_value(|id| *id += 1);
         files.set(Vec::new());
         error.set(None);
         form_company.set_value(company_id.clone());

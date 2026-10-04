@@ -408,6 +408,28 @@ pub async fn check_accounts_in(
     Ok(())
 }
 
+/// The voucher that corrects voucher `number` of the fiscal year starting
+/// on `fiscal_year_start`, if it has been corrected (for instance by hand in
+/// the grundbok).
+pub async fn correction_of_in(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    number: u32,
+    today: Date,
+) -> Result<Option<VoucherRef>> {
+    let company = member_company(conn, company_id, actor).await?;
+    let fiscal_year =
+        fiscal_year_at(&company, fiscal_year_start, today).ok_or(DomainError::VoucherNotFound)?;
+    let (ledger, _) = load_ledger(conn, company_id, fiscal_year).await?;
+    let voucher = ledger.voucher(number).ok_or(DomainError::VoucherNotFound)?;
+    Ok(voucher.corrected_by.map(|number| VoucherRef {
+        fiscal_year_start,
+        number,
+    }))
+}
+
 /// Bytes are stored once per SHA-256; `attachment_files` is append-only.
 async fn insert_file(conn: &mut SqliteConnection, sha256: &str, data: &[u8]) -> Result<()> {
     sqlx::query("INSERT OR IGNORE INTO attachment_files (sha256, size, data) VALUES (?, ?, ?)")

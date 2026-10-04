@@ -553,7 +553,9 @@ async fn link_all(
     Ok(())
 }
 
-/// Corrects `voucher`, dated today or its fiscal year's last day.
+/// Corrects `voucher`, dated today or its fiscal year's last day. A
+/// voucher already corrected by hand in the grundbok keeps that correction,
+/// so the invoice follows the ledger instead of getting stuck.
 async fn correct(
     conn: &mut SqliteConnection,
     company: &Company,
@@ -561,6 +563,18 @@ async fn correct(
     voucher: VoucherRef,
     today: Date,
 ) -> Result<VoucherRef> {
+    if let Some(existing) = doris_ledger::correction_of_in(
+        conn,
+        company.id,
+        actor,
+        voucher.fiscal_year_start,
+        voucher.number,
+        today,
+    )
+    .await?
+    {
+        return Ok(existing);
+    }
     let end = company
         .first_fiscal_year
         .containing(voucher.fiscal_year_start)

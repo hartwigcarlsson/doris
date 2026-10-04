@@ -109,3 +109,24 @@ test("under kontantmetoden only the payment is booked, and Räkenskapsår warns 
   await expect(page.getByRole("heading", { name: "Räkenskapsår" })).toBeVisible();
   await expect(page.getByText(warning)).toHaveCount(0);
 });
+
+test("switching company clears the invoice form so nothing is registered in the wrong company", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560360793", "Bolaget AB");
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await addSupplier(page, app, "Lev AB");
+  await page.goto(`${app}/supplier-invoices/new`);
+  await expect(page.getByLabel("Leverantör")).toHaveValue("1");
+  await page.getByLabel("Fakturanummer").fill("F-1");
+  await page.getByLabel("OCR/meddelande").fill("12345");
+  await page.getByLabel("Konto, rad 1").fill("5410");
+  await page.getByLabel("Belopp exkl. moms, rad 1").fill("800");
+
+  await page.getByLabel("Aktivt företag").selectOption({ label: "Bolaget AB" });
+
+  await expect(page.getByLabel("Fakturanummer")).toHaveValue("");
+  await expect(page.getByLabel("OCR/meddelande")).toHaveValue("");
+  await expect(page.getByLabel("Konto, rad 1")).toHaveValue("");
+  await expect(page.getByLabel("Belopp exkl. moms, rad 1")).toHaveValue("");
+  await expect(page.getByLabel("Leverantör")).toHaveValue("");
+});
