@@ -380,12 +380,13 @@ fn specification_numbers_are_the_position_in_the_register() {
 #[test]
 fn numbers_do_not_move_when_an_earlier_month_is_marked() {
     let mut w = World::default();
-    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    // Ada sorts before Bo by name, so name-order numbering would move.
+    let ada = w.hire("Ada Ek", "19800101-1231");
     let bo = w.hire("Bo Ek", "19500301-1235");
     w.contact();
     let sep = Period::parse("202609").unwrap();
     w.booked(date(2026, 9, 25), &[(bo, 100 * KR, 0)]);
-    w.booked(date(2026, 10, 25), &[(asa, 100 * KR, 0), (bo, 100 * KR, 0)]);
+    w.booked(date(2026, 10, 25), &[(ada, 100 * KR, 0), (bo, 100 * KR, 0)]);
     let numbers = |w: &World, p: Period| {
         agi_lines(&w.payroll(), p)
             .iter()
@@ -399,8 +400,8 @@ fn numbers_do_not_move_when_an_earlier_month_is_marked() {
 
     assert_eq!(numbers(&w, sep), sep_before);
     assert_eq!(numbers(&w, oct()), oct_before);
-    // The position in the register: Åsa was hired first.
-    assert_eq!(oct_before, [(asa, 1), (bo, 2)]);
+    // The position in the register: Ada was hired first.
+    assert_eq!(oct_before, [(ada, 1), (bo, 2)]);
 }
 
 #[test]
