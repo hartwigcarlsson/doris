@@ -194,13 +194,17 @@ pub fn Radio(
 
 /// A labelled checkbox bound to `checked`.
 #[component]
-pub fn Checkbox(label: &'static str, id: &'static str, checked: RwSignal<bool>) -> impl IntoView {
+pub fn Checkbox(
+    #[prop(into)] label: String,
+    #[prop(into)] id: String,
+    checked: RwSignal<bool>,
+) -> impl IntoView {
     view! {
         <label class=LABEL>
             <span class="relative flex size-4 shrink-0">
                 <input
                     type="checkbox"
-                    id=id
+                    id=id.clone()
                     name=id
                     class=CHECKBOX
                     prop:checked=move || checked.get()

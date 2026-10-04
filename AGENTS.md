@@ -37,6 +37,7 @@ crates/invoicing    doris-invoicing: customers and suppliers (fakturor later)
 crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
 crates/identity     doris-identity: users, passkeys, invitations, sessions
 crates/ledger       doris-ledger: chart of accounts, vouchers, opening balances and year closing
+crates/payroll      doris-payroll: employees, payroll runs and arbetsgivaravgift
 crates/proto        doris-proto: generated code (feature `server` for stubs)
 crates/server       doris-server: binary, gRPC services, embedded frontend
 crates/web          doris-web: Leptos CSR app, UI components
@@ -83,6 +84,23 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   company's own voucher, never by hash alone. An underlag is never removed
   or renamed, and it may be added to a voucher in a closed year: it changes
   no amount. The type comes from the bytes, never from the client.
+- Payroll (`payroll-{company_id}`: employees and runs) has its own
+  stream. A run is Öppen, Färdigställd or Bokförd; only an open run
+  changes, a finalized one can be reopened, and finalizing may precede
+  the pay date. Booking (`PayrollRunBooked`) needs `pay_date <= today`
+  and books the voucher with `doris_ledger::record_voucher_in` in the
+  payroll write transaction. A booked run is never reopened directly:
+  its booking is backed out with a rättelse (`correct_voucher_in`,
+  dated today but no later than its fiscal year's end, from the run or
+  the grundbok), and the run is Färdigställd again. Whether a run is
+  booked is derived from `vouchers.corrects`, never stored. Payroll
+  tables have no foreign key to `vouchers`.
+- Arbetsgivaravgift (`doris_payroll::domain::employer_fee`) is in code
+  from 2026: 31,42 %; 10,21 % for those 67 when the year began; 0 for
+  born 1937 or earlier; 20,81 % on the first 25 000 kr a month for
+  19–23-year-olds from 2026-04-01 to 2027-09-30. The youth cap counts
+  booked runs only; a booking whose fee would change is refused
+  (`payroll_run_outdated`).
 
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.
@@ -123,7 +141,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 ## API
 - The contract lives in `proto/doris/auth/v1/auth.proto`,
   `proto/doris/company/v1/company.proto`, `proto/doris/ledger/v1/ledger.proto` and
-  `proto/doris/invoicing/v1/invoicing.proto`. `doris-proto` generates
+  `proto/doris/company/v1/company.proto`, `proto/doris/ledger/v1/ledger.proto`,
+  `proto/doris/invoicing/v1/invoicing.proto` and
+  `proto/doris/payroll/v1/payroll.proto`. `doris-proto` generates
   the client; its `server` feature adds the server stubs. The client builds for
   wasm32 because no transport is generated.
 - gRPC-Web over HTTP/1.1 (`tonic_web::GrpcWebLayer`) shares one port with the
@@ -168,6 +188,19 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   is accounts 3000–8989, the same as in the resultaträkning; the result
   account (2099/2019) and 8990–8999 go with the earlier results, so the
   closing voucher cancels there and a closed year reads like an open one.
+- `PayrollService` codes are mapped in `crates/server/src/payroll.rs`
+  (`status`, `domain_status`): `invalid_personal_identity_number`,
+  `invalid_employee_name`, `invalid_salary`, `invalid_salary_account`,
+  `invalid_tax`, `empty_payroll_run`, `duplicate_payroll_run_line`,
+  `duplicate_employee`, `employee_inactive`, `employee_not_found`,
+  `payroll_run_not_found`, `payroll_run_not_open`,
+  `payroll_run_not_finalized`, `payroll_run_booked`,
+  `payroll_run_not_booked`, `payroll_run_not_due` and
+  `payroll_run_outdated`. A run text over 200 characters is
+  `invalid_voucher_text`; ledger refusals keep the ledger's codes.
+- A personnummer is personal data: never log it and never send it to
+  an external service. It is stored as twelve digits and never changed
+  on an employee.
 - tonic reserves the size a frame header claims before a handler runs, so
   `session_gate` (`crates/server/src/lib.rs`) answers `LedgerService` calls
   without a valid session with `not_signed_in` before the body is read. The

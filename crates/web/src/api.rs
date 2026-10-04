@@ -4,6 +4,7 @@ use doris_proto::auth::v1::auth_service_client::AuthServiceClient;
 use doris_proto::company::v1::company_service_client::CompanyServiceClient;
 use doris_proto::invoicing::v1::invoicing_service_client::InvoicingServiceClient;
 use doris_proto::ledger::v1::ledger_service_client::LedgerServiceClient;
+use doris_proto::payroll::v1::payroll_service_client::PayrollServiceClient;
 use leptos::prelude::window;
 use tonic_web_wasm_client::Client;
 use tonic_web_wasm_client::options::{Credentials, FetchOptions};
@@ -12,11 +13,13 @@ pub use doris_proto::auth::v1 as pb;
 pub use doris_proto::company::v1 as cpb;
 pub use doris_proto::invoicing::v1 as ipb;
 pub use doris_proto::ledger::v1 as lpb;
+pub use doris_proto::payroll::v1 as ppb;
 
 pub type Api = AuthServiceClient<Client>;
 pub type CompanyApi = CompanyServiceClient<Client>;
 pub type InvoicingApi = InvoicingServiceClient<Client>;
 pub type LedgerApi = LedgerServiceClient<Client>;
+pub type PayrollApi = PayrollServiceClient<Client>;
 
 pub fn api() -> Api {
     AuthServiceClient::new(client())
@@ -28,6 +31,10 @@ pub fn company_api() -> CompanyApi {
 
 pub fn invoicing_api() -> InvoicingApi {
     InvoicingServiceClient::new(client())
+}
+
+pub fn payroll_api() -> PayrollApi {
+    PayrollServiceClient::new(client())
 }
 
 pub fn ledger_api() -> LedgerApi {

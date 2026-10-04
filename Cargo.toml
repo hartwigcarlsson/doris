@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/eventstore", "crates/identity", "crates/proto", "crates/server", "crates/web", "crates/company", "crates/ledger", "crates/invoicing"]
+members = ["crates/eventstore", "crates/identity", "crates/proto", "crates/server", "crates/web", "crates/company", "crates/ledger", "crates/invoicing", "crates/payroll"]
 
 [workspace.package]
 version = "0.1.0"
@@ -14,6 +14,7 @@ doris-proto = { path = "crates/proto" }
 doris-company = { path = "crates/company" }
 doris-ledger = { path = "crates/ledger" }
 doris-invoicing = { path = "crates/invoicing" }
+doris-payroll = { path = "crates/payroll" }
 reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json", "form"] }
 base64 = "0.23"
 getrandom = "0.4"
