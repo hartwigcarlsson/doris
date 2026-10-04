@@ -40,6 +40,26 @@ test("shows a progress bar until the app has loaded", async ({ page, app }) => {
   await expect(page.getByRole("progressbar")).toHaveCount(0);
 });
 
+test("the progress bar fetches no font, leaving the bandwidth to the wasm", async ({ page, app }) => {
+  const fonts: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/fonts/")) fonts.push(request.url());
+  });
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/*_bg.wasm", async (route) => {
+    await released;
+    await route.continue();
+  });
+
+  await page.goto(app, { waitUntil: "commit" });
+  await expect(page.getByRole("progressbar", { name: "Laddar Doris" })).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+
+  expect(fonts).toEqual([]);
+  release();
+});
+
 test("says so when the app cannot be loaded", async ({ page, app }) => {
   await page.route("**/*_bg.wasm", (route) => route.abort());
 

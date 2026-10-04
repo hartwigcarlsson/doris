@@ -276,7 +276,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `api::prefetched_status` reads it, and the app asks again if it's missing.
 - Until the app starts, `#boot` in `index.html` shows "Laddar Doris…" and a
   progress bar that `boot.js` (Trunk's `data-initializer`) moves. The Tailwind
-  CSS is inlined (`data-inline`) so it paints without another round trip.
+  CSS is inlined (`data-inline`) so it paints without another round trip,
+  and `#boot` uses the system font so Inter doesn't compete with the wasm.
   Trunk hands the initializer the wasm's size from before wasm-opt; a
   `post_build` hook in `Trunk.toml` (perl) writes the real one. Trunk names
   the initializer `<hash>-boot.js`, which the server also caches forever.

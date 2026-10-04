@@ -30,8 +30,9 @@
     <link data-trunk rel="rust" data-wasm-opt="z" data-initializer="boot.js" />
   </head>
   <body>
-    <!-- Shown until the app starts; boot.js fills in the progress. -->
-    <div id="boot" class="mx-auto w-full max-w-sm px-4 py-10">
+    <!-- Shown until the app starts; boot.js fills in the progress. The system
+         font, so Inter doesn't take bandwidth from the wasm. -->
+    <div id="boot" class="mx-auto w-full max-w-sm px-4 py-10 font-[ui-sans-serif,system-ui,sans-serif]">
       <div id="boot-progress">
         <p class="text-muted-foreground">Laddar Doris…</p>
         <div role="progressbar" aria-label="Laddar Doris" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
