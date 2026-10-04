@@ -217,9 +217,11 @@ pub fn income_post(account: u32) -> Option<Post> {
     })
 }
 
-/// The balansräkning post of `account`. Every resultaträkning account
-/// (3000–8999, 8999 included) folds into "Årets resultat", so the year's
-/// result shows there whether or not the year is closed.
+/// The balansräkning post of `account`. The resultaträkning's accounts
+/// (3000–8989) fold into "Årets resultat". The result account (2099, or
+/// 2019) and 8990–8999 go with the earlier results: closing books 8999
+/// against the result account, so the two cancel there, and a closed year
+/// reads like an open one.
 pub fn balance_post(account: u32, legal_form: LegalForm) -> Option<Post> {
     let result = u32::from(result_account(legal_form).get());
     Some(match account {
@@ -235,9 +237,12 @@ pub fn balance_post(account: u32, legal_form: LegalForm) -> Option<Post> {
         1700..=1799 => Post::Prepaid,
         1800..=1899 => Post::ShortTermInvestments,
         1900..=1999 => Post::Cash,
-        a if a == result || (3000..=8999).contains(&a) => Post::ResultForYear,
-        // Enskild firma, HB and KB: the owners' capital is one post.
-        2000..=2099 if result == 2019 => Post::OwnersEquity,
+        3000..=8989 => Post::ResultForYear,
+        // Enskild firma, HB and KB: the owners' capital is one post. The
+        // result account and the result voucher's 8999 sit with the earlier
+        // results, so "Årets resultat" always equals the resultaträkning's.
+        2000..=2099 | 8990..=8999 if result == 2019 => Post::OwnersEquity,
+        8990..=8999 => Post::RetainedEarnings,
         2080..=2089 => Post::RestrictedEquity,
         2000..=2099 => Post::RetainedEarnings,
         2100..=2199 => Post::UntaxedReserves,

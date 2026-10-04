@@ -1479,10 +1479,11 @@ async fn the_statements_compare_with_the_year_before() {
         (closed.difference, closed.previous_difference),
         (0, Some(0))
     );
-    // 2025's result stays on 2099 until it is moved to 2098 by hand.
+    // 2025's result is still on 2099, so 2026 shows it as balanserat.
+    assert_eq!(post(&closed.balance, "Årets resultat"), (50, Some(1_000)));
     assert_eq!(
-        post(&closed.balance, "Årets resultat"),
-        (1_050, Some(1_000))
+        post(&closed.balance, "Balanserat resultat"),
+        (1_000, Some(0))
     );
 }
 

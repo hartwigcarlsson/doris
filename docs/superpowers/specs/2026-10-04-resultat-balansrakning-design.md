@@ -8,7 +8,7 @@ Steg 5 gav saldobalansen per konto och steg 6 gav ingående balanser och stängd
 |---|---|
 | Uppställning | ÅRL bilaga 2 (kostnadsslagsindelad resultaträkning) och bilaga 1 (balansräkning), förkortad som i K2. |
 | Koppling konto → post | BAS SRU-kolumn för INK2R, vars poster motsvarar K2:s. En statisk tabell i `crates/ledger/src/statements.rs`, som är den enda platsen för kopplingen. |
-| Eget kapital | Styrs av `legal_form`. AB, ekonomisk förening och övriga former får bundet och fritt eget kapital. Enskild firma, HB och KB får "Eget kapital" och "Årets resultat" (2019). |
+| Eget kapital | Styrs av `legal_form`. AB, ekonomisk förening och övriga former får bundet och fritt eget kapital. Enskild firma, HB och KB får "Eget kapital" och "Årets resultat". |
 | Jämförelse | En kolumn för föregående räkenskapsår om det finns i Doris. Första året har ingen. |
 | Beräkning | På servern i en ren funktion, `build`. Klienten ritar bara upp raderna. |
 | Rubriktexter | Skickas från servern, som BAS-kontonamnen i `bas.rs`. De är facktermer ur ÅRL. |
@@ -61,11 +61,11 @@ Varje post är UB, alltså IB plus årets rörelse, från `trial_balance`. Tillg
 **Eget kapital och skulder**
 - **Eget kapital, för AB, ekonomisk förening och övriga former:**
   - Bundet eget kapital (2080–2089).
-  - Fritt eget kapital: Balanserat resultat (2090–2098), samt Årets resultat (2099 och beräknat resultat, se nedan).
+  - Fritt eget kapital: Balanserat resultat (2090–2099 och 8990–8999), samt Årets resultat (beräknat resultat, se nedan).
   - Konton 2000–2079 ligger under Bundet eget kapital om SRU säger det, annars under Balanserat resultat.
 - **Eget kapital, för enskild firma, HB och KB:**
-  - Eget kapital (20xx utom 2019).
-  - Årets resultat (2019 och beräknat resultat).
+  - Eget kapital (20xx och 8990–8999).
+  - Årets resultat (beräknat resultat).
 - Obeskattade reserver (21xx).
 - Avsättningar (22xx).
 - Långfristiga skulder (23xx).
@@ -77,12 +77,13 @@ De exakta intervallen tas från BAS SRU-kolumn när tabellen skrivs, och interva
 ### Årets resultat för öppna och stängda år
 Det är samma regel för båda. Koden behöver inte veta om året är stängt.
 - **Resultaträkningen:** −Σ saldon på 3000–8989.
-- **Balansräkningen:** −UB på årets resultatkonto (2099, eller 2019 för EF/HB/KB) plus −Σ saldon på 3000–8999, där 8999 räknas med.
-  - *Öppet år:* resultatkontot har ingen rörelse, och summan är årets resultat.
-  - *Stängt år:* 8999 tar ut resten så att summan blir 0, och resultatkontot innehåller resultatet.
+- **Balansräkningen:** −Σ saldon på 3000–8989, alltså samma belopp som i resultaträkningen. ÅRL kräver att de stämmer.
+  - Resultatkontot (2099, eller 2019 för EF/HB/KB) och 8990–8999 ligger med tidigare års resultat: Balanserat resultat, eller Eget kapital för EF/HB/KB.
+  - *Stängt år:* bokslutsverifikationen bokar 8999 mot resultatkontot. Båda ligger i samma post och tar ut varandra, så ett stängt år ser ut som ett öppet.
+  - Ett tidigare års resultat som ligger kvar på 2099 (eller 2019) och inte har förts vidare visas därför som Balanserat resultat (eller Eget kapital), inte som årets.
 
 ### Balanskontroll
-`difference = Summa tillgångar − Summa eget kapital och skulder`. IB för år 1 måste balansera och varje verifikation balanserar. Den enda orsaken till en differens är därför att ett tidigare år inte är stängt, så att dess resultat aldrig har flyttats till eget kapital. Differensen visas med den förklaringen. Ett resultat från ett tidigare år som ligger kvar på 2099 och inte har förts över till 2098 visas under Årets resultat, så som det är bokfört.
+`difference = Summa tillgångar − Summa eget kapital och skulder`. IB för år 1 måste balansera och varje verifikation balanserar. Den enda orsaken till en differens är därför att ett tidigare år inte är stängt, så att dess resultat aldrig har flyttats till eget kapital. Differensen visas med den förklaringen.
 
 ## Domän (`crates/ledger/src/statements.rs`, ren kod)
 ```rust
@@ -168,7 +169,8 @@ message GetFinancialStatementsResponse {
   - Varje kontonummer från 1000 till 8999 hamnar i exakt en post.
   - Försäljning och kostnader ger rätt rörelseresultat och årets resultat, med rätt tecken.
   - Årets resultat i balansräkningen blir lika för ett öppet år och för samma år stängt med 8999 mot 2099, och differensen är 0 i båda fallen.
-  - AB får bundet och fritt eget kapital. Enskild firma får "Eget kapital" och "Årets resultat" på 2019.
+  - AB får bundet och fritt eget kapital. Enskild firma får "Eget kapital" och "Årets resultat".
+  - Ett tidigare års resultat som ligger kvar på 2099 eller 2019 ingår inte i balansräkningens Årets resultat, som alltid är lika med resultaträkningens.
   - En post som är 0 i båda åren döljs. En post som är 0 i år men har belopp föregående år visas.
   - Utan föregående år har alla rader `previous: None`.
   - Ett underlag där ett tidigare år inte är stängt ger rätt `difference`.

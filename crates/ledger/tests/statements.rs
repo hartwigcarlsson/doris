@@ -28,9 +28,10 @@ fn every_account_lands_in_exactly_one_post_of_each_statement() {
                     income.is_some() && balance == Some(Post::ResultForYear),
                     "{account}"
                 ),
-                // The result voucher's 8999 only moves the result to equity.
+                // The result voucher's 8999 sits with the earlier results.
                 _ => assert!(
-                    income.is_none() && balance == Some(Post::ResultForYear),
+                    income.is_none()
+                        && matches!(balance, Some(Post::RetainedEarnings | Post::OwnersEquity)),
                     "{account}"
                 ),
             }
@@ -70,13 +71,15 @@ fn equity_follows_the_legal_form() {
     assert_eq!(balance_post(2081, ab), Some(Post::RestrictedEquity));
     assert_eq!(balance_post(2091, ab), Some(Post::RetainedEarnings));
     assert_eq!(balance_post(2019, ab), Some(Post::RetainedEarnings));
-    assert_eq!(balance_post(2099, ab), Some(Post::ResultForYear));
+    assert_eq!(balance_post(2099, ab), Some(Post::RetainedEarnings));
+    assert_eq!(balance_post(8999, ab), Some(Post::RetainedEarnings));
     assert_eq!(balance_post(2010, ef), Some(Post::OwnersEquity));
     assert_eq!(balance_post(2099, ef), Some(Post::OwnersEquity));
-    assert_eq!(balance_post(2019, ef), Some(Post::ResultForYear));
+    assert_eq!(balance_post(2019, ef), Some(Post::OwnersEquity));
+    assert_eq!(balance_post(8999, ef), Some(Post::OwnersEquity));
     assert_eq!(
         balance_post(2019, LegalForm::Handelsbolag),
-        Some(Post::ResultForYear)
+        Some(Post::OwnersEquity)
     );
     assert_eq!(
         balance_post(2081, LegalForm::Kommanditbolag),
@@ -283,4 +286,23 @@ fn an_overflow_is_an_error_not_a_panic() {
         build(&negated, None, LegalForm::Aktiebolag),
         Err(Error::Overflow)
     ));
+}
+
+#[test]
+fn the_years_result_agrees_between_the_statements_before_the_disposition() {
+    // Last year's 1 000 profit still sits on the result account: it is
+    // balanserat, not this year's.
+    for (form, result_account, earlier) in [
+        (LegalForm::Aktiebolag, 2099, "Balanserat resultat"),
+        (LegalForm::EnskildFirma, 2019, "Eget kapital"),
+    ] {
+        let mut rows = trading();
+        rows[0].opening = 1_000;
+        rows.push(row(result_account, -1_000, 0, 0));
+        let s = build(&rows, None, form).unwrap();
+        assert_eq!(amount(&s.income, "Årets resultat"), 700, "{form:?}");
+        assert_eq!(amount(&s.balance, "Årets resultat"), 700, "{form:?}");
+        assert_eq!(amount(&s.balance, earlier), 1_000, "{form:?}");
+        assert_eq!(s.difference, 0, "{form:?}");
+    }
 }
