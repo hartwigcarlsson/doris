@@ -67,7 +67,8 @@ impl OrgNr {
 }
 
 /// The Luhn check over all digits, weights 1,2,1,2… from the right. Used
-/// for organisationsnummer, bankgiro and plusgiro.
+/// for organisationsnummer, bankgiro, plusgiro and (in `doris-payroll`)
+/// personnummer.
 pub fn luhn(digits: &str) -> bool {
     let sum: u32 = digits
         .bytes()

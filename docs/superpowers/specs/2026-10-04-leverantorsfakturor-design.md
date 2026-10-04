@@ -1,4 +1,4 @@
-# Doris – Steg 10: Leverantörsfakturor
+# Doris – Steg 11: Leverantörsfakturor
 
 ## Kontext
 Steg 9 gav företagen ett leverantörsregister. I det här steget kan man registrera inkommande fakturor från leverantörerna, bifoga fakturan som underlag, låta Doris bokföra den och markera den som betald. Det är delprojekt 2 av fakturorna. Kundfakturor (delprojekt 3) kommer att återanvända det mesta: rader, moms, betalning och makulering.
@@ -97,7 +97,7 @@ Varje skrivning sker i en `BEGIN IMMEDIATE`-transaktion:
 
 Allt sker eller inget. En avvisad registrering förbrukar inget verifikationsnummer och inget fakturanummer.
 
-### Migration `migrations/0010_supplier_invoices.sql`
+### Migration `migrations/0011_supplier_invoices.sql`
 ```sql
 CREATE TABLE supplier_invoices (
     company_id      TEXT    NOT NULL REFERENCES companies(company_id),

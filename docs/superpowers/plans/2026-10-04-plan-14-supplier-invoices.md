@@ -1,4 +1,4 @@
-# Plan 13: Supplier Invoices Implementation Plan
+# Plan 14: Supplier Invoices Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -1287,7 +1287,7 @@ git commit -m "Decide supplier invoices and the vouchers they book"
 ### Task 4: Storing supplier invoices
 
 **Files:**
-- Create: `migrations/0010_supplier_invoices.sql`
+- Create: `migrations/0011_supplier_invoices.sql`
 - Modify: `crates/invoicing/src/projections.rs`
 - Modify: `crates/invoicing/src/lib.rs`
 - Test: `crates/invoicing/tests/supplier_invoices.rs`
@@ -1682,7 +1682,7 @@ async fn a_non_member_gets_not_found() {
 Run: `cargo test -p doris-invoicing --test supplier_invoices`
 Expected: compile errors, because `register_supplier_invoice` and the rest don't exist.
 
-- [ ] **Step 3: Write the migration `migrations/0010_supplier_invoices.sql`**
+- [ ] **Step 3: Write the migration `migrations/0011_supplier_invoices.sql`**
 
 ```sql
 -- Supplier invoices: the projection of the supplier-invoices-{company}
@@ -2083,7 +2083,7 @@ Expected: PASS. If the server crate stops compiling because `Error` gained a var
 - [ ] **Step 7: Commit**
 
 ```bash
-git add migrations/0010_supplier_invoices.sql crates/invoicing crates/server Cargo.lock
+git add migrations/0011_supplier_invoices.sql crates/invoicing crates/server Cargo.lock
 git commit -m "Register, pay, cancel and reverse supplier invoices with their vouchers"
 ```
 
