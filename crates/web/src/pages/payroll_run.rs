@@ -57,6 +57,14 @@ fn switched(previous: Option<&str>, active: &str) -> bool {
     previous.is_some_and(|p| !p.is_empty() && p != active)
 }
 
+/// The first included employee whose Skatt is blank, as the Swedish message.
+/// Blank is not 0: that would silently under-withhold.
+fn missing_tax(rows: &[(String, bool, String)]) -> Option<String> {
+    rows.iter()
+        .find(|(_, included, tax)| *included && tax.trim().is_empty())
+        .map(|(name, _, _)| format!("Ange skatt för {name}."))
+}
+
 #[component]
 pub fn PayrollRunPage() -> impl IntoView {
     let companies = expect_context::<Companies>();
@@ -147,6 +155,37 @@ pub fn PayrollRunPage() -> impl IntoView {
             })
             .collect(),
     };
+    // Refuses a draft with a blank Skatt before any RPC; shows why.
+    let tax_missing = move || {
+        let form: Vec<_> = rows
+            .get_untracked()
+            .iter()
+            .map(|r| {
+                (
+                    r.name.get_value(),
+                    r.included.get_untracked(),
+                    r.tax.get_untracked(),
+                )
+            })
+            .collect();
+        let message = missing_tax(&form);
+        let missing = message.is_some();
+        if missing {
+            error.set(message);
+        }
+        missing
+    };
+    // The preview shows the form as it was: any edit clears it.
+    Effect::new(move |_| {
+        pay_date.track();
+        text.track();
+        for r in rows.get() {
+            r.included.track();
+            r.gross.track();
+            r.tax.track();
+        }
+        preview.set(None);
+    });
     // The run on screen, for the company it was loaded for (or, for a new
     // run, the active one).
     let reference = move || ppb::PayrollRunRef {
@@ -168,6 +207,9 @@ pub fn PayrollRunPage() -> impl IntoView {
     };
 
     let preview_click = move |_| {
+        if tax_missing() {
+            return;
+        }
         let request = ppb::PreviewPayrollRunRequest {
             company_id: company.get_untracked(),
             draft: Some(draft()),
@@ -182,6 +224,9 @@ pub fn PayrollRunPage() -> impl IntoView {
     };
     // Saves the form (creating the run if new), then finalizes if asked.
     let save = move |finalize: bool| {
+        if tax_missing() {
+            return;
+        }
         let (company_id, existing, draft) = (
             company.get_untracked(),
             run.with_untracked(|r| r.as_ref().map(|r| r.id.clone())),
@@ -209,21 +254,34 @@ pub fn PayrollRunPage() -> impl IntoView {
                     .await
                     .map(|_| payroll_run_id),
             };
-            let result = match saved {
-                Ok(id) if finalize => payroll_api()
+            let id = match saved {
+                Ok(id) => id,
+                Err(status) => {
+                    busy.set(false);
+                    return error.set(Some(describe(&status)));
+                }
+            };
+            let result = if finalize {
+                payroll_api()
                     .finalize_payroll_run(ppb::PayrollRunRef {
                         company_id,
                         payroll_run_id: id.clone(),
                     })
                     .await
-                    .map(|_| id),
-                other => other,
+                    .map(|_| ())
+            } else {
+                Ok(())
             };
             busy.set(false);
-            match result {
-                Ok(id) if existing.is_none() => go(format!("/payroll-runs/{id}")),
-                Ok(_) => load(),
-                Err(status) => error.set(Some(describe(&status))),
+            // A created run is open on its own page even if finalizing failed:
+            // staying on /new would let a second press create a duplicate.
+            if existing.is_none() {
+                go(format!("/payroll-runs/{id}"));
+            } else {
+                match result {
+                    Ok(()) => load(),
+                    Err(status) => error.set(Some(describe(&status))),
+                }
             }
         });
     };
@@ -339,7 +397,22 @@ pub fn PayrollRunPage() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::switched;
+    use super::{missing_tax, switched};
+
+    #[test]
+    fn blank_tax_of_an_included_employee_is_reported_by_name() {
+        let row = |n: &str, included, tax: &str| (n.to_owned(), included, tax.to_owned());
+        let rows = [
+            row("Ann", false, ""),
+            row("Bo", true, "  "),
+            row("Cy", true, ""),
+        ];
+        assert_eq!(missing_tax(&rows).as_deref(), Some("Ange skatt för Bo."));
+        assert_eq!(
+            missing_tax(&[row("Ann", true, "0"), row("Bo", true, "x")]),
+            None
+        );
+    }
 
     #[test]
     fn the_first_company_arriving_is_not_a_switch() {
