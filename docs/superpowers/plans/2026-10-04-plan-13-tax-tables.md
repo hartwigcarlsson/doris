@@ -846,7 +846,7 @@ Claude-Session: https://claude.ai/code/session_01UWwvcoHwU1CbnFSQf1rdLv"
 ### Task 3: Storage: tax tables, employee settings and locked bases
 
 **Files:**
-- Create: `migrations/0010_tax_tables.sql`
+- Create: `migrations/0011_tax_tables.sql`
 - Modify: `crates/payroll/src/lib.rs`, `crates/payroll/src/projections.rs`, `crates/payroll/src/queries.rs`
 - Modify: `crates/server/src/payroll.rs` (call-site updates only: `NewEmployee { tax: None, .. }`, `PayrollRunLineView.tax` is now `Option<i64>`)
 - Test: `crates/payroll/tests/store.rs`
@@ -861,7 +861,7 @@ Claude-Session: https://claude.ai/code/session_01UWwvcoHwU1CbnFSQf1rdLv"
   - `preview_payroll_run` and `finalize_payroll_run` use the stored table for the pay date's year. A missing one gives `Error::Domain(DomainError::TaxTableMissing(year))`, and nothing is written.
   - `list_employees` fills `Employee.tax`. `PayrollRunLineView.tax: Option<i64>`, and a locked `PayrollRunLine` carries its `tax_basis`.
 
-- [ ] **Step 1: Write the migration** — `migrations/0010_tax_tables.sql`:
+- [ ] **Step 1: Write the migration** — `migrations/0011_tax_tables.sql`:
 
 ```sql
 -- Skatteverket's monthly tax tables: reference data, not events. Fetched
@@ -1301,7 +1301,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add migrations/0010_tax_tables.sql crates/payroll crates/server/src/payroll.rs
+git add migrations/0011_tax_tables.sql crates/payroll crates/server/src/payroll.rs
 git commit -m "Store tax tables, employee tax settings and each locked line's tax basis
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

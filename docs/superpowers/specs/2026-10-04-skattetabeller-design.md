@@ -77,7 +77,7 @@ Annars blir det `TaxTableError` med en beskrivning för loggen. Sådana fel inne
 
 ## Lagring
 
-### Migration `migrations/0010_tax_tables.sql`
+### Migration `migrations/0011_tax_tables.sql`
 ```sql
 -- Skatteverket's monthly tax tables (referensdata, not events): fetched
 -- once per year, replaceable. What a run used is locked in its event.

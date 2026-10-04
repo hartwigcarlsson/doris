@@ -251,3 +251,13 @@ fn events_round_trip_through_json_with_readable_dates() {
         events[0]
     );
 }
+
+#[test]
+fn luhn_counts_from_the_right_for_any_length() {
+    assert!(luhn("5560160680"));
+    assert!(!luhn("5560160681"));
+    // Seven and two digits: bankgiro 123-4566 and plusgiro 1-8.
+    assert!(luhn("1234566"));
+    assert!(luhn("18"));
+    assert!(!luhn("1234567"));
+}

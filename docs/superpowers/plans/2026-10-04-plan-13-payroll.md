@@ -1621,7 +1621,7 @@ Claude-Session: https://claude.ai/code/session_01UWwvcoHwU1CbnFSQf1rdLv"
 ### Task 5: Employee storage: migration, write flow, projection and list
 
 **Files:**
-- Create: `migrations/0009_payroll.sql`
+- Create: `migrations/0010_payroll.sql`
 - Modify: `crates/payroll/src/lib.rs`
 - Create: `crates/payroll/src/projections.rs`
 - Create: `crates/payroll/src/queries.rs`
@@ -1641,7 +1641,7 @@ Claude-Session: https://claude.ai/code/session_01UWwvcoHwU1CbnFSQf1rdLv"
 
 - [ ] **Step 1: Write the migration**
 
-`migrations/0009_payroll.sql`:
+`migrations/0010_payroll.sql`:
 
 ```sql
 -- Projections of the payroll-{company_id} streams. Rebuildable from events.
@@ -2261,7 +2261,7 @@ Expected: PASS (domain and store).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add migrations/0009_payroll.sql crates/payroll
+git add migrations/0010_payroll.sql crates/payroll
 git commit -m "Store employees with a projection that rebuilds from events
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

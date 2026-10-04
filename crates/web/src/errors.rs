@@ -122,6 +122,17 @@ fn message(code: &str) -> &'static str {
         "payroll_run_outdated" => {
             "Avgifterna har ändrats sedan körningen färdigställdes. Öppna och färdigställ den igen."
         }
+        "invalid_name" => "Namnet måste vara 1–200 tecken.",
+        "invalid_vat_number" => {
+            "Ange ett giltigt momsregistreringsnummer, till exempel SE556016068001."
+        }
+        "invalid_payment_terms" => "Betalningsvillkoret ska vara 0–365 dagar.",
+        "invalid_bankgiro" => "Ange ett giltigt bankgironummer (7–8 siffror).",
+        "invalid_plusgiro" => "Ange ett giltigt plusgironummer (2–8 siffror).",
+        "invalid_iban" => "Ange ett giltigt IBAN-nummer.",
+        "invalid_bic" => "Ange en giltig BIC (8 eller 11 tecken).",
+        "customer_not_found" => "Kunden finns inte.",
+        "supplier_not_found" => "Leverantören finns inte.",
         _ => "Något gick fel. Försök igen.",
     }
 }
@@ -195,6 +206,27 @@ mod tests {
         assert_eq!(
             message("invalid_voucher_lines"),
             "En verifikation ska ha 2–100 rader."
+        );
+    }
+
+    #[test]
+    fn invoicing_codes_have_swedish_messages() {
+        for code in [
+            "invalid_name",
+            "invalid_vat_number",
+            "invalid_payment_terms",
+            "invalid_bankgiro",
+            "invalid_plusgiro",
+            "invalid_iban",
+            "invalid_bic",
+            "customer_not_found",
+            "supplier_not_found",
+        ] {
+            assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
+        }
+        assert_eq!(
+            message("invalid_payment_terms"),
+            "Betalningsvillkoret ska vara 0–365 dagar."
         );
     }
 

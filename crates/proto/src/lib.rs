@@ -18,6 +18,12 @@ pub mod ledger {
     }
 }
 
+pub mod invoicing {
+    pub mod v1 {
+        tonic::include_proto!("doris.invoicing.v1");
+    }
+}
+
 pub mod payroll {
     pub mod v1 {
         tonic::include_proto!("doris.payroll.v1");
