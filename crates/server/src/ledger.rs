@@ -443,7 +443,7 @@ fn domain_status(err: DomainError) -> Status {
     }
 }
 
-fn status(err: Error) -> Status {
+pub(crate) fn status(err: Error) -> Status {
     match err {
         Error::Domain(err) => domain_status(err),
         Error::NotFound => company_not_found(),

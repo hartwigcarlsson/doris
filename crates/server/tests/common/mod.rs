@@ -8,8 +8,9 @@ use doris_proto::auth::v1 as pb;
 use doris_proto::auth::v1::auth_service_client::AuthServiceClient;
 use doris_proto::company::v1::company_service_client::CompanyServiceClient;
 use doris_proto::ledger::v1::ledger_service_client::LedgerServiceClient;
+use doris_proto::payroll::v1::payroll_service_client::PayrollServiceClient;
 use doris_server::bolagsverket::Bolagsverket;
-use doris_server::{AuthApi, CompanyApi, LedgerApi, SESSION_COOKIE};
+use doris_server::{AuthApi, CompanyApi, LedgerApi, PayrollApi, SESSION_COOKIE};
 use http::HeaderValue;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -27,6 +28,7 @@ type Transport = GrpcWebClientService<Client<HttpConnector, GrpcWebCall<tonic::b
 pub type Grpc = AuthServiceClient<Transport>;
 pub type Companies = CompanyServiceClient<Transport>;
 pub type Ledger = LedgerServiceClient<Transport>;
+pub type Payroll = PayrollServiceClient<Transport>;
 pub type Device = WebauthnAuthenticator<SoftPasskey>;
 
 #[derive(RustEmbed)]
@@ -66,6 +68,7 @@ impl TestServer {
             AuthApi::new(pool.clone(), auth),
             CompanyApi::new(pool.clone(), bolagsverket),
             LedgerApi::new(pool.clone()),
+            PayrollApi::new(pool.clone()),
             cors_origins,
             serve_frontend,
         );
@@ -86,6 +89,10 @@ impl TestServer {
 
     pub fn grpc(&self) -> Grpc {
         AuthServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
+    }
+
+    pub fn payroll(&self) -> Payroll {
+        PayrollServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
     }
 
     pub fn ledger(&self) -> Ledger {

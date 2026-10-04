@@ -5,6 +5,7 @@ pub mod bolagsverket;
 mod company;
 mod grpc;
 mod ledger;
+mod payroll;
 
 use axum::Router;
 use axum::extract::State;
@@ -13,6 +14,7 @@ use axum::routing::get;
 use doris_proto::auth::v1::auth_service_server::AuthServiceServer;
 use doris_proto::company::v1::company_service_server::CompanyServiceServer;
 use doris_proto::ledger::v1::ledger_service_server::LedgerServiceServer;
+use doris_proto::payroll::v1::payroll_service_server::PayrollServiceServer;
 use http::header::CONTENT_TYPE;
 use http::{HeaderName, HeaderValue, Method, StatusCode};
 use rust_embed::RustEmbed;
@@ -26,6 +28,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 pub use company::CompanyApi;
 pub use grpc::{AuthApi, SESSION_COOKIE};
 pub use ledger::LedgerApi;
+pub use payroll::PayrollApi;
 
 /// Builds the app. `E` is the embedded frontend (see [`assets::WebDist`]).
 /// With no `cors_origins`, only same-origin browsers can call the API.
@@ -33,6 +36,7 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
     api: AuthApi,
     companies: CompanyApi,
     ledger: LedgerApi,
+    payroll: PayrollApi,
     cors_origins: Vec<HeaderValue>,
     serve_frontend: bool,
 ) -> Router {
@@ -44,6 +48,7 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
                 .max_decoding_message_size(ledger::MAX_REQUEST)
                 .max_encoding_message_size(ledger::MAX_RESPONSE),
         )
+        .add_service(PayrollServiceServer::new(payroll))
         .into_axum_router()
         .layer(axum::middleware::from_fn_with_state(pool, session_gate))
         .layer(GrpcWebLayer::new())

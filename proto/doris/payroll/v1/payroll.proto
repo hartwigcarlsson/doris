@@ -1,0 +1,156 @@
+syntax = "proto3";
+
+package doris.payroll.v1;
+
+import "doris/ledger/v1/ledger.proto";
+
+// Employees and payroll runs (lönekörningar). Every call needs a session
+// and a company the caller is a member of. Amounts are öre.
+service PayrollService {
+  rpc ListEmployees(ListEmployeesRequest) returns (ListEmployeesResponse);
+  rpc AddEmployee(AddEmployeeRequest) returns (AddEmployeeResponse);
+  // Name, monthly salary and salary account; never the personnummer.
+  rpc UpdateEmployee(UpdateEmployeeRequest) returns (UpdateEmployeeResponse);
+  rpc DeactivateEmployee(DeactivateEmployeeRequest) returns (DeactivateEmployeeResponse);
+
+  // What a draft would lock if finalized now. Writes nothing.
+  rpc PreviewPayrollRun(PreviewPayrollRunRequest) returns (PreviewPayrollRunResponse);
+  rpc CreatePayrollRun(CreatePayrollRunRequest) returns (CreatePayrollRunResponse);
+  // Only an open run changes.
+  rpc UpdatePayrollRun(UpdatePayrollRunRequest) returns (UpdatePayrollRunResponse);
+  // Locks amounts, fees and accounts; the pay date may be in the future.
+  rpc FinalizePayrollRun(PayrollRunRef) returns (FinalizePayrollRunResponse);
+  // A finalized run that is not booked.
+  rpc ReopenPayrollRun(PayrollRunRef) returns (ReopenPayrollRunResponse);
+  // Books a finalized run as a voucher, no earlier than its pay date.
+  rpc BookPayrollRun(PayrollRunRef) returns (VoucherRef);
+  // Backa bokföring: a rättelse of the run's voucher; returns the rättelse.
+  rpc UnbookPayrollRun(PayrollRunRef) returns (VoucherRef);
+  rpc GetPayrollRun(PayrollRunRef) returns (PayrollRun);
+  // Newest pay date first.
+  rpc ListPayrollRuns(ListPayrollRunsRequest) returns (ListPayrollRunsResponse);
+}
+
+message Employee {
+  string id = 1;
+  string name = 2;
+  string personal_identity_number = 3; // ÅÅÅÅMMDD-NNNN
+  int64 monthly_salary = 4;
+  uint32 salary_account = 5;
+  bool active = 6;
+}
+
+message ListEmployeesRequest {
+  string company_id = 1;
+}
+message ListEmployeesResponse {
+  repeated Employee employees = 1;
+}
+
+message AddEmployeeRequest {
+  string company_id = 1;
+  string name = 2;
+  string personal_identity_number = 3;
+  int64 monthly_salary = 4;
+  uint32 salary_account = 5;
+}
+message AddEmployeeResponse {
+  string employee_id = 1;
+}
+
+message UpdateEmployeeRequest {
+  string company_id = 1;
+  string employee_id = 2;
+  string name = 3;
+  int64 monthly_salary = 4;
+  uint32 salary_account = 5;
+}
+message UpdateEmployeeResponse {}
+
+message DeactivateEmployeeRequest {
+  string company_id = 1;
+  string employee_id = 2;
+}
+message DeactivateEmployeeResponse {}
+
+message PayrollRunLineInput {
+  string employee_id = 1;
+  int64 gross = 2;
+  int64 tax = 3;
+}
+message PayrollRunDraft {
+  string pay_date = 1; // YYYY-MM-DD
+  string text = 2;     // empty: "Lön {månad} {år}"
+  repeated PayrollRunLineInput lines = 3;
+}
+message PayrollRunRef {
+  string company_id = 1;
+  string payroll_run_id = 2;
+}
+message VoucherRef {
+  string fiscal_year_start = 1;
+  uint32 number = 2;
+}
+
+message PreviewPayrollRunRequest {
+  string company_id = 1;
+  PayrollRunDraft draft = 2;
+}
+message PreviewPayrollRunResponse {
+  string text = 1;
+  repeated PayrollRunLine lines = 2;
+  repeated doris.ledger.v1.VoucherLine voucher_lines = 3;
+}
+
+message CreatePayrollRunRequest {
+  string company_id = 1;
+  PayrollRunDraft draft = 2;
+}
+message CreatePayrollRunResponse {
+  string payroll_run_id = 1;
+}
+
+message UpdatePayrollRunRequest {
+  PayrollRunRef run = 1;
+  PayrollRunDraft draft = 2;
+}
+message UpdatePayrollRunResponse {}
+
+message FinalizePayrollRunResponse {}
+message ReopenPayrollRunResponse {}
+
+message ListPayrollRunsRequest {
+  string company_id = 1;
+}
+message ListPayrollRunsResponse {
+  repeated PayrollRun payroll_runs = 1;
+}
+
+enum PayrollRunStatus {
+  PAYROLL_RUN_STATUS_UNSPECIFIED = 0;
+  PAYROLL_RUN_STATUS_OPEN = 1;
+  PAYROLL_RUN_STATUS_FINALIZED = 2;
+  PAYROLL_RUN_STATUS_BOOKED = 3;
+}
+
+message PayrollRunLine {
+  string employee_id = 1;
+  string employee_name = 2;
+  int64 gross = 3;
+  int64 tax = 4;
+  // Set once finalized (and in a preview).
+  uint32 salary_account = 5;
+  uint32 fee_rate = 6; // basis points
+  int64 fee = 7;
+  int64 net = 8;
+}
+
+message PayrollRun {
+  string id = 1;
+  string pay_date = 2;
+  string text = 3;
+  PayrollRunStatus status = 4;
+  repeated PayrollRunLine lines = 5;
+  repeated doris.ledger.v1.VoucherLine voucher_lines = 6; // once finalized
+  VoucherRef voucher = 7;                                  // while booked
+}
