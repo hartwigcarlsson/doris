@@ -87,7 +87,7 @@ test("a duplicate invoice number shows a Swedish error", async ({ page, app }) =
 });
 
 test("under kontantmetoden only the payment is booked, and Räkenskapsår warns while unpaid", async ({ page, app }) => {
-  const warning = /Det finns obetalda leverantörsfakturor/;
+  const warning = /Det finns obetalda kund- eller leverantörsfakturor/;
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB", undefined, "Kontantmetoden");
   await addSupplier(page, app, "Lev AB");

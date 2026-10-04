@@ -88,3 +88,27 @@ test("switching company clears the customer invoice form", async ({ page, app })
   await expect(page.getByLabel("Konto, rad 1")).toHaveValue("");
   await expect(page.getByLabel("Kund", { exact: true })).toHaveValue("");
 });
+
+test("under kontantmetoden only the payment is booked, and Räkenskapsår warns while unpaid", async ({ page, app }) => {
+  const warning = /Det finns obetalda kund- eller leverantörsfakturor/;
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB", undefined, "Kontantmetoden");
+  await addCustomer(page, app, "Kund AB");
+  await registerInvoice(page, app);
+
+  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await expect(page.getByRole("row", { name: /Kundfaktura/ })).toHaveCount(0);
+  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await expect(page.getByText(warning)).toBeVisible();
+
+  await page.getByRole("banner").getByRole("link", { name: "Kundfakturor" }).click();
+  await page.getByRole("row", { name: /^1 Kund AB/ }).getByRole("button", { name: "Registrera inbetalning" }).click();
+  await page.getByRole("button", { name: "Bekräfta inbetalning" }).click();
+  await expect(page.getByRole("row", { name: /^1 Kund AB/ })).toHaveCount(0);
+
+  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await expect(page.getByRole("row", { name: /Kundfaktura 1, Kund AB/ })).toContainText("1 underlag");
+  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await expect(page.getByRole("heading", { name: "Räkenskapsår" })).toBeVisible();
+  await expect(page.getByText(warning)).toHaveCount(0);
+});
