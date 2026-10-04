@@ -209,6 +209,8 @@ fn MonthRow(
     // else that of the month shown, so only what the user saw is marked.
     let downloaded = RwSignal::new(None::<String>);
     let confirming = RwSignal::new(false);
+    // A MarkAgiSubmitted call is in flight: "Bekräfta" is off.
+    let marking = RwSignal::new(false);
     let label = period_label(&summary.period);
 
     let toggle = move |_| {
@@ -238,6 +240,10 @@ fn MonthRow(
         });
     };
     let submit = move |_| {
+        if marking.get_untracked() {
+            return;
+        }
+        marking.set(true);
         error.set(None);
         let month = reference.get_value();
         let fingerprint = downloaded
@@ -250,7 +256,9 @@ fn MonthRow(
             fingerprint,
         };
         spawn_local(async move {
-            match payroll_api().mark_agi_submitted(request).await {
+            let result = payroll_api().mark_agi_submitted(request).await;
+            marking.set(false);
+            match result {
                 Ok(_) => changed.run(()),
                 Err(status) => error.set(Some(describe(&status))),
             }
@@ -327,7 +335,7 @@ fn MonthRow(
                                 <span class="text-muted-foreground">
                                     "Markera som inlämnad när filen är uppladdad hos Skatteverket."
                                 </span>
-                                <Button kind="button" on:click=submit>"Bekräfta"</Button>
+                                <Button kind="button" disabled=Signal::derive(move || marking.get()) on:click=submit>"Bekräfta"</Button>
                             </Show>
                             <Show when=move || !has_contact.get()>
                                 <span class="text-muted-foreground">"Spara en kontaktperson först."</span>

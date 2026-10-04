@@ -52,8 +52,11 @@ test("a month is declared, downloaded and corrected", async ({ page, app }, test
   expect(xml).toContain('<agd:SummaArbAvgSlf faltkod="487">10997</agd:SummaArbAvgSlf>');
 
   await page.getByRole("button", { name: "Markera som inlämnad" }).click();
-  await page.getByRole("button", { name: "Bekräfta" }).click();
+  // A double click marks the month once, without an agi_unchanged error.
+  await page.getByRole("button", { name: "Bekräfta" }).dblclick();
   await expect(page.getByRole("row", { name: new RegExp(`^${periodLabel}`) })).toContainText("Deklarerad");
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByText("Månaden är redan inlämnad och har inte ändrats.")).toHaveCount(0);
 
   await page.goto(runUrl);
   await page.getByRole("button", { name: "Backa bokföring" }).click();
