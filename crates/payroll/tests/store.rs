@@ -984,3 +984,47 @@ async fn tax_settings_and_bases_rebuild_from_the_events() {
         None
     );
 }
+
+#[tokio::test]
+async fn reopening_forgets_a_computed_tax_but_keeps_a_typed_one() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let asa_id = asa_on_table(&pool, id, anna).await;
+    store_tax_table(&pool, &flat_table(2026, 7_000))
+        .await
+        .unwrap();
+    let computed_run = create_payroll_run(
+        &pool,
+        id,
+        anna,
+        computed("2026-01-25", &[(asa_id, 35_000 * KR)]),
+    )
+    .await
+    .unwrap();
+    let typed_run = create_payroll_run(
+        &pool,
+        id,
+        anna,
+        draft("2026-02-25", &[(asa_id, 35_000 * KR, 8_000 * KR)]),
+    )
+    .await
+    .unwrap();
+    for run in [computed_run, typed_run] {
+        finalize_payroll_run(&pool, id, anna, run).await.unwrap();
+        reopen_payroll_run(&pool, id, anna, run).await.unwrap();
+    }
+    let tax_of = |run| {
+        let pool = pool.clone();
+        async move { get_payroll_run(&pool, id, anna, run).await.unwrap().lines[0].tax }
+    };
+    assert_eq!(tax_of(computed_run).await, None);
+    assert_eq!(tax_of(typed_run).await, Some(8_000 * KR));
+    let rows = "SELECT COALESCE(tax, '-') || ':' || COALESCE(tax_basis, '-') FROM payroll_run_lines ORDER BY 1";
+    let before = table(&pool, rows).await;
+    assert!(before.iter().any(|r| r == "-:-"));
+
+    rebuild_projections(&pool).await.unwrap();
+
+    assert_eq!(table(&pool, rows).await, before);
+}
