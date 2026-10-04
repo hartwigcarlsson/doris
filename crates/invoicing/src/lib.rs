@@ -5,6 +5,7 @@
 //! the register, decide, append, project. A number is decided inside that
 //! transaction, so concurrent writers never share one.
 
+mod customer_invoice_store;
 pub mod customer_invoices;
 pub mod domain;
 pub mod invoices;
@@ -31,11 +32,16 @@ use supplier_invoices::{
 };
 use uuid::Uuid;
 
+pub use customer_invoice_store::{
+    cancel_customer_invoice, customer_invoice_attachment, list_customer_invoices,
+    pay_customer_invoice, register_customer_invoice, reverse_customer_invoice_payment,
+};
 pub use projections::rebuild_projections;
 
 const CUSTOMERS_STREAM: &str = "customers-";
 const SUPPLIERS_STREAM: &str = "suppliers-";
 const SUPPLIER_INVOICES_STREAM: &str = "supplier-invoices-";
+const CUSTOMER_INVOICES_STREAM: &str = "customer-invoices-";
 const SCHEMA_VERSION: i64 = 1;
 
 pub type Customer = Party<CustomerDetails>;
