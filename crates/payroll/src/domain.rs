@@ -354,8 +354,6 @@ pub struct Payroll {
     pub agi_contact: Option<AgiContact>,
     /// The latest submission per period.
     pub agi_submissions: BTreeMap<Period, AgiSubmission>,
-    /// Every employee's specification number, kept for good once submitted.
-    pub specification_numbers: BTreeMap<Uuid, u64>,
 }
 
 impl Payroll {
@@ -454,11 +452,6 @@ impl Payroll {
                 fee_sum,
                 tax_sum,
             } => {
-                for l in &lines {
-                    self.specification_numbers
-                        .entry(l.employee_id)
-                        .or_insert(l.specification_number);
-                }
                 self.agi_submissions.insert(
                     period,
                     AgiSubmission {

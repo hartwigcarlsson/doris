@@ -176,45 +176,26 @@ fn booked_amounts(payroll: &Payroll, period: Period) -> BTreeMap<Uuid, (i64, i64
 }
 
 /// The individuppgifter for `period`: one per employee paid by a booked
-/// run, amounts summed and then rounded down to whole kronor. Employees
-/// never submitted get the next numbers, in name order.
+/// run, amounts summed and then rounded down to whole kronor. An
+/// employee's specification number is their position in the register
+/// (hire order), the same in every period.
 pub fn agi_lines(payroll: &Payroll, period: Period) -> Vec<AgiLine> {
     let amounts = booked_amounts(payroll, period);
-    // Under one krona is not an individuppgift, and takes no number.
-    let amounts: BTreeMap<_, _> = amounts
-        .into_iter()
-        .filter(|(_, (gross, tax, _))| gross / 100 > 0 || tax / 100 > 0)
-        .collect();
-    let mut numbers: HashMap<Uuid, u64> = payroll
-        .specification_numbers
+    payroll
+        .employees
         .iter()
-        .map(|(k, v)| (*k, *v))
-        .collect();
-    let next = numbers.values().max().copied().unwrap_or(0) + 1;
-    let name = |id: &Uuid| {
-        payroll
-            .employee(*id)
-            .map(|e| e.name.as_str().to_owned())
-            .unwrap_or_default()
-    };
-    let mut new: Vec<Uuid> = amounts
-        .keys()
-        .filter(|id| !numbers.contains_key(id))
-        .copied()
-        .collect();
-    new.sort_by_key(|id| (name(id), *id));
-    numbers.extend(new.into_iter().zip(next..));
-    let mut lines: Vec<AgiLine> = amounts
-        .iter()
-        .map(|(id, (gross, tax, _))| AgiLine {
-            employee_id: *id,
-            specification_number: numbers[id],
-            gross: gross / 100,
-            tax: tax / 100,
+        .zip(1..)
+        .filter_map(|(e, number)| {
+            let (gross, tax, _) = amounts.get(&e.id)?;
+            // Under one krona is not an individuppgift.
+            (gross / 100 > 0 || tax / 100 > 0).then_some(AgiLine {
+                employee_id: e.id,
+                specification_number: number,
+                gross: gross / 100,
+                tax: tax / 100,
+            })
         })
-        .collect();
-    lines.sort_by_key(|l| l.specification_number);
-    lines
+        .collect()
 }
 
 /// Field 487 the way Skatteverket computes it (BeraknadSummaArbAvgSlf):

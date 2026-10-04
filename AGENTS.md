@@ -118,7 +118,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   submitted appends `AgiMonthSubmitted` with what was declared. A month
   that changes afterwards shows as Ändrad and its next file carries the
   changed IUs, a Borttag for each removed one and a new HU.
-  Specification numbers are per employee and never change.
+  An employee's specification number is their 1-based position in the
+  register (`Payroll.employees`, hire order), the same in every month.
 
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.

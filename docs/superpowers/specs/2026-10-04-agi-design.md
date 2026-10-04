@@ -15,7 +15,7 @@ I det här steget tar Doris fram AGI per månad ur de bokförda lönekörningarn
 | Belopp | Hela kronor, avrundat nedåt (öre kastas), på summan per anställd och månad. |
 | Inlämning | Doris skapar filen, och användaren laddar upp den hos Skatteverket och markerar sedan månaden som inlämnad. Det sparas som en händelse med vem och när, och med en ögonblicksbild av vad som lämnades. Doris skickar inget direkt till Skatteverket. |
 | Rättelser | Status räknas fram genom att jämföra med den senaste inlämningen. En ändrad månad får en fil med ändrade och nya individuppgifter, borttag för anställda som inte längre har lön den månaden och en ny huvuduppgift. |
-| Specifikationsnummer | Ett per anställd, sätts vid första inlämningen och är samma i alla månader. |
+| Specifikationsnummer | Ett per anställd: hennes plats i personalregistret (anställningsordning, från 1). Samma i alla månader, före och efter inlämning. |
 | Arbetsgivaravgifter | Summan (fältkod 487) räknas som Skatteverket gör: per avgiftssats, på summerat underlag, avrundat nedåt till hela kronor. Skillnaden mot verifikationernas 2731, som är avrundade per rad till öre, visas men bokförs inte. Skatteverket godtar mindre beräkningsdifferenser (kontroll B_006). |
 | Kontaktperson | Sparas per företag med namn, telefon och e-post. Filen kräver dem både för avsändarens tekniska kontakt och för arbetsgivarens kontaktperson, och samma person används för båda. |
 | Format | Skatteverkets XML-schema för arbetsgivardeklaration 1.1, enligt teknisk beskrivning 1.1.18.2. Filen skrivs som text och ingen XML-modul läggs till. |
@@ -87,13 +87,13 @@ AgiMonthSubmitted {
 ```
 
 ### Tillstånd
-`Payroll` får fälten `agi_contact: Option<AgiContact>` och `agi_submissions: BTreeMap<Period, (Vec<AgiLine>, i64, i64)>`. Det senaste per period gäller. Varje anställds specifikationsnummer är det som först gavs i någon inlämning. En anställd som aldrig lämnats in får `max(alla nummer) + 1` när den lämnas in första gången, och flera nya får nummer i namnordning.
+`Payroll` får fälten `agi_contact: Option<AgiContact>` och `agi_submissions: BTreeMap<Period, (Vec<AgiLine>, i64, i64)>`. Det senaste per period gäller. Varje anställds specifikationsnummer är hennes plats i `Payroll.employees` (1-baserad). Listan växer bara och sorteras aldrig om, så numret ändras aldrig.
 
 ### Beräkning
 - **`agi_lines(payroll, period) -> Vec<AgiLine>`:**
   1. För varje bokförd körning med `Period::of(pay_date) == period` summeras de låsta radernas `gross` och `tax` per anställd.
   2. Summorna görs om till hela kronor (`/ 100`).
-  3. Specifikationsnummer sätts enligt ovan. En anställd som ännu inte har något får ett preliminärt nummer, som blir det sparade först vid inlämningen.
+  3. Specifikationsnummer sätts enligt ovan: platsen i registret.
 
   Anställda vars summor båda är 0 tas inte med. En rad skapas även när bara den ena summan är större än 0.
 - **`agi_fee_sum(payroll, period, &lines) -> i64`:**
@@ -261,9 +261,9 @@ Varje beteende utvecklas med TDD: rött, grönt, refaktorering och commit.
   - Om en körning backas blir det `Changed`. Den anställda blir `Removed` om hon inte har någon annan körning, annars `Changed`.
   - En ny körning ger `Changed` och `New` för en ny anställd.
 - **Specifikationsnummer:**
-  - De ges i namnordning från 1.
-  - De är stabila i nästa månad.
-  - En ny anställd får `max + 1`.
+  - De är platsen i registret, från 1.
+  - De flyttar sig inte när en tidigare månad markeras inlämnad.
+  - En ny anställd tar aldrig en borttagens nummer.
   - En borttagen behåller sitt nummer.
 - **`submit_agi_month`:** felen `AgiPeriodEmpty`, `AgiUnchanged` och `AgiContactMissing`. En månad där alla har tagits bort kan lämnas in.
 - **Arbetsgivarens ID:**

@@ -265,12 +265,12 @@ fn a_month_goes_not_submitted_submitted_changed() {
     );
     let month = agi_month(&w.payroll(), oct());
     assert_eq!(month.status, AgiStatus::NotSubmitted);
-    // Specification numbers go by name for those never declared: Bo, then Åsa.
+    // Specification numbers are the position in the register: Åsa, then Bo.
     assert_eq!(
         amounts(&month),
         [
-            (1, 20_000, 3_000, AgiChange::New),
-            (2, 35_000, 7_134, AgiChange::New)
+            (1, 35_000, 7_134, AgiChange::New),
+            (2, 20_000, 3_000, AgiChange::New)
         ]
     );
     assert_eq!(
@@ -293,14 +293,14 @@ fn a_month_goes_not_submitted_submitted_changed() {
     w.booked(date(2026, 10, 30), &[(asa, 36_000 * KR, 7_400 * KR)]);
     let month = agi_month(&w.payroll(), oct());
     assert_eq!(month.status, AgiStatus::Changed);
-    assert_eq!(amounts(&month), [(2, 36_000, 7_400, AgiChange::Changed)]);
+    assert_eq!(amounts(&month), [(1, 36_000, 7_400, AgiChange::Changed)]);
     assert_eq!(
         month
             .removed
             .iter()
             .map(|l| (l.employee_id, l.specification_number))
             .collect::<Vec<_>>(),
-        [(bo, 1)]
+        [(bo, 2)]
     );
     w.submit(oct());
     assert_eq!(agi_month(&w.payroll(), oct()).status, AgiStatus::Submitted);
@@ -343,7 +343,7 @@ fn an_employee_in_two_runs_one_backed_out_is_changed_not_removed() {
 }
 
 #[test]
-fn specification_numbers_stay_put_and_new_employees_get_the_next() {
+fn specification_numbers_are_the_position_in_the_register() {
     let mut w = World::default();
     let asa = w.hire("Åsa Öberg", "19800101-1231");
     let bo = w.hire("Bo Ek", "19500301-1235");
@@ -360,7 +360,33 @@ fn specification_numbers_stay_put_and_new_employees_get_the_next() {
         .iter()
         .map(|(l, _)| (l.employee_id, l.specification_number))
         .collect();
-    assert_eq!(numbers, [(asa, 2), (cy, 3)]);
+    assert_eq!(numbers, [(asa, 1), (cy, 3)]);
+}
+
+#[test]
+fn numbers_do_not_move_when_an_earlier_month_is_marked() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    let bo = w.hire("Bo Ek", "19500301-1235");
+    w.contact();
+    let sep = Period::parse("202609").unwrap();
+    w.booked(date(2026, 9, 25), &[(bo, 100 * KR, 0)]);
+    w.booked(date(2026, 10, 25), &[(asa, 100 * KR, 0), (bo, 100 * KR, 0)]);
+    let numbers = |w: &World, p: Period| {
+        agi_lines(&w.payroll(), p)
+            .iter()
+            .map(|l| (l.employee_id, l.specification_number))
+            .collect::<Vec<_>>()
+    };
+    let sep_before = numbers(&w, sep);
+    let oct_before = numbers(&w, oct());
+
+    w.submit(sep);
+
+    assert_eq!(numbers(&w, sep), sep_before);
+    assert_eq!(numbers(&w, oct()), oct_before);
+    // The position in the register: Åsa was hired first.
+    assert_eq!(oct_before, [(asa, 1), (bo, 2)]);
 }
 
 #[test]
@@ -430,7 +456,7 @@ fn a_removed_employee_keeps_her_number_for_later_months() {
             .iter()
             .map(|(l, _)| l.specification_number)
             .collect::<Vec<_>>(),
-        [1]
+        [2]
     );
 }
 
@@ -468,7 +494,8 @@ fn an_employee_paid_under_one_krona_takes_no_number() {
 
     let month = agi_month(&w.payroll(), oct());
 
-    assert_eq!(amounts(&month), [(1, 100, 0, AgiChange::New)]);
+    // Ada keeps her number 1 in the register, but has no line.
+    assert_eq!(amounts(&month), [(2, 100, 0, AgiChange::New)]);
 }
 
 use doris_company::domain::OrgNr;
