@@ -84,13 +84,15 @@ pub async fn serve<E: RustEmbed>(uri: Uri, headers: HeaderMap) -> Response {
 /// Trunk names build outputs `<name>-<hash>.<ext>` (the wasm gets a `_bg`
 /// suffix on the stem: `<name>-<hash>_bg.wasm`), where `<hash>` is 8-16
 /// lowercase or uppercase hex digits (Trunk 0.21 formats it with `{:x}`,
-/// unpadded, so it can be shorter than 16 digits). Those names never change
-/// content, so browsers may cache them forever.
+/// unpadded, so it can be shorter than 16 digits). The initializer module
+/// (`data-initializer`) is `<hash>-<name>.<ext>` instead. Those names never
+/// change content, so browsers may cache them forever.
 fn is_hashed(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     let stem = name.split('.').next().unwrap_or(name);
     let stem = stem.strip_suffix("_bg").unwrap_or(stem);
-    stem.rsplit_once('-').is_some_and(|(_, hash)| {
-        (8..=16).contains(&hash.len()) && hash.bytes().all(|b| b.is_ascii_hexdigit())
-    })
+    let is_hash =
+        |hash: &str| (8..=16).contains(&hash.len()) && hash.bytes().all(|b| b.is_ascii_hexdigit());
+    stem.rsplit_once('-').is_some_and(|(_, hash)| is_hash(hash))
+        || stem.split_once('-').is_some_and(|(hash, _)| is_hash(hash))
 }
