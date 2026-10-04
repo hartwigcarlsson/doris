@@ -80,6 +80,7 @@ impl PayrollService for PayrollApi {
             personal_identity_number: &req.personal_identity_number,
             monthly_salary: req.monthly_salary,
             salary_account: req.salary_account,
+            tax: None,
         };
         let employee_id = doris_payroll::add_employee(&self.pool, company, user, new)
             .await
@@ -319,7 +320,7 @@ fn run_message(view: PayrollRunView) -> pb::PayrollRun {
                     employee_id: l.employee_id.to_string(),
                     employee_name: l.employee_name,
                     gross: l.gross,
-                    tax: l.tax,
+                    tax: l.tax.unwrap_or(0),
                     ..Default::default()
                 },
             })
