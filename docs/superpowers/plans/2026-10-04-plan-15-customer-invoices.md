@@ -1045,7 +1045,7 @@ git commit -m "Decide customer invoices and the vouchers they book"
 ### Task 3: Storing customer invoices
 
 **Files:**
-- Create: `migrations/0012_customer_invoices.sql`
+- Create: `migrations/0013_customer_invoices.sql`
 - Create: `crates/invoicing/src/customer_invoice_store.rs`
 - Modify: `crates/invoicing/src/projections.rs`, `crates/invoicing/src/lib.rs`
 - Test: `crates/invoicing/tests/customer_invoices.rs`
@@ -1364,7 +1364,7 @@ async fn an_empty_register_proposes_number_1_and_strangers_are_refused() {
 Run: `cargo test -p doris-invoicing --test customer_invoices`
 Expected: compile errors, because the store functions don't exist.
 
-- [ ] **Step 3: Write the migration `migrations/0012_customer_invoices.sql`**
+- [ ] **Step 3: Write the migration `migrations/0013_customer_invoices.sql`**
 
 ```sql
 -- Customer invoices: the projection of the customer-invoices-{company}
@@ -1678,7 +1678,7 @@ Expected: no warnings.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add migrations/0012_customer_invoices.sql crates/invoicing
+git add migrations/0013_customer_invoices.sql crates/invoicing
 git commit -m "Register, pay, cancel and reverse customer invoices with their vouchers"
 ```
 

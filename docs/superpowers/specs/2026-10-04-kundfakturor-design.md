@@ -86,7 +86,7 @@ Varje skrivning är en `BEGIN IMMEDIATE`-transaktion:
 
 En avvisad registrering förbrukar inget internt nummer och inget verifikationsnummer.
 
-### Migration `migrations/0012_customer_invoices.sql`
+### Migration `migrations/0013_customer_invoices.sql`
 ```sql
 CREATE TABLE customer_invoices (
     company_id      TEXT    NOT NULL REFERENCES companies(company_id),
