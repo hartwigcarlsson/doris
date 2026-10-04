@@ -6,23 +6,14 @@ use crate::api::{invoicing_api, ipb};
 use crate::attachments::{open_in, size_label};
 use crate::errors::{describe, describe_code};
 use crate::format::{amount, today};
+use crate::invoice_ui::{PayForm, ReasonForm, status_label};
 use crate::ui::{
     Button, Checkbox, ErrorAlert, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW,
-    Table, TextInput, Variant,
+    Table, Variant,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
-
-/// Obetald, Förfallen (unpaid past its due date), Betald or Makulerad.
-fn status_label(invoice: &ipb::SupplierInvoice, today: &str) -> &'static str {
-    match invoice.status.as_str() {
-        "paid" => "Betald",
-        "cancelled" => "Makulerad",
-        _ if invoice.due_date.as_str() < today => "Förfallen",
-        _ => "Obetald",
-    }
-}
 
 #[component]
 pub fn SupplierInvoices() -> impl IntoView {
@@ -123,7 +114,7 @@ fn InvoiceRow(
     // The company this row was loaded for, not whatever is active now.
     let company_id = StoredValue::new(company_id);
     let number = invoice.number;
-    let label = status_label(&invoice, &today());
+    let label = status_label(&invoice.status, &invoice.due_date, &today());
     let (unpaid, paid) = (invoice.status == "unpaid", invoice.status == "paid");
     let invoice = StoredValue::new(invoice);
     let panel = RwSignal::new(Panel::Closed);
@@ -276,61 +267,18 @@ fn InvoiceRow(
                             }.into_any()
                         }
                         Panel::Pay => view! {
-                            <div class="flex items-end gap-2">
-                                <TextInput label="Betaldatum" kind="date" value=pay_date />
-                                <TextInput label="Betalkonto" value=pay_account inputmode="numeric" />
-                                <Button kind="button" on:click=move |_| act(Panel::Pay)>"Bekräfta betalning"</Button>
-                            </div>
+                            <PayForm date=pay_date account=pay_account confirm="Bekräfta betalning" on_confirm=Callback::new(move |()| act(Panel::Pay)) />
                         }.into_any(),
                         Panel::Cancel => view! {
-                            <div class="flex items-end gap-2">
-                                <TextInput label="Anledning" value=reason />
-                                <Button kind="button" on:click=move |_| act(Panel::Cancel)>"Bekräfta makulering"</Button>
-                            </div>
+                            <ReasonForm reason=reason confirm="Bekräfta makulering" on_confirm=Callback::new(move |()| act(Panel::Cancel)) />
                         }.into_any(),
                         Panel::Reverse => view! {
-                            <div class="flex items-end gap-2">
-                                <TextInput label="Anledning" value=reason />
-                                <Button kind="button" on:click=move |_| act(Panel::Reverse)>"Bekräfta ångring"</Button>
-                            </div>
+                            <ReasonForm reason=reason confirm="Bekräfta ångring" on_confirm=Callback::new(move |()| act(Panel::Reverse)) />
                         }.into_any(),
                         Panel::Closed => ().into_any(),
                     }}
                 </td>
             </tr>
         </Show>
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn invoice(status: &str, due: &str) -> ipb::SupplierInvoice {
-        ipb::SupplierInvoice {
-            status: status.into(),
-            due_date: due.into(),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn an_unpaid_invoice_past_its_due_date_is_overdue() {
-        assert_eq!(
-            status_label(&invoice("unpaid", "2026-03-31"), "2026-03-31"),
-            "Obetald"
-        );
-        assert_eq!(
-            status_label(&invoice("unpaid", "2026-03-31"), "2026-04-01"),
-            "Förfallen"
-        );
-        assert_eq!(
-            status_label(&invoice("paid", "2026-03-31"), "2026-04-01"),
-            "Betald"
-        );
-        assert_eq!(
-            status_label(&invoice("cancelled", "2026-03-31"), "2026-04-01"),
-            "Makulerad"
-        );
     }
 }

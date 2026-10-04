@@ -3,65 +3,15 @@
 
 use crate::active_company::Companies;
 use crate::api::{invoicing_api, ipb, ledger_api, lpb};
-use crate::attachments::{check_sizes, read_files, size_label};
+use crate::attachments::check_sizes;
 use crate::errors::{describe, describe_code};
 use crate::format::{amount, parse_amount, plus_days, today};
-use crate::ui::{
-    Button, Card, ErrorAlert, Field, FileInput, SELECT, SELECT_OPTION, Select, TextInput, Variant,
-};
-use crate::voucher_lines::account_number;
+use crate::invoice_ui::{InvoiceLineRows, LineRow, PickedFiles, preview_vat};
+use crate::ui::{Button, Card, ErrorAlert, Field, SELECT_OPTION, Select};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::hooks::use_navigate;
-
-/// VAT per rate on that rate's summed net, rounded half up: the server's
-/// rule, shown while typing. The server decides.
-fn preview_vat(lines: &[(i64, u32)]) -> i64 {
-    let mut by_rate = std::collections::BTreeMap::<u32, i64>::new();
-    for &(net, rate) in lines {
-        *by_rate.entry(rate).or_default() += net;
-    }
-    by_rate
-        .into_iter()
-        .map(|(rate, net)| (net * i64::from(rate) + 50) / 100)
-        .sum()
-}
-
-#[derive(Clone, Copy)]
-struct Row {
-    id: u32,
-    account: RwSignal<String>,
-    net: RwSignal<String>,
-    rate: RwSignal<String>,
-}
-
-impl Row {
-    fn new(id: u32) -> Self {
-        Self {
-            id,
-            account: RwSignal::new(String::new()),
-            net: RwSignal::new(String::new()),
-            rate: RwSignal::new("25".into()),
-        }
-    }
-
-    /// (net in öre, rate) as typed; an unreadable amount counts as 0.
-    fn preview(&self) -> (i64, u32) {
-        (
-            parse_amount(&self.net.get()).unwrap_or(0),
-            self.rate.get().parse().unwrap_or(25),
-        )
-    }
-
-    fn request(&self) -> Option<ipb::InvoiceLine> {
-        Some(ipb::InvoiceLine {
-            account: account_number(&self.account.get_untracked()),
-            net: parse_amount(&self.net.get_untracked())?,
-            vat_rate: self.rate.get_untracked().parse().unwrap_or(25),
-        })
-    }
-}
 
 #[component]
 pub fn NewSupplierInvoice() -> impl IntoView {
@@ -75,7 +25,7 @@ pub fn NewSupplierInvoice() -> impl IntoView {
     let due_date = RwSignal::new(plus_days(&today(), 30).unwrap_or_default());
     let reference = RwSignal::new(String::new());
     let next_id = StoredValue::new(1u32);
-    let rows = RwSignal::new(vec![Row::new(0)]);
+    let rows = RwSignal::new(vec![LineRow::new(0)]);
     // The VAT field, and the computed amount it last showed: while they are
     // the same the user hasn't changed it, and it follows the lines.
     let vat = RwSignal::new(amount(0));
@@ -93,8 +43,8 @@ pub fn NewSupplierInvoice() -> impl IntoView {
         }
     });
     Effect::new(move |_| {
-        let lines: Vec<(i64, u32)> = rows.get().iter().map(Row::preview).collect();
-        let computed = amount(preview_vat(&lines));
+        let lines: Vec<(i64, u32)> = rows.get().iter().map(LineRow::preview).collect();
+        let computed = amount(preview_vat(&lines).iter().map(|(_, vat)| vat).sum());
         if vat.get_untracked() == auto_vat.get_untracked() {
             vat.set(computed.clone());
         }
@@ -108,7 +58,7 @@ pub fn NewSupplierInvoice() -> impl IntoView {
         accounts.set(Vec::new());
         invoice_number.set(String::new());
         reference.set(String::new());
-        rows.set(vec![Row::new(next_id.get_value())]);
+        rows.set(vec![LineRow::new(next_id.get_value())]);
         next_id.update_value(|id| *id += 1);
         files.set(Vec::new());
         error.set(None);
@@ -151,22 +101,6 @@ pub fn NewSupplierInvoice() -> impl IntoView {
         });
     });
 
-    let pick = move |input: web_sys::HtmlInputElement| {
-        let company_id = form_company.get_value();
-        reading.update(|n| *n += 1);
-        spawn_local(async move {
-            let picked = read_files(&input).await;
-            reading.try_update(|n| *n -= 1);
-            if company_id != form_company.get_value() {
-                return;
-            }
-            match picked {
-                Ok(picked) => files.update(|f| f.extend(picked)),
-                Err(code) => error.set(Some(describe_code(code))),
-            }
-        });
-    };
-
     let submit = move |ev: SubmitEvent| {
         ev.prevent_default();
         error.set(None);
@@ -176,7 +110,7 @@ pub fn NewSupplierInvoice() -> impl IntoView {
         let Some(lines) = rows
             .get_untracked()
             .iter()
-            .map(Row::request)
+            .map(LineRow::request)
             .collect::<Option<Vec<_>>>()
         else {
             return error.set(Some("Skriv beloppen som 1 234,50.".into()));
@@ -259,100 +193,16 @@ pub fn NewSupplierInvoice() -> impl IntoView {
                             .collect_view()
                     }}
                 </datalist>
-                <div class="grid gap-2">
-                    <div class="grid grid-cols-[1fr_8rem_6rem_auto] gap-2 text-muted-foreground">
-                        <span>"Konto"</span>
-                        <span>"Belopp exkl. moms"</span>
-                        <span>"Moms"</span>
-                        <span></span>
-                    </div>
-                    <For each=move || { rows.get().into_iter().enumerate().collect::<Vec<_>>() } key=|(i, r)| (*i, r.id) let((index, row))>
-                        <div class="grid grid-cols-[1fr_8rem_6rem_auto] gap-2">
-                            <TextInput label=format!("Konto, rad {}", index + 1) value=row.account list="invoice_accounts" />
-                            <TextInput label=format!("Belopp exkl. moms, rad {}", index + 1) value=row.net inputmode="decimal" />
-                            <select
-                                class=SELECT
-                                aria-label=format!("Momssats, rad {}", index + 1)
-                                prop:value=move || row.rate.get()
-                                on:change=move |ev| row.rate.set(event_target_value(&ev))
-                            >
-                                <option class=SELECT_OPTION value="25">"25 %"</option>
-                                <option class=SELECT_OPTION value="12">"12 %"</option>
-                                <option class=SELECT_OPTION value="6">"6 %"</option>
-                                <option class=SELECT_OPTION value="0">"0 %"</option>
-                            </select>
-                            <Button
-                                variant=Variant::Ghost
-                                kind="button"
-                                on:click=move |_| rows.update(|all| all.retain(|other| other.id != row.id))
-                            >
-                                "Ta bort"
-                            </Button>
-                        </div>
-                    </For>
-                    <div>
-                        <Button
-                            variant=Variant::Ghost
-                            kind="button"
-                            on:click=move |_| {
-                                let id = next_id.get_value();
-                                next_id.set_value(id + 1);
-                                rows.update(|all| all.push(Row::new(id)));
-                            }
-                        >
-                            "Lägg till rad"
-                        </Button>
-                    </div>
-                </div>
+                <InvoiceLineRows rows=rows next_id=next_id list="invoice_accounts" />
                 <div class="grid grid-cols-[10rem_1fr] items-end gap-4">
                     <Field label="Moms" id="invoice_vat" value=vat />
                     <p class="text-xs/relaxed">
                         {move || format!("Netto {} · Att betala {}", amount(net_total()), amount(to_pay()))}
                     </p>
                 </div>
-                <div class="grid gap-2">
-                    <FileInput label="Underlag" id="invoice_files" on_pick=pick />
-                    <ul class="grid gap-1">
-                        {move || {
-                            files.with(|picked| {
-                                picked
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, f)| {
-                                        let name = f.file_name.clone();
-                                        view! {
-                                            <li class="flex items-center justify-between gap-4 text-xs/relaxed">
-                                                <span>{format!("{} ({})", name, size_label(f.data.len() as u64))}</span>
-                                                <Button
-                                                    variant=Variant::Ghost
-                                                    kind="button"
-                                                    attr:aria-label=format!("Ta bort {name}")
-                                                    on:click=move |_| files.update(|f| { f.remove(i); })
-                                                >
-                                                    "Ta bort"
-                                                </Button>
-                                            </li>
-                                        }
-                                    })
-                                    .collect_view()
-                            })
-                        }}
-                    </ul>
-                </div>
+                <PickedFiles id="invoice_files" files=files reading=reading error=error company=form_company />
                 <Button disabled=Signal::derive(move || busy.get() || reading.get() > 0)>"Registrera"</Button>
             </form>
         </Card>
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::preview_vat;
-
-    #[test]
-    fn the_preview_rounds_vat_per_rate_like_the_server() {
-        assert_eq!(preview_vat(&[(33, 25), (33, 25), (33, 25)]), 25);
-        assert_eq!(preview_vat(&[(1000, 12), (50, 6), (700, 0)]), 123);
-        assert_eq!(preview_vat(&[]), 0);
     }
 }
