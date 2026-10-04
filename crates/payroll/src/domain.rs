@@ -1,7 +1,7 @@
 //! Pure payroll rules: employees, payroll runs and arbetsgivaravgifter.
 //! No I/O, no clock.
 
-use jiff::civil::Date;
+use jiff::civil::{Date, date};
 use serde::{Deserialize, Serialize};
 
 /// The largest amount on a voucher line (the ledger's limit), in öre.
@@ -99,4 +99,47 @@ impl SalaryAccount {
     pub fn get(self) -> u32 {
         self.0.into()
     }
+}
+
+/// Full arbetsgivaravgift, in basis points of the gross salary.
+pub const FULL_RATE: u32 = 3142;
+/// Only ålderspensionsavgift: for those who were 67 when the year began.
+pub const OLD_AGE_RATE: u32 = 1021;
+/// The temporary reduction for 19–23-year-olds, on the first 25 000 kr a month.
+pub const YOUTH_RATE: u32 = 2081;
+const YOUTH_CAP: i64 = 2_500_000;
+const YOUTH_FROM: Date = date(2026, 4, 1);
+const YOUTH_UNTIL: Date = date(2027, 9, 30);
+
+/// Arbetsgivaravgift on `gross` paid on `pay_date` to someone born in
+/// `birth_year`, after `earlier_gross_same_month` already paid to them in
+/// that calendar month. Returns the rate (for the youth reduction, the
+/// rate under the cap) and the fee in öre, half an öre rounded up.
+///
+/// Skatteverket, "Arbetsgivaravgifter" (2026).
+// ponytail: the rules live in code from 2026; a changed rate needs a new
+// release. A table of rates by date pays off only if they change more
+// often than Doris is released.
+pub fn employer_fee(
+    birth_year: i16,
+    pay_date: Date,
+    gross: i64,
+    earlier_gross_same_month: i64,
+) -> (u32, i64) {
+    let year = pay_date.year();
+    let (rate, under_cap) = if birth_year <= 1937 {
+        (0, gross)
+    } else if birth_year <= year - 68 {
+        (OLD_AGE_RATE, gross)
+    } else if (year - 23..=year - 19).contains(&birth_year)
+        && (YOUTH_FROM..=YOUTH_UNTIL).contains(&pay_date)
+    {
+        let left = (YOUTH_CAP - earlier_gross_same_month).max(0);
+        (YOUTH_RATE, gross.min(left))
+    } else {
+        (FULL_RATE, gross)
+    };
+    let over_cap = gross - under_cap;
+    let fee = (under_cap * i64::from(rate) + over_cap * i64::from(FULL_RATE) + 5_000) / 10_000;
+    (rate, fee)
 }
