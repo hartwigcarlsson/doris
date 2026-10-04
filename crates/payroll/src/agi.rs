@@ -5,9 +5,11 @@
 //! Skatteverket, "Teknisk beskrivning 1.1.18.2 för arbetsgivardeklaration".
 
 use crate::domain::{DomainError, Payroll, PayrollEvent, PayrollRunStatus, fee_bases};
-use jiff::civil::{Date, date};
+use doris_company::domain::OrgNr;
+use jiff::civil::{Date, DateTime, date};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Write as _;
 use uuid::Uuid;
 
 /// A redovisningsperiod: the pay date's year and month, `ÅÅÅÅMM`.
@@ -327,4 +329,172 @@ pub fn set_agi_contact(payroll: &Payroll, contact: AgiContact) -> Vec<PayrollEve
         return vec![];
     }
     vec![PayrollEvent::AgiContactChanged { contact }]
+}
+
+/// The employer's 12-digit id in the file (AgRegistreradId): `16` and the
+/// organisationsnummer, or for an enskild firma the owner's personnummer
+/// with its century.
+// ponytail: the century assumes an owner under 100; a field for the full
+// personnummer if that ever matters.
+pub fn employer_id(org_nr: &OrgNr, this_year: i16) -> String {
+    let digits = org_nr.as_str();
+    if !org_nr.is_personal_identity_number() {
+        return format!("16{digits}");
+    }
+    let yy: i16 = digits[..2].parse().expect("an OrgNr is digits");
+    let century = if yy > this_year % 100 { "19" } else { "20" };
+    format!("{century}{digits}")
+}
+
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+const ROOT: &str = r#"<Skatteverket omrade="Arbetsgivardeklaration" xmlns="http://xmls.skatteverket.se/se/skatteverket/da/instans/schema/1.1" xmlns:agd="http://xmls.skatteverket.se/se/skatteverket/da/komponent/schema/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://xmls.skatteverket.se/se/skatteverket/da/instans/schema/1.1 http://xmls.skatteverket.se/se/skatteverket/da/arbetsgivardeklaration/arbetsgivardeklaration_1.1.xsd">"#;
+
+/// The file for the month: the HU, an IU for every new or changed line and
+/// a Borttag IU for every removed one (unchanged lines are not sent again).
+/// Skatteverket's schema arbetsgivardeklaration_1.1, laid out like its
+/// sample file 01 ("Vanliga löntagare").
+pub fn agi_xml(
+    month: &AgiMonth,
+    employer_id: &str,
+    contact: &AgiContact,
+    personal_ids: &HashMap<Uuid, String>,
+    created: DateTime,
+) -> String {
+    let (id, period) = (employer_id, month.period);
+    let (name, phone, email) = (
+        escape(&contact.name),
+        escape(&contact.phone),
+        escape(&contact.email),
+    );
+    let mut x = String::new();
+    let _ = writeln!(
+        x,
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#
+    );
+    let _ = writeln!(x, "{ROOT}");
+    let _ = writeln!(x, "  <agd:Avsandare>");
+    let _ = writeln!(x, "    <agd:Programnamn>Doris</agd:Programnamn>");
+    let _ = writeln!(
+        x,
+        "    <agd:Organisationsnummer>{id}</agd:Organisationsnummer>"
+    );
+    let _ = writeln!(x, "    <agd:TekniskKontaktperson>");
+    let _ = writeln!(x, "      <agd:Namn>{name}</agd:Namn>");
+    let _ = writeln!(x, "      <agd:Telefon>{phone}</agd:Telefon>");
+    let _ = writeln!(x, "      <agd:Epostadress>{email}</agd:Epostadress>");
+    let _ = writeln!(x, "    </agd:TekniskKontaktperson>");
+    let _ = writeln!(
+        x,
+        "    <agd:Skapad>{}</agd:Skapad>",
+        created.strftime("%Y-%m-%dT%H:%M:%S")
+    );
+    let _ = writeln!(x, "  </agd:Avsandare>");
+    let _ = writeln!(x, "  <agd:Blankettgemensamt>");
+    let _ = writeln!(x, "    <agd:Arbetsgivare>");
+    let _ = writeln!(x, "      <agd:AgRegistreradId>{id}</agd:AgRegistreradId>");
+    let _ = writeln!(x, "      <agd:Kontaktperson>");
+    let _ = writeln!(x, "        <agd:Namn>{name}</agd:Namn>");
+    let _ = writeln!(x, "        <agd:Telefon>{phone}</agd:Telefon>");
+    let _ = writeln!(x, "        <agd:Epostadress>{email}</agd:Epostadress>");
+    let _ = writeln!(x, "      </agd:Kontaktperson>");
+    let _ = writeln!(x, "    </agd:Arbetsgivare>");
+    let _ = writeln!(x, "  </agd:Blankettgemensamt>");
+    let blankett_start = |x: &mut String| {
+        let _ = writeln!(x, "  <agd:Blankett>");
+        let _ = writeln!(x, "    <agd:Arendeinformation>");
+        let _ = writeln!(x, "      <agd:Arendeagare>{id}</agd:Arendeagare>");
+        let _ = writeln!(x, "      <agd:Period>{period}</agd:Period>");
+        let _ = writeln!(x, "    </agd:Arendeinformation>");
+        let _ = writeln!(x, "    <agd:Blankettinnehall>");
+    };
+    let blankett_end = |x: &mut String| {
+        let _ = writeln!(x, "    </agd:Blankettinnehall>");
+        let _ = writeln!(x, "  </agd:Blankett>");
+    };
+    blankett_start(&mut x);
+    let _ = writeln!(x, "      <agd:HU>");
+    let _ = writeln!(x, "        <agd:ArbetsgivareHUGROUP>");
+    let _ = writeln!(
+        x,
+        r#"          <agd:AgRegistreradId faltkod="201">{id}</agd:AgRegistreradId>"#
+    );
+    let _ = writeln!(x, "        </agd:ArbetsgivareHUGROUP>");
+    let _ = writeln!(
+        x,
+        r#"        <agd:RedovisningsPeriod faltkod="006">{period}</agd:RedovisningsPeriod>"#
+    );
+    let _ = writeln!(
+        x,
+        r#"        <agd:SummaArbAvgSlf faltkod="487">{}</agd:SummaArbAvgSlf>"#,
+        month.fee_sum
+    );
+    let _ = writeln!(
+        x,
+        r#"        <agd:SummaSkatteavdr faltkod="497">{}</agd:SummaSkatteavdr>"#,
+        month.tax_sum
+    );
+    let _ = writeln!(x, "      </agd:HU>");
+    blankett_end(&mut x);
+    let sent = month
+        .lines
+        .iter()
+        .filter(|(_, c)| *c != AgiChange::Unchanged)
+        .map(|(l, _)| (l, false));
+    let removed = month.removed.iter().map(|l| (l, true));
+    for (line, removal) in sent.chain(removed) {
+        let pin = personal_ids
+            .get(&line.employee_id)
+            .map(String::as_str)
+            .unwrap_or_default();
+        blankett_start(&mut x);
+        let _ = writeln!(x, "      <agd:IU>");
+        let _ = writeln!(x, "        <agd:ArbetsgivareIUGROUP>");
+        let _ = writeln!(
+            x,
+            r#"          <agd:AgRegistreradId faltkod="201">{id}</agd:AgRegistreradId>"#
+        );
+        let _ = writeln!(x, "        </agd:ArbetsgivareIUGROUP>");
+        let _ = writeln!(x, "        <agd:BetalningsmottagareIUGROUP>");
+        let _ = writeln!(x, "          <agd:BetalningsmottagareIDChoice>");
+        let _ = writeln!(
+            x,
+            r#"            <agd:BetalningsmottagarId faltkod="215">{pin}</agd:BetalningsmottagarId>"#
+        );
+        let _ = writeln!(x, "          </agd:BetalningsmottagareIDChoice>");
+        let _ = writeln!(x, "        </agd:BetalningsmottagareIUGROUP>");
+        let _ = writeln!(
+            x,
+            r#"        <agd:RedovisningsPeriod faltkod="006">{period}</agd:RedovisningsPeriod>"#
+        );
+        let _ = writeln!(
+            x,
+            r#"        <agd:Specifikationsnummer faltkod="570">{}</agd:Specifikationsnummer>"#,
+            line.specification_number
+        );
+        if removal {
+            let _ = writeln!(x, r#"        <agd:Borttag faltkod="205">1</agd:Borttag>"#);
+        } else {
+            let _ = writeln!(
+                x,
+                r#"        <agd:KontantErsattningUlagAG faltkod="011">{}</agd:KontantErsattningUlagAG>"#,
+                line.gross
+            );
+            let _ = writeln!(
+                x,
+                r#"        <agd:AvdrPrelSkatt faltkod="001">{}</agd:AvdrPrelSkatt>"#,
+                line.tax
+            );
+        }
+        let _ = writeln!(x, "      </agd:IU>");
+        blankett_end(&mut x);
+    }
+    let _ = writeln!(x, "</Skatteverket>");
+    x
 }

@@ -470,3 +470,132 @@ fn an_employee_paid_under_one_krona_takes_no_number() {
 
     assert_eq!(amounts(&month), [(1, 100, 0, AgiChange::New)]);
 }
+
+use doris_company::domain::OrgNr;
+use std::collections::HashMap;
+
+fn line(employee_id: Uuid, number: u64, gross: i64, tax: i64) -> AgiLine {
+    AgiLine {
+        employee_id,
+        specification_number: number,
+        gross,
+        tax,
+    }
+}
+
+fn contact() -> AgiContact {
+    AgiContact::parse("Anna Andersson", "070-123 45 67", "anna@example.se").unwrap()
+}
+
+fn created() -> jiff::civil::DateTime {
+    jiff::civil::date(2026, 11, 5).at(9, 30, 0, 0)
+}
+
+#[test]
+fn the_employer_id_has_twelve_digits() {
+    assert_eq!(
+        employer_id(&OrgNr::parse("556016-0680").unwrap(), 2026),
+        "165560160680"
+    );
+    // Enskild firma: the owner's personnummer, its century from the year.
+    assert_eq!(
+        employer_id(&OrgNr::parse("800101-1231").unwrap(), 2026),
+        "198001011231"
+    );
+    assert_eq!(
+        employer_id(&OrgNr::parse("050615-1232").unwrap(), 2026),
+        "200506151232"
+    );
+}
+
+#[test]
+fn a_month_not_yet_submitted_writes_the_hu_and_every_iu() {
+    let (asa, bo) = (Uuid::new_v4(), Uuid::new_v4());
+    let month = AgiMonth {
+        period: oct(),
+        lines: vec![
+            (line(asa, 1, 35_000, 7_134), AgiChange::New),
+            (line(bo, 2, 20_000, 3_000), AgiChange::New),
+        ],
+        removed: vec![],
+        fee_sum: 13_039,
+        tax_sum: 10_134,
+        booked_fees: 1_303_900,
+        status: AgiStatus::NotSubmitted,
+    };
+    let ids = HashMap::from([
+        (asa, "198001011231".to_owned()),
+        (bo, "195003011235".to_owned()),
+    ]);
+
+    let xml = agi_xml(&month, "165560160680", &contact(), &ids, created());
+
+    assert_eq!(xml, include_str!("fixtures/agi_202610.xml"));
+}
+
+#[test]
+fn a_changed_month_writes_only_changes_and_removals() {
+    let (asa, bo, cy) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let month = AgiMonth {
+        period: oct(),
+        lines: vec![
+            (line(asa, 1, 35_000, 7_134), AgiChange::Unchanged),
+            (line(cy, 3, 10_000, 2_000), AgiChange::Changed),
+        ],
+        removed: vec![line(bo, 2, 20_000, 3_000)],
+        fee_sum: 14_139,
+        tax_sum: 9_134,
+        booked_fees: 0,
+        status: AgiStatus::Changed,
+    };
+    let ids = HashMap::from([
+        (asa, "198001011231".to_owned()),
+        (bo, "195003011235".to_owned()),
+        (cy, "198001021230".to_owned()),
+    ]);
+
+    let xml = agi_xml(&month, "165560160680", &contact(), &ids, created());
+
+    assert!(xml.contains(r#"<agd:SummaArbAvgSlf faltkod="487">14139</agd:SummaArbAvgSlf>"#));
+    assert!(xml.contains(r#"<agd:SummaSkatteavdr faltkod="497">9134</agd:SummaSkatteavdr>"#));
+    assert!(
+        !xml.contains("198001011231"),
+        "unchanged lines are not sent"
+    );
+    assert!(xml.contains(
+        r#"<agd:BetalningsmottagarId faltkod="215">198001021230</agd:BetalningsmottagarId>"#
+    ));
+    let removal = r#"<agd:BetalningsmottagarId faltkod="215">195003011235</agd:BetalningsmottagarId>
+          </agd:BetalningsmottagareIDChoice>
+        </agd:BetalningsmottagareIUGROUP>
+        <agd:RedovisningsPeriod faltkod="006">202610</agd:RedovisningsPeriod>
+        <agd:Specifikationsnummer faltkod="570">2</agd:Specifikationsnummer>
+        <agd:Borttag faltkod="205">1</agd:Borttag>
+      </agd:IU>"#;
+    assert!(xml.contains(removal), "{xml}");
+    assert_eq!(xml.matches("<agd:IU>").count(), 2);
+}
+
+#[test]
+fn text_is_escaped() {
+    let month = AgiMonth {
+        period: oct(),
+        lines: vec![],
+        removed: vec![],
+        fee_sum: 0,
+        tax_sum: 0,
+        booked_fees: 0,
+        status: AgiStatus::Changed,
+    };
+    let contact = AgiContact {
+        name: "Åsa & Bo <AB> \"x\" 'y'".into(),
+        phone: "070".into(),
+        email: "a@b.se".into(),
+    };
+
+    let xml = agi_xml(&month, "165560160680", &contact, &HashMap::new(), created());
+
+    assert!(
+        xml.contains("<agd:Namn>Åsa &amp; Bo &lt;AB&gt; &quot;x&quot; &apos;y&apos;</agd:Namn>")
+    );
+}

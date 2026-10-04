@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<Skatteverket omrade="Arbetsgivardeklaration" xmlns="http://xmls.skatteverket.se/se/skatteverket/da/instans/schema/1.1" xmlns:agd="http://xmls.skatteverket.se/se/skatteverket/da/komponent/schema/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://xmls.skatteverket.se/se/skatteverket/da/instans/schema/1.1 http://xmls.skatteverket.se/se/skatteverket/da/arbetsgivardeklaration/arbetsgivardeklaration_1.1.xsd">
+  <agd:Avsandare>
+    <agd:Programnamn>Doris</agd:Programnamn>
+    <agd:Organisationsnummer>165560160680</agd:Organisationsnummer>
+    <agd:TekniskKontaktperson>
+      <agd:Namn>Anna Andersson</agd:Namn>
+      <agd:Telefon>070-123 45 67</agd:Telefon>
+      <agd:Epostadress>anna@example.se</agd:Epostadress>
+    </agd:TekniskKontaktperson>
+    <agd:Skapad>2026-11-05T09:30:00</agd:Skapad>
+  </agd:Avsandare>
+  <agd:Blankettgemensamt>
+    <agd:Arbetsgivare>
+      <agd:AgRegistreradId>165560160680</agd:AgRegistreradId>
+      <agd:Kontaktperson>
+        <agd:Namn>Anna Andersson</agd:Namn>
+        <agd:Telefon>070-123 45 67</agd:Telefon>
+        <agd:Epostadress>anna@example.se</agd:Epostadress>
+      </agd:Kontaktperson>
+    </agd:Arbetsgivare>
+  </agd:Blankettgemensamt>
+  <agd:Blankett>
+    <agd:Arendeinformation>
+      <agd:Arendeagare>165560160680</agd:Arendeagare>
+      <agd:Period>202610</agd:Period>
+    </agd:Arendeinformation>
+    <agd:Blankettinnehall>
+      <agd:HU>
+        <agd:ArbetsgivareHUGROUP>
+          <agd:AgRegistreradId faltkod="201">165560160680</agd:AgRegistreradId>
+        </agd:ArbetsgivareHUGROUP>
+        <agd:RedovisningsPeriod faltkod="006">202610</agd:RedovisningsPeriod>
+        <agd:SummaArbAvgSlf faltkod="487">13039</agd:SummaArbAvgSlf>
+        <agd:SummaSkatteavdr faltkod="497">10134</agd:SummaSkatteavdr>
+      </agd:HU>
+    </agd:Blankettinnehall>
+  </agd:Blankett>
+  <agd:Blankett>
+    <agd:Arendeinformation>
+      <agd:Arendeagare>165560160680</agd:Arendeagare>
+      <agd:Period>202610</agd:Period>
+    </agd:Arendeinformation>
+    <agd:Blankettinnehall>
+      <agd:IU>
+        <agd:ArbetsgivareIUGROUP>
+          <agd:AgRegistreradId faltkod="201">165560160680</agd:AgRegistreradId>
+        </agd:ArbetsgivareIUGROUP>
+        <agd:BetalningsmottagareIUGROUP>
+          <agd:BetalningsmottagareIDChoice>
+            <agd:BetalningsmottagarId faltkod="215">198001011231</agd:BetalningsmottagarId>
+          </agd:BetalningsmottagareIDChoice>
+        </agd:BetalningsmottagareIUGROUP>
+        <agd:RedovisningsPeriod faltkod="006">202610</agd:RedovisningsPeriod>
+        <agd:Specifikationsnummer faltkod="570">1</agd:Specifikationsnummer>
+        <agd:KontantErsattningUlagAG faltkod="011">35000</agd:KontantErsattningUlagAG>
+        <agd:AvdrPrelSkatt faltkod="001">7134</agd:AvdrPrelSkatt>
+      </agd:IU>
+    </agd:Blankettinnehall>
+  </agd:Blankett>
+  <agd:Blankett>
+    <agd:Arendeinformation>
+      <agd:Arendeagare>165560160680</agd:Arendeagare>
+      <agd:Period>202610</agd:Period>
+    </agd:Arendeinformation>
+    <agd:Blankettinnehall>
+      <agd:IU>
+        <agd:ArbetsgivareIUGROUP>
+          <agd:AgRegistreradId faltkod="201">165560160680</agd:AgRegistreradId>
+        </agd:ArbetsgivareIUGROUP>
+        <agd:BetalningsmottagareIUGROUP>
+          <agd:BetalningsmottagareIDChoice>
+            <agd:BetalningsmottagarId faltkod="215">195003011235</agd:BetalningsmottagarId>
+          </agd:BetalningsmottagareIDChoice>
+        </agd:BetalningsmottagareIUGROUP>
+        <agd:RedovisningsPeriod faltkod="006">202610</agd:RedovisningsPeriod>
+        <agd:Specifikationsnummer faltkod="570">2</agd:Specifikationsnummer>
+        <agd:KontantErsattningUlagAG faltkod="011">20000</agd:KontantErsattningUlagAG>
+        <agd:AvdrPrelSkatt faltkod="001">3000</agd:AvdrPrelSkatt>
+      </agd:IU>
+    </agd:Blankettinnehall>
+  </agd:Blankett>
+</Skatteverket>
