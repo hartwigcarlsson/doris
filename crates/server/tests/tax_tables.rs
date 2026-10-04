@@ -61,12 +61,11 @@ async fn an_unknown_row_kind_or_a_missing_table_is_refused() {
 
 #[tokio::test]
 async fn nothing_listening_is_refused_quickly() {
-    assert!(
-        TaxTables::new("http://127.0.0.1:9/rowstore")
-            .fetch(2026)
-            .await
-            .is_err()
-    );
+    let err = TaxTables::new("http://127.0.0.1:9/rowstore")
+        .fetch(2026)
+        .await
+        .unwrap_err();
+    assert!(err.to_lowercase().contains("refused"), "{err}");
 }
 
 #[tokio::test]
