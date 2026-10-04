@@ -7,6 +7,7 @@
 
 pub mod domain;
 mod projections;
+pub mod vat;
 
 use domain::{
     Change, CustomerDetails, CustomerEvent, CustomerForm, DomainError, Party, PartyDetails,

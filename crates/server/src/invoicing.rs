@@ -245,6 +245,22 @@ fn domain_status(err: DomainError) -> Status {
         InvalidBic => Status::invalid_argument("invalid_bic"),
         CustomerNotFound => Status::not_found("customer_not_found"),
         SupplierNotFound => Status::not_found("supplier_not_found"),
+        InvalidInvoiceNumber => Status::invalid_argument("invalid_invoice_number"),
+        DuplicateSupplierInvoice => Status::already_exists("duplicate_supplier_invoice"),
+        InvalidDueDate => Status::invalid_argument("invalid_due_date"),
+        InvalidReference => Status::invalid_argument("invalid_reference"),
+        InvalidInvoiceLines => Status::invalid_argument("invalid_invoice_lines"),
+        InvalidVatRate => Status::invalid_argument("invalid_vat_rate"),
+        InvalidVatAmount => Status::invalid_argument("invalid_vat_amount"),
+        InvalidInvoiceAccount => Status::invalid_argument("invalid_invoice_account"),
+        InvalidPaymentAccount => Status::invalid_argument("invalid_payment_account"),
+        SupplierInactive => Status::failed_precondition("supplier_inactive"),
+        SupplierInvoiceNotFound => Status::not_found("supplier_invoice_not_found"),
+        SupplierInvoicePaid => Status::failed_precondition("supplier_invoice_paid"),
+        SupplierInvoiceNotPaid => Status::failed_precondition("supplier_invoice_not_paid"),
+        SupplierInvoiceCancelled => Status::failed_precondition("supplier_invoice_cancelled"),
+        InvalidReason => Status::invalid_argument("invalid_reason"),
+        InvoiceDateInFuture => Status::invalid_argument("voucher_date_in_future"),
     }
 }
 

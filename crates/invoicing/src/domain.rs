@@ -30,6 +30,38 @@ pub enum DomainError {
     CustomerNotFound,
     #[error("supplier not found")]
     SupplierNotFound,
+    #[error("invoice number must be 1-50 characters")]
+    InvalidInvoiceNumber,
+    #[error("this supplier's invoice is already registered")]
+    DuplicateSupplierInvoice,
+    #[error("due date is before the invoice date")]
+    InvalidDueDate,
+    #[error("payment reference must be at most 50 characters")]
+    InvalidReference,
+    #[error("an invoice has 1-50 lines, each above 0")]
+    InvalidInvoiceLines,
+    #[error("VAT rate must be 25, 12, 6 or 0 %")]
+    InvalidVatRate,
+    #[error("VAT may differ from the computed amount by at most 1 krona")]
+    InvalidVatAmount,
+    #[error("an invoice line cannot book 2440 or a VAT account")]
+    InvalidInvoiceAccount,
+    #[error("payment account must be 1900-1999")]
+    InvalidPaymentAccount,
+    #[error("supplier is inactive")]
+    SupplierInactive,
+    #[error("no such supplier invoice")]
+    SupplierInvoiceNotFound,
+    #[error("supplier invoice is paid")]
+    SupplierInvoicePaid,
+    #[error("supplier invoice is not paid")]
+    SupplierInvoiceNotPaid,
+    #[error("supplier invoice is cancelled")]
+    SupplierInvoiceCancelled,
+    #[error("reason must be 1-200 characters")]
+    InvalidReason,
+    #[error("invoice date is in the future")]
+    InvoiceDateInFuture,
 }
 
 /// Whitespace (also non-breaking spaces from PDFs) and hyphens removed,
@@ -335,7 +367,7 @@ pub struct SupplierDetails {
     pub bic: Option<Bic>,
 }
 
-fn optional<T>(
+pub(crate) fn optional<T>(
     raw: &str,
     parse: impl FnOnce(&str) -> Result<T, DomainError>,
 ) -> Result<Option<T>, DomainError> {
