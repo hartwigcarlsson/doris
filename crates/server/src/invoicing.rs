@@ -404,6 +404,12 @@ fn domain_status(err: DomainError) -> Status {
         SupplierInvoiceCancelled => Status::failed_precondition("supplier_invoice_cancelled"),
         InvalidReason => Status::invalid_argument("invalid_reason"),
         InvoiceDateInFuture => Status::invalid_argument("voucher_date_in_future"),
+        CustomerInactive => Status::failed_precondition("customer_inactive"),
+        CustomerInvoiceNotFound => Status::not_found("customer_invoice_not_found"),
+        DuplicateCustomerInvoice => Status::already_exists("duplicate_customer_invoice"),
+        CustomerInvoicePaid => Status::failed_precondition("customer_invoice_paid"),
+        CustomerInvoiceNotPaid => Status::failed_precondition("customer_invoice_not_paid"),
+        CustomerInvoiceCancelled => Status::failed_precondition("customer_invoice_cancelled"),
     }
 }
 

@@ -5,6 +5,7 @@
 //! the register, decide, append, project. A number is decided inside that
 //! transaction, so concurrent writers never share one.
 
+pub mod customer_invoices;
 pub mod domain;
 pub mod invoices;
 mod projections;
