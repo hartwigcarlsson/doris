@@ -96,8 +96,43 @@ pub fn today() -> String {
     )
 }
 
+/// `date` (`YYYY-MM-DD`) plus `days`, or `None` if it isn't a date. Howard
+/// Hinnant's civil-day arithmetic, so no date library goes into the wasm.
+pub fn plus_days(date: &str, days: i64) -> Option<String> {
+    let mut parts = date.splitn(3, '-').map(|p| p.parse::<i64>().ok());
+    let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let z = era * 146_097 + doe + days;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    Some(format!("{y:04}-{m:02}-{d:02}"))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn plus_days_crosses_months_years_and_leap_days() {
+        assert_eq!(plus_days("2026-01-31", 30).as_deref(), Some("2026-03-02"));
+        assert_eq!(plus_days("2026-12-15", 30).as_deref(), Some("2027-01-14"));
+        assert_eq!(plus_days("2024-02-01", 29).as_deref(), Some("2024-03-01"));
+        assert_eq!(plus_days("2026-03-01", 0).as_deref(), Some("2026-03-01"));
+        assert_eq!(plus_days("idag", 30), None);
+        assert_eq!(plus_days("2026-13-01", 30), None);
+    }
+
     use super::*;
 
     #[test]

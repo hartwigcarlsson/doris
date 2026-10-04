@@ -147,3 +147,12 @@ export async function addCompany(page: Page, app: string, orgNr: string, name: s
   await page.getByRole("button", { name: "Spara företag" }).click();
   await expect(page.getByRole("heading", { name })).toBeVisible();
 }
+
+export async function addSupplier(page: Page, app: string, name: string) {
+  await page.goto(`${app}/suppliers`);
+  await page.getByRole("button", { name: "Ny leverantör" }).click();
+  await page.getByLabel("Namn", { exact: true }).fill(name);
+  await page.getByLabel("Bankgiro").fill("5050-1055");
+  await page.getByRole("button", { name: "Spara" }).click();
+  await expect(page.getByRole("row", { name: new RegExp(`^1 ${name}`) })).toBeVisible();
+}
