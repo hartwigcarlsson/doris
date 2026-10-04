@@ -7,6 +7,7 @@
 
 pub mod domain;
 mod projections;
+pub mod supplier_invoices;
 pub mod vat;
 
 use domain::{
