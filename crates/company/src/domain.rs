@@ -66,8 +66,9 @@ impl OrgNr {
     }
 }
 
-/// The Luhn check (weights 2,1,2,1…) over all ten digits.
-fn luhn(digits: &str) -> bool {
+/// The Luhn check (weights 2,1,2,1…) over all ten digits. Also used for
+/// personnummer in `doris-payroll`.
+pub fn luhn(digits: &str) -> bool {
     let sum: u32 = digits
         .bytes()
         .enumerate()
