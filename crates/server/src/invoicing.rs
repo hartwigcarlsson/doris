@@ -5,6 +5,7 @@
 use crate::grpc::{signed_in_user, today};
 use crate::ledger::{attachment_message, date, new_attachments};
 use doris_company::domain::AccountingMethod;
+use doris_invoicing::customer_invoices::{CustomerInvoice, NewCustomerInvoice};
 use doris_invoicing::domain::{CustomerForm, DomainError, SupplierForm};
 use doris_invoicing::supplier_invoices::{
     NewSupplierInvoice, Status as InvoiceStatus, SupplierInvoice,
@@ -293,6 +294,141 @@ impl InvoicingService for InvoicingApi {
             data,
         }))
     }
+
+    async fn list_customer_invoices(
+        &self,
+        request: Request<pb::ListCustomerInvoicesRequest>,
+    ) -> Result<Response<pb::ListCustomerInvoicesResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let (invoices, next_invoice_number) =
+            doris_invoicing::list_customer_invoices(&self.pool, company, user)
+                .await
+                .map_err(status)?;
+        let method = doris_company::get_company(&self.pool, company, user)
+            .await
+            .map_err(|err| status(err.into()))?
+            .accounting_method;
+        Ok(Response::new(pb::ListCustomerInvoicesResponse {
+            invoices: invoices.into_iter().map(customer_invoice_pb).collect(),
+            cash_method: method == AccountingMethod::Cash,
+            next_invoice_number,
+        }))
+    }
+
+    async fn register_customer_invoice(
+        &self,
+        request: Request<pb::RegisterCustomerInvoiceRequest>,
+    ) -> Result<Response<pb::RegisterCustomerInvoiceResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let mut req = request.into_inner();
+        let lines = req
+            .lines
+            .iter()
+            .map(|l| InvoiceLine::new(l.account, l.net, l.vat_rate))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(domain_status)?;
+        let attachments = new_attachments(std::mem::take(&mut req.attachments))?;
+        let new = NewCustomerInvoice {
+            invoice_number: &req.invoice_number,
+            invoice_date: date(&req.invoice_date)?,
+            due_date: date(&req.due_date)?,
+            reference: &req.reference,
+            lines,
+        };
+        let number = doris_invoicing::register_customer_invoice(
+            &self.pool,
+            company,
+            user,
+            req.customer_number,
+            new,
+            attachments,
+            today(),
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::RegisterCustomerInvoiceResponse {
+            number,
+        }))
+    }
+
+    async fn pay_customer_invoice(
+        &self,
+        request: Request<pb::PayCustomerInvoiceRequest>,
+    ) -> Result<Response<pb::PayCustomerInvoiceResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let req = request.into_inner();
+        doris_invoicing::pay_customer_invoice(
+            &self.pool,
+            company,
+            user,
+            req.number,
+            date(&req.date)?,
+            req.account,
+            today(),
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::PayCustomerInvoiceResponse {}))
+    }
+
+    async fn cancel_customer_invoice(
+        &self,
+        request: Request<pb::CancelCustomerInvoiceRequest>,
+    ) -> Result<Response<pb::CancelCustomerInvoiceResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let req = request.into_inner();
+        doris_invoicing::cancel_customer_invoice(
+            &self.pool,
+            company,
+            user,
+            req.number,
+            &req.reason,
+            today(),
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::CancelCustomerInvoiceResponse {}))
+    }
+
+    async fn reverse_customer_invoice_payment(
+        &self,
+        request: Request<pb::ReverseCustomerInvoicePaymentRequest>,
+    ) -> Result<Response<pb::ReverseCustomerInvoicePaymentResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let req = request.into_inner();
+        doris_invoicing::reverse_customer_invoice_payment(
+            &self.pool,
+            company,
+            user,
+            req.number,
+            &req.reason,
+            today(),
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::ReverseCustomerInvoicePaymentResponse {}))
+    }
+
+    async fn get_customer_invoice_attachment(
+        &self,
+        request: Request<pb::GetCustomerInvoiceAttachmentRequest>,
+    ) -> Result<Response<pb::GetCustomerInvoiceAttachmentResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let req = request.into_inner();
+        let (attachment, data) = doris_invoicing::customer_invoice_attachment(
+            &self.pool,
+            company,
+            user,
+            req.number,
+            &req.sha256,
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::GetCustomerInvoiceAttachmentResponse {
+            attachment: Some(attachment_message(&attachment)),
+            data,
+        }))
+    }
 }
 
 fn customer_form(d: &pb::CustomerDetails) -> CustomerForm<'_> {
@@ -476,5 +612,55 @@ fn supplier_invoice_pb(i: SupplierInvoice) -> pb::SupplierInvoice {
             .map(|p| p.formatted())
             .unwrap_or_default(),
         iban: r.supplier.iban.map(|x| x.formatted()).unwrap_or_default(),
+    }
+}
+
+fn customer_invoice_pb(i: CustomerInvoice) -> pb::CustomerInvoice {
+    let status_code = i.status_code().to_owned();
+    let paid_date = match &i.status {
+        InvoiceStatus::Paid { date, .. } => date.to_string(),
+        _ => String::new(),
+    };
+    let r = i.invoice;
+    pb::CustomerInvoice {
+        number: i.number,
+        customer_number: r.customer.number,
+        customer_name: r.customer.name.as_str().to_owned(),
+        invoice_number: r.invoice_number.as_str().to_owned(),
+        invoice_date: r.invoice_date.to_string(),
+        due_date: r.due_date.to_string(),
+        reference: r
+            .reference
+            .map(|x| x.as_str().to_owned())
+            .unwrap_or_default(),
+        lines: r
+            .lines
+            .iter()
+            .map(|l| pb::InvoiceLine {
+                account: l.account.get().into(),
+                net: l.net,
+                vat_rate: l.vat_rate.percent(),
+            })
+            .collect(),
+        vat: r
+            .vat
+            .iter()
+            .map(|v| pb::VatAmount {
+                vat_rate: v.vat_rate.percent(),
+                amount: v.amount,
+            })
+            .collect(),
+        total: r.total,
+        status: status_code,
+        paid_date,
+        vouchers: i
+            .vouchers
+            .iter()
+            .map(|v| pb::VoucherRef {
+                fiscal_year_start: v.fiscal_year_start.to_string(),
+                number: v.number,
+            })
+            .collect(),
+        attachments: i.attachments.iter().map(attachment_message).collect(),
     }
 }

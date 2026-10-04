@@ -21,6 +21,12 @@ service InvoicingService {
   rpc CancelSupplierInvoice(CancelSupplierInvoiceRequest) returns (CancelSupplierInvoiceResponse);
   rpc ReverseSupplierInvoicePayment(ReverseSupplierInvoicePaymentRequest) returns (ReverseSupplierInvoicePaymentResponse);
   rpc GetSupplierInvoiceAttachment(GetSupplierInvoiceAttachmentRequest) returns (GetSupplierInvoiceAttachmentResponse);
+  rpc ListCustomerInvoices(ListCustomerInvoicesRequest) returns (ListCustomerInvoicesResponse);
+  rpc RegisterCustomerInvoice(RegisterCustomerInvoiceRequest) returns (RegisterCustomerInvoiceResponse);
+  rpc PayCustomerInvoice(PayCustomerInvoiceRequest) returns (PayCustomerInvoiceResponse);
+  rpc CancelCustomerInvoice(CancelCustomerInvoiceRequest) returns (CancelCustomerInvoiceResponse);
+  rpc ReverseCustomerInvoicePayment(ReverseCustomerInvoicePaymentRequest) returns (ReverseCustomerInvoicePaymentResponse);
+  rpc GetCustomerInvoiceAttachment(GetCustomerInvoiceAttachmentRequest) returns (GetCustomerInvoiceAttachmentResponse);
 }
 
 // "" means none for every optional text field. Answers carry the values in
@@ -138,3 +144,52 @@ message ReverseSupplierInvoicePaymentRequest { string company_id = 1; uint32 num
 message ReverseSupplierInvoicePaymentResponse {}
 message GetSupplierInvoiceAttachmentRequest { string company_id = 1; uint32 number = 2; string sha256 = 3; }
 message GetSupplierInvoiceAttachmentResponse { doris.ledger.v1.Attachment attachment = 1; bytes data = 2; }
+
+// VAT at one rate (25, 12 or 6) on a customer invoice.
+message VatAmount {
+  uint32 vat_rate = 1;
+  int64 amount = 2;
+}
+
+message CustomerInvoice {
+  uint32 number = 1;
+  uint32 customer_number = 2;
+  string customer_name = 3;
+  string invoice_number = 4;
+  string invoice_date = 5;
+  string due_date = 6;
+  string reference = 7;
+  repeated InvoiceLine lines = 8;
+  repeated VatAmount vat = 9;
+  int64 total = 10;
+  string status = 11;                 // "unpaid", "paid" or "cancelled"
+  string paid_date = 12;              // "" unless paid
+  repeated VoucherRef vouchers = 13;
+  repeated doris.ledger.v1.Attachment attachments = 14;
+}
+
+message ListCustomerInvoicesRequest { string company_id = 1; }
+message ListCustomerInvoicesResponse {
+  repeated CustomerInvoice invoices = 1;  // newest first
+  bool cash_method = 2;
+  string next_invoice_number = 3;         // the proposal for a new invoice
+}
+message RegisterCustomerInvoiceRequest {
+  string company_id = 1;
+  uint32 customer_number = 2;
+  string invoice_number = 3;
+  string invoice_date = 4;
+  string due_date = 5;
+  string reference = 6;
+  repeated InvoiceLine lines = 7;
+  repeated doris.ledger.v1.NewAttachment attachments = 8;
+}
+message RegisterCustomerInvoiceResponse { uint32 number = 1; }
+message PayCustomerInvoiceRequest { string company_id = 1; uint32 number = 2; string date = 3; uint32 account = 4; }
+message PayCustomerInvoiceResponse {}
+message CancelCustomerInvoiceRequest { string company_id = 1; uint32 number = 2; string reason = 3; }
+message CancelCustomerInvoiceResponse {}
+message ReverseCustomerInvoicePaymentRequest { string company_id = 1; uint32 number = 2; string reason = 3; }
+message ReverseCustomerInvoicePaymentResponse {}
+message GetCustomerInvoiceAttachmentRequest { string company_id = 1; uint32 number = 2; string sha256 = 3; }
+message GetCustomerInvoiceAttachmentResponse { doris.ledger.v1.Attachment attachment = 1; bytes data = 2; }
