@@ -108,7 +108,7 @@ En körning kan alltså ha flera bokföringar i sin historik, men högst en som 
   - Inga rader ger `EmptyPayrollRun`, och samma anställd två gånger ger `DuplicatePayrollRunLine`.
   - En anställd som saknas ger `EmployeeNotFound` och en inaktiv ger `EmployeeInactive`.
   - `gross` ≤ 0 ger `InvalidSalary`. `tax` < 0 eller `tax` > `gross` ger `InvalidTax`.
-  - En tom text efter trimning ersätts med "Lön {månad år}", till exempel "Lön oktober 2026".
+  - En tom text efter trimning ersätts med "Lön {månad år}", till exempel "Lön oktober 2026". En text på över 200 tecken ger `InvalidText`, som mappas till ledgerns befintliga kod `invalid_voucher_text`. Felet kommer alltså direkt och inte först vid bokföringen.
   - Utbetalningsdagen får ligga i framtiden.
 - **`compute_lines(payroll, payroll_run_id, draft) -> Result<Vec<PayrollRunLine>>`:** kör `validate_draft`, räknar varje rad med `employer_fee` och sätter `net = gross - tax`. `salary_account` kopieras från den anställda. Avgiftstaket räknas mot andra körningar som är **bokförda** och har utbetalningsdag i samma kalendermånad, där körningen själv inte räknas med. Funktionen används av förhandsgranskningen, av färdigställandet och vid bokföringen.
 - **`voucher_lines(lines) -> Vec<doris_ledger::domain::VoucherLine>`** grupperar per konto:
@@ -205,11 +205,10 @@ CREATE TABLE payroll_run_bookings (
     voucher_number    INTEGER NOT NULL,
     PRIMARY KEY (company_id, fiscal_year_start, voucher_number),
     FOREIGN KEY (company_id, payroll_run_id)
-        REFERENCES payroll_runs (company_id, payroll_run_id),
-    FOREIGN KEY (company_id, fiscal_year_start, voucher_number)
-        REFERENCES vouchers (company_id, fiscal_year_start, number)
+        REFERENCES payroll_runs (company_id, payroll_run_id)
 );
 ```
+Tabellerna har ingen främmande nyckel mot `vouchers`, på samma sätt som ledgerns tabeller saknar en mot `companies`. Varje crate bygger om sina egna tabeller, och `doris_ledger::rebuild_projections` tömmer `vouchers`.
 Status lagras inte. Den räknas ut när den läses, med samma regel som `status()`. Den senaste bokföringen är den med högst `rowid`, och den gäller om ingen verifikation har `corrects` som pekar på den.
 
 ### Skrivflöde (`crates/payroll/src/lib.rs`)
@@ -225,7 +224,7 @@ Funktionerna:
 - `preview_payroll_run(pool, company_id, actor, draft)` kör `compute_lines` för en körning som inte finns, och skriver ingenting.
 - `create_payroll_run`, `update_payroll_run`, `finalize_payroll_run` och `reopen_payroll_run` är rena lönekommandon.
 - `book_payroll_run(pool, company_id, actor, id, today) -> Result<VoucherRef>` kör `domain::book_payroll_run`, sedan `doris_ledger::record_voucher_in(&mut tx, …, record_voucher, today)`, och lägger till `PayrollRunBooked`.
-- `unbook_payroll_run(pool, company_id, actor, id, today) -> Result<VoucherRef>` kör `domain::unbook_payroll_run` och sedan `doris_ledger::correct_voucher_in(&mut tx, …, voucher.fiscal_year_start, voucher.number, today, today)`. Ingen lönehändelse läggs till.
+- `unbook_payroll_run(pool, company_id, actor, id, today) -> Result<VoucherRef>` kör `domain::unbook_payroll_run` och sedan `doris_ledger::correct_voucher_in(&mut tx, …, voucher.fiscal_year_start, voucher.number, date, today)`. Rättelsen dateras `today`, men aldrig senare än slutet av verifikationens räkenskapsår, eftersom ledgern kräver att en rättelse ligger i samma år. Ingen lönehändelse läggs till.
 
 Om något steg misslyckas rullas allt tillbaka, och då används inget verifikationsnummer. Om bokföringen misslyckas förblir körningen Färdigställd och kan bokföras när felet är åtgärdat, till exempel när ett inaktivt konto har aktiverats. Ledgerns fel (`FiscalYearClosed`, `AccountInactive`, …) skickas vidare som `Error::Ledger(doris_ledger::Error)`. Att backa en bokföring i ett stängt år ger alltså `fiscal_year_closed`.
 
@@ -378,7 +377,7 @@ Sidan ser olika ut beroende på status.
   - "Öppna" anropar `ReopenPayrollRun`.
   - "Bokför" anropar `BookPayrollRun` och är bara aktiv från utbetalningsdagen. Före den visas "Kan bokföras från {datum}". Servern kontrollerar datumet ändå.
 - **Bokförd:** skrivskyddad, med en länk till verifikationen. "Öppna" finns inte.
-  - Knappen "Backa bokföring" anropar `UnbookPayrollRun` efter en bekräftelse: "En rättelse bokförs med dagens datum. Körningen blir färdigställd igen."
+  - Knappen "Backa bokföring" visar en förklaring, "En rättelse bokförs med dagens datum. Körningen blir färdigställd igen.", och knappen "Bekräfta backning". Den anropar `UnbookPayrollRun`. Bekräftelsen fungerar på samma sätt som "Bekräfta rättelse" i grundboken.
 
 ### Övrigt
 `src/errors.rs` får en svensk text för varje ny kod:
