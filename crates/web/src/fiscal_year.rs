@@ -72,6 +72,15 @@ pub fn is_closed(years: &[lpb::FiscalYear], start: &str) -> bool {
     years.iter().any(|y| y.start == start && y.closed)
 }
 
+/// "start – end" for the listed year starting on `start`, or `start` alone.
+pub fn period(years: &[lpb::FiscalYear], start: &str) -> String {
+    years
+        .iter()
+        .find(|y| y.start == start)
+        .map(|y| format!("{} – {}", y.start, y.end))
+        .unwrap_or_else(|| start.to_owned())
+}
+
 /// The year that can be closed next: the oldest open one, once it has ended
 /// (`end < today`, both `YYYY-MM-DD`).
 pub fn closable(years: &[lpb::FiscalYear], today: &str) -> Option<String> {
@@ -306,5 +315,16 @@ mod tests {
         for start in ["2026-05-02", "", "2026-5-1", "2026-13-01", "not a date"] {
             assert_eq!(default_end(start, Aktiebolag), None, "{start:?}");
         }
+    }
+
+    #[test]
+    fn a_period_reads_start_to_end() {
+        let list = vec![lpb::FiscalYear {
+            start: "2025-07-01".into(),
+            end: "2026-12-31".into(),
+            closed: false,
+        }];
+        assert_eq!(period(&list, "2025-07-01"), "2025-07-01 – 2026-12-31");
+        assert_eq!(period(&list, "2024-07-01"), "2024-07-01");
     }
 }

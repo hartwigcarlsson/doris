@@ -3,9 +3,9 @@
 use crate::active_company::{ActiveCompanySelect, Companies};
 use crate::api::{api, pb};
 use crate::pages::{
-    AccountLedger, Accounts, Companies, CompanyPage, Employees, FiscalYears, Home, Invitations,
-    Login, NewCompany, NewVoucher, OpeningBalances, Passkeys, PayrollRunPage, PayrollRuns,
-    Register, TrialBalance, Vouchers,
+    AccountLedger, Accounts, Companies, CompanyPage, Employees, FinancialStatements, FiscalYears,
+    Home, Invitations, Login, NewCompany, NewVoucher, OpeningBalances, Passkeys, PayrollRunPage,
+    PayrollRuns, Register, TrialBalance, Vouchers,
 };
 use crate::ui::{Button, Variant};
 use leptos::prelude::*;
@@ -77,6 +77,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/vouchers/new") view=|| view! { <SignedIn><NewVoucher /></SignedIn> } />
                         <Route path=path!("/trial-balance") view=|| view! { <SignedIn><TrialBalance /></SignedIn> } />
                         <Route path=path!("/trial-balance/:account") view=|| view! { <SignedIn><AccountLedger /></SignedIn> } />
+                        <Route path=path!("/financial-statements") view=|| view! { <SignedIn><FinancialStatements /></SignedIn> } />
                         <Route path=path!("/fiscal-years") view=|| view! { <SignedIn><FiscalYears /></SignedIn> } />
                         <Route path=path!("/opening-balances") view=|| view! { <SignedIn><OpeningBalances /></SignedIn> } />
                         <Route path=path!("/employees") view=|| view! { <SignedIn><Employees /></SignedIn> } />
@@ -124,28 +125,38 @@ fn Header() -> impl IntoView {
         });
     };
     view! {
+        // Two rows: the account (which company, your settings) on top, and
+        // the active company's bookkeeping below, so the company picker
+        // never has to give up width to another page's link. The account
+        // links wrap as one group on a narrow screen.
         <header class="border-b">
-            <nav class="mx-auto flex h-12 max-w-3xl items-center gap-4 px-4 text-xs/relaxed">
-                <A href="/" attr:class="text-sm font-semibold">"Doris"</A>
-                <Show when=move || session.user.get().is_some()>
-                    <ActiveCompanySelect />
-                    <Show when=move || !companies.active.get().is_empty()>
+            <div class="mx-auto max-w-3xl px-4 text-xs/relaxed">
+                <nav aria-label="Konto" class="flex min-h-12 flex-wrap items-center gap-x-4 gap-y-2 py-2">
+                    <A href="/" attr:class="text-sm font-semibold">"Doris"</A>
+                    <Show when=move || session.user.get().is_some()>
+                        <ActiveCompanySelect />
+                        <div class="ml-auto flex items-center gap-4">
+                            <A href="/companies" attr:class="text-muted-foreground hover:text-foreground">"Företag"</A>
+                            <A href="/settings/passkeys" attr:class="text-muted-foreground hover:text-foreground">"Passkeys"</A>
+                            <Show when=move || session.is_admin()>
+                                <A href="/admin/invitations" attr:class="text-muted-foreground hover:text-foreground">"Inbjudningar"</A>
+                            </Show>
+                            <Button variant=Variant::Ghost kind="button" on:click=log_out.clone()>"Logga ut"</Button>
+                        </div>
+                    </Show>
+                </nav>
+                <Show when=move || session.user.get().is_some() && !companies.active.get().is_empty()>
+                    <nav aria-label="Bokföring" class="flex flex-wrap items-center gap-x-4 gap-y-2 pb-3">
                         <A href="/vouchers" attr:class="text-muted-foreground hover:text-foreground">"Verifikationer"</A>
                         <A href="/trial-balance" attr:class="text-muted-foreground hover:text-foreground">"Saldobalans"</A>
+                        <A href="/financial-statements" attr:class="text-muted-foreground hover:text-foreground">"Rapporter"</A>
                         <A href="/fiscal-years" attr:class="text-muted-foreground hover:text-foreground">"Räkenskapsår"</A>
                         <A href="/accounts" attr:class="text-muted-foreground hover:text-foreground">"Kontoplan"</A>
                         <A href="/payroll-runs" attr:class="text-muted-foreground hover:text-foreground">"Lönekörningar"</A>
                         <A href="/employees" attr:class="text-muted-foreground hover:text-foreground">"Anställda"</A>
-                    </Show>
-                    <A href="/companies" attr:class="text-muted-foreground hover:text-foreground">"Företag"</A>
-                    <A href="/settings/passkeys" attr:class="text-muted-foreground hover:text-foreground">"Passkeys"</A>
-                    <Show when=move || session.is_admin()>
-                        <A href="/admin/invitations" attr:class="text-muted-foreground hover:text-foreground">"Inbjudningar"</A>
-                    </Show>
-                    <span class="ml-auto" />
-                    <Button variant=Variant::Ghost kind="button" on:click=log_out.clone()>"Logga ut"</Button>
+                    </nav>
                 </Show>
-            </nav>
+            </div>
         </header>
     }
 }

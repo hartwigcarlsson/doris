@@ -136,7 +136,7 @@ pub fn ActiveCompanySelect() -> impl IntoView {
             .into_any();
         }
         view! {
-            <div class="w-48">
+            <div class="w-48 shrink-0">
                 <Select label="Aktivt företag" id="active_company" hide_label=true value=companies.active>
                     {move || {
                         companies

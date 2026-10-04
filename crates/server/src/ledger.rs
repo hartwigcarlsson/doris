@@ -5,6 +5,7 @@
 use crate::grpc::{signed_in_user, today};
 use doris_ledger::Error;
 use doris_ledger::domain::{Attachment, DomainError, RecordVoucher, Voucher, VoucherLine};
+use doris_ledger::statements::{LineKind, StatementLine};
 use doris_proto::ledger::v1 as pb;
 use doris_proto::ledger::v1::ledger_service_server::LedgerService;
 use jiff::civil::Date;
@@ -250,6 +251,33 @@ impl LedgerService for LedgerApi {
         Ok(Response::new(pb::GetTrialBalanceResponse { rows }))
     }
 
+    async fn get_financial_statements(
+        &self,
+        request: Request<pb::GetFinancialStatementsRequest>,
+    ) -> Result<Response<pb::GetFinancialStatementsResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let fiscal_year_start = date(&request.get_ref().fiscal_year_start)?;
+        let statements = doris_ledger::financial_statements(
+            &self.pool,
+            company,
+            user,
+            fiscal_year_start,
+            today(),
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::GetFinancialStatementsResponse {
+            income_statement: statements.income.into_iter().map(statement_line).collect(),
+            balance_sheet: statements.balance.into_iter().map(statement_line).collect(),
+            previous_fiscal_year_start: statements
+                .previous_fiscal_year_start
+                .map(|start| start.to_string())
+                .unwrap_or_default(),
+            difference: statements.difference,
+            previous_difference: statements.previous_difference,
+        }))
+    }
+
     async fn get_account_ledger(
         &self,
         request: Request<pb::GetAccountLedgerRequest>,
@@ -386,6 +414,20 @@ fn voucher_message(v: Voucher) -> pb::Voucher {
         corrects: v.corrects.unwrap_or(0),
         corrected_by: v.corrected_by.unwrap_or(0),
         attachments: v.attachments.iter().map(attachment_message).collect(),
+    }
+}
+
+fn statement_line(line: StatementLine) -> pb::StatementLine {
+    let kind = match line.kind {
+        LineKind::Heading => pb::StatementLineKind::Heading,
+        LineKind::Item => pb::StatementLineKind::Item,
+        LineKind::Subtotal => pb::StatementLineKind::Subtotal,
+    };
+    pb::StatementLine {
+        label: line.label.into(),
+        kind: kind as i32,
+        amount: line.amount,
+        previous: line.previous,
     }
 }
 
