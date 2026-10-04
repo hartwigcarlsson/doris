@@ -14,17 +14,26 @@ use domain::{
     Change, CustomerDetails, CustomerEvent, CustomerForm, DomainError, Party, PartyDetails,
     Register, SupplierDetails, SupplierEvent, SupplierForm,
 };
+use doris_company::domain::{AccountingMethod, Company};
 use doris_eventstore::{Metadata, NewEvent};
+use doris_ledger::domain::{Attachment, DomainError as LedgerError, RecordVoucher};
+use doris_ledger::{NewAttachment, VoucherRef};
+use jiff::civil::Date;
 use projections::{CUSTOMERS, SUPPLIERS, Table};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use sqlx::{SqliteConnection, SqlitePool};
+use supplier_invoices::{
+    NewSupplierInvoice, Registration, SupplierInvoice, SupplierInvoiceEvent, SupplierInvoices,
+    SupplierSnapshot,
+};
 use uuid::Uuid;
 
 pub use projections::rebuild_projections;
 
 const CUSTOMERS_STREAM: &str = "customers-";
 const SUPPLIERS_STREAM: &str = "suppliers-";
+const SUPPLIER_INVOICES_STREAM: &str = "supplier-invoices-";
 const SCHEMA_VERSION: i64 = 1;
 
 pub type Customer = Party<CustomerDetails>;
@@ -37,8 +46,15 @@ pub enum Error {
     /// No such company, or the user is not a member: callers can't tell which.
     #[error("company not found")]
     NotFound,
+    /// A booking the ledger refused (inactive account, closed year, …).
+    #[error(transparent)]
+    Ledger(#[from] doris_ledger::Error),
     #[error(transparent)]
     Store(#[from] doris_eventstore::Error),
+}
+
+fn ledger(err: LedgerError) -> Error {
+    Error::Ledger(doris_ledger::Error::Domain(err))
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -205,13 +221,8 @@ where
     let mut tx = doris_eventstore::begin(pool).await?;
     doris_company::get_company_in(&mut tx, company_id, actor).await?;
     let stream = format!("{stream_prefix}{company_id}");
-    let version = doris_eventstore::stream_version(&mut tx, &stream).await?;
-    let history = doris_eventstore::load(&mut tx, &stream)
-        .await?
-        .iter()
-        .map(|e| e.decode::<E>().map(Into::into))
-        .collect::<Result<Vec<Change<D>>, _>>()?;
-    let changes = decide(&Register::from_changes(history))?;
+    let (history, version) = load::<E>(&mut tx, &stream).await?;
+    let changes = decide(&Register::from_changes(history.into_iter().map(Into::into)))?;
     let events: Vec<E> = changes.iter().cloned().map(E::from).collect();
     append(&mut tx, &stream, version, &events, actor).await?;
     tx.commit().await?;
@@ -242,4 +253,326 @@ async fn append<E: Serialize>(
         projections::apply(conn, event).await?;
     }
     Ok(())
+}
+
+/// A stream's events and its version, in the caller's transaction.
+async fn load<E: DeserializeOwned>(
+    conn: &mut SqliteConnection,
+    stream: &str,
+) -> Result<(Vec<E>, i64)> {
+    let version = doris_eventstore::stream_version(conn, stream).await?;
+    let events = doris_eventstore::load(conn, stream)
+        .await?
+        .iter()
+        .map(|e| e.decode::<E>())
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((events, version))
+}
+
+fn invoices_stream(company_id: Uuid) -> String {
+    format!("{SUPPLIER_INVOICES_STREAM}{company_id}")
+}
+
+async fn load_invoices(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+) -> Result<(SupplierInvoices, i64)> {
+    let (events, version) =
+        load::<SupplierInvoiceEvent>(conn, &invoices_stream(company_id)).await?;
+    Ok((SupplierInvoices::from_events(events), version))
+}
+
+/// Registers a supplier invoice and, under faktureringsmetoden, books it
+/// with its underlag, all in one transaction.
+pub async fn register_supplier_invoice(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    supplier: u32,
+    new: NewSupplierInvoice<'_>,
+    attachments: Vec<NewAttachment>,
+    today: Date,
+) -> Result<u32> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let company = doris_company::get_company_in(&mut tx, company_id, actor).await?;
+    let (supplier_events, _) =
+        load::<SupplierEvent>(&mut tx, &format!("{SUPPLIERS_STREAM}{company_id}")).await?;
+    let suppliers = Register::from_changes(supplier_events.into_iter().map(Into::into));
+    let supplier = suppliers
+        .get(supplier)
+        .ok_or(DomainError::SupplierNotFound)?;
+    let invoice = Registration::new(SupplierSnapshot::of(supplier)?, &new)?;
+    if invoice.invoice_date > today {
+        return Err(DomainError::InvoiceDateInFuture.into());
+    }
+    let (state, version) = load_invoices(&mut tx, company_id).await?;
+    let number = supplier_invoices::register(&state, &invoice)?;
+    let mut stored: Vec<Attachment> = Vec::new();
+    for new in attachments {
+        let attachment = doris_ledger::store_attachment_in(&mut tx, new).await?;
+        if stored.iter().any(|s| s.sha256 == attachment.sha256) {
+            return Err(ledger(LedgerError::DuplicateAttachment));
+        }
+        stored.push(attachment);
+    }
+    let voucher = match company.accounting_method {
+        AccountingMethod::Invoice => {
+            let booked = doris_ledger::record_voucher_in(
+                &mut tx,
+                company_id,
+                actor,
+                RecordVoucher {
+                    date: invoice.invoice_date,
+                    text: supplier_invoices::text(number, &invoice),
+                    lines: supplier_invoices::registration_lines(&invoice),
+                },
+                today,
+            )
+            .await?;
+            link_all(&mut tx, company_id, actor, booked, &stored, today).await?;
+            Some(booked)
+        }
+        AccountingMethod::Cash => {
+            let accounts: Vec<_> = invoice.lines.iter().map(|l| l.account).collect();
+            doris_ledger::check_accounts_in(&mut tx, company_id, actor, &accounts).await?;
+            None
+        }
+    };
+    let event = SupplierInvoiceEvent::SupplierInvoiceRegistered {
+        number,
+        invoice,
+        attachments: stored,
+        voucher,
+    };
+    append(
+        &mut tx,
+        &invoices_stream(company_id),
+        version,
+        &[event],
+        actor,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(number)
+}
+
+/// Books the payment of an unpaid invoice. Under kontantmetoden that is
+/// the whole cost, and the underlag go on the payment voucher.
+pub async fn pay_supplier_invoice(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    number: u32,
+    date: Date,
+    account: u32,
+    today: Date,
+) -> Result<()> {
+    let account = supplier_invoices::payment_account(account)?;
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let company = doris_company::get_company_in(&mut tx, company_id, actor).await?;
+    let (state, version) = load_invoices(&mut tx, company_id).await?;
+    let invoice = supplier_invoices::unpaid(&state, number)?;
+    let lines =
+        supplier_invoices::payment_lines(&invoice.invoice, company.accounting_method, account);
+    let voucher = doris_ledger::record_voucher_in(
+        &mut tx,
+        company_id,
+        actor,
+        RecordVoucher {
+            date,
+            text: supplier_invoices::text(number, &invoice.invoice),
+            lines,
+        },
+        today,
+    )
+    .await?;
+    if company.accounting_method == AccountingMethod::Cash {
+        link_all(
+            &mut tx,
+            company_id,
+            actor,
+            voucher,
+            &invoice.attachments,
+            today,
+        )
+        .await?;
+    }
+    let event = SupplierInvoiceEvent::SupplierInvoicePaid {
+        number,
+        date,
+        account,
+        voucher,
+    };
+    append(
+        &mut tx,
+        &invoices_stream(company_id),
+        version,
+        &[event],
+        actor,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Cancels an unpaid invoice; under faktureringsmetoden its registration
+/// voucher is corrected.
+pub async fn cancel_supplier_invoice(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    number: u32,
+    reason: &str,
+    today: Date,
+) -> Result<()> {
+    let reason = supplier_invoices::reason(reason)?;
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let company = doris_company::get_company_in(&mut tx, company_id, actor).await?;
+    let (state, version) = load_invoices(&mut tx, company_id).await?;
+    let invoice = supplier_invoices::unpaid(&state, number)?;
+    let voucher = match invoice.registration_voucher {
+        Some(registered) => Some(correct(&mut tx, &company, actor, registered, today).await?),
+        None => None,
+    };
+    let event = SupplierInvoiceEvent::SupplierInvoiceCancelled {
+        number,
+        reason,
+        voucher,
+    };
+    append(
+        &mut tx,
+        &invoices_stream(company_id),
+        version,
+        &[event],
+        actor,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Corrects the payment voucher of a paid invoice, which is unpaid again.
+pub async fn reverse_supplier_invoice_payment(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    number: u32,
+    reason: &str,
+    today: Date,
+) -> Result<()> {
+    let reason = supplier_invoices::reason(reason)?;
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let company = doris_company::get_company_in(&mut tx, company_id, actor).await?;
+    let (state, version) = load_invoices(&mut tx, company_id).await?;
+    let (_, payment) = supplier_invoices::paid(&state, number)?;
+    let voucher = correct(&mut tx, &company, actor, payment, today).await?;
+    let event = SupplierInvoiceEvent::SupplierInvoicePaymentReversed {
+        number,
+        reason,
+        voucher,
+    };
+    append(
+        &mut tx,
+        &invoices_stream(company_id),
+        version,
+        &[event],
+        actor,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+// ponytail: no pagination; add it when a company has thousands of invoices.
+/// The company's supplier invoices, newest first.
+pub async fn list_supplier_invoices(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+) -> Result<Vec<SupplierInvoice>> {
+    doris_company::get_company(pool, company_id, actor).await?;
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT details FROM supplier_invoices WHERE company_id = ? ORDER BY number DESC",
+    )
+    .bind(company_id.to_string())
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|details| Ok(serde_json::from_str(details)?))
+        .collect()
+}
+
+/// An underlag of the company's own invoice `number`: found in that
+/// invoice first, never by its hash alone.
+pub async fn supplier_invoice_attachment(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    number: u32,
+    sha256: &str,
+) -> Result<(Attachment, Vec<u8>)> {
+    doris_company::get_company(pool, company_id, actor).await?;
+    let details: Option<String> = sqlx::query_scalar(
+        "SELECT details FROM supplier_invoices WHERE company_id = ? AND number = ?",
+    )
+    .bind(company_id.to_string())
+    .bind(number)
+    .fetch_optional(pool)
+    .await?;
+    let invoice: Option<SupplierInvoice> = details.map(|d| serde_json::from_str(&d)).transpose()?;
+    let attachment = invoice
+        .and_then(|i| i.attachments.into_iter().find(|a| a.sha256 == sha256))
+        .ok_or_else(|| ledger(LedgerError::AttachmentNotFound))?;
+    let data: Vec<u8> = sqlx::query_scalar("SELECT data FROM attachment_files WHERE sha256 = ?")
+        .bind(&attachment.sha256)
+        .fetch_one(pool)
+        .await?;
+    Ok((attachment, data))
+}
+
+async fn link_all(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    actor: Uuid,
+    voucher: VoucherRef,
+    attachments: &[Attachment],
+    today: Date,
+) -> Result<()> {
+    for attachment in attachments {
+        doris_ledger::link_attachment_in(
+            conn,
+            company_id,
+            actor,
+            voucher.fiscal_year_start,
+            voucher.number,
+            attachment.clone(),
+            today,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Corrects `voucher`, dated today or its fiscal year's last day.
+async fn correct(
+    conn: &mut SqliteConnection,
+    company: &Company,
+    actor: Uuid,
+    voucher: VoucherRef,
+    today: Date,
+) -> Result<VoucherRef> {
+    let end = company
+        .first_fiscal_year
+        .containing(voucher.fiscal_year_start)
+        .end;
+    Ok(doris_ledger::correct_voucher_in(
+        conn,
+        company.id,
+        actor,
+        voucher.fiscal_year_start,
+        voucher.number,
+        supplier_invoices::correction_date(end, today),
+        today,
+    )
+    .await?)
 }

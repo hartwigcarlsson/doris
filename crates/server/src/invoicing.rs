@@ -268,6 +268,7 @@ fn status(err: Error) -> Status {
     match err {
         Error::Domain(err) => domain_status(err),
         Error::NotFound => company_not_found(),
+        Error::Ledger(err) => crate::ledger::status(err),
         Error::Store(err) => {
             tracing::error!("store: {err}");
             Status::internal("internal")
