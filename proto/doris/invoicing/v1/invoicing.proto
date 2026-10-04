@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package doris.invoicing.v1;
+
+// Customers and suppliers of a company. Every call needs a session and
+// membership of the company; numbers are decided by the server.
+service InvoicingService {
+  rpc ListCustomers(ListCustomersRequest) returns (ListCustomersResponse);
+  rpc AddCustomer(AddCustomerRequest) returns (AddCustomerResponse);
+  rpc UpdateCustomer(UpdateCustomerRequest) returns (UpdateCustomerResponse);
+  rpc SetCustomerActive(SetCustomerActiveRequest) returns (SetCustomerActiveResponse);
+  rpc ListSuppliers(ListSuppliersRequest) returns (ListSuppliersResponse);
+  rpc AddSupplier(AddSupplierRequest) returns (AddSupplierResponse);
+  rpc UpdateSupplier(UpdateSupplierRequest) returns (UpdateSupplierResponse);
+  rpc SetSupplierActive(SetSupplierActiveRequest) returns (SetSupplierActiveResponse);
+}
+
+// "" means none for every optional text field. Answers carry the values in
+// their formatted form (556016-0680, 5050-1055, SE45 5000 …).
+message CustomerDetails {
+  string name = 1;
+  string org_nr = 2;
+  string vat_number = 3;
+  string street = 4;
+  string postal_code = 5;
+  string city = 6;
+  string email = 7;
+  uint32 payment_terms = 8;
+}
+
+message Customer {
+  uint32 number = 1;
+  CustomerDetails details = 2;
+  bool active = 3;
+}
+
+message SupplierDetails {
+  string name = 1;
+  string org_nr = 2;
+  string vat_number = 3;
+  string street = 4;
+  string postal_code = 5;
+  string city = 6;
+  string email = 7;
+  string bankgiro = 8;
+  string plusgiro = 9;
+  string iban = 10;
+  string bic = 11;
+}
+
+message Supplier {
+  uint32 number = 1;
+  SupplierDetails details = 2;
+  bool active = 3;
+}
+
+message ListCustomersRequest { string company_id = 1; }
+message ListCustomersResponse { repeated Customer customers = 1; }
+message AddCustomerRequest { string company_id = 1; CustomerDetails details = 2; }
+message AddCustomerResponse { uint32 number = 1; }
+message UpdateCustomerRequest { string company_id = 1; uint32 number = 2; CustomerDetails details = 3; }
+message UpdateCustomerResponse {}
+message SetCustomerActiveRequest { string company_id = 1; uint32 number = 2; bool active = 3; }
+message SetCustomerActiveResponse {}
+
+message ListSuppliersRequest { string company_id = 1; }
+message ListSuppliersResponse { repeated Supplier suppliers = 1; }
+message AddSupplierRequest { string company_id = 1; SupplierDetails details = 2; }
+message AddSupplierResponse { uint32 number = 1; }
+message UpdateSupplierRequest { string company_id = 1; uint32 number = 2; SupplierDetails details = 3; }
+message UpdateSupplierResponse {}
+message SetSupplierActiveRequest { string company_id = 1; uint32 number = 2; bool active = 3; }
+message SetSupplierActiveResponse {}

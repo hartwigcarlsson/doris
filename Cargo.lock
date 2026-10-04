@@ -932,6 +932,7 @@ dependencies = [
  "doris-company",
  "doris-eventstore",
  "doris-identity",
+ "doris-invoicing",
  "doris-ledger",
  "doris-proto",
  "http",
