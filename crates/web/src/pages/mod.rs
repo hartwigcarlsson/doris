@@ -13,6 +13,7 @@ mod new_voucher;
 mod opening_balances;
 mod passkeys;
 mod register;
+mod suppliers;
 mod trial_balance;
 mod vouchers;
 
@@ -31,5 +32,6 @@ pub use new_voucher::NewVoucher;
 pub use opening_balances::OpeningBalances;
 pub use passkeys::Passkeys;
 pub use register::Register;
+pub use suppliers::Suppliers;
 pub use trial_balance::TrialBalance;
 pub use vouchers::Vouchers;

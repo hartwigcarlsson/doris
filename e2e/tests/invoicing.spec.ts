@@ -35,3 +35,30 @@ test("customers are added, edited and deactivated", async ({ page, app }) => {
   await renamed.getByRole("button", { name: "Aktivera" }).click();
   await expect(status(renamed)).toHaveText("Aktiv");
 });
+
+test("suppliers are added with payment details, edited and deactivated", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.getByRole("banner").getByRole("link", { name: "Leverantörer" }).click();
+
+  await page.getByRole("button", { name: "Ny leverantör" }).click();
+  await page.getByLabel("Namn", { exact: true }).fill("Lev AB");
+  await page.getByLabel("Bankgiro").fill("5050-1056");
+  await page.getByRole("button", { name: "Spara" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Ange ett giltigt bankgironummer (7–8 siffror).");
+
+  await page.getByLabel("Bankgiro").fill("50501055");
+  await page.getByLabel("IBAN").fill("se45 5000 0000 0583 9825 7466");
+  await page.getByLabel("BIC").fill("essesess");
+  await page.getByRole("button", { name: "Spara" }).click();
+  const row = page.getByRole("row", { name: /^1 Lev AB/ });
+  await expect(row).toContainText("5050-1055");
+
+  await row.getByRole("button", { name: "Redigera" }).click();
+  await expect(page.getByLabel("IBAN")).toHaveValue("SE45 5000 0000 0583 9825 7466");
+  await expect(page.getByLabel("BIC")).toHaveValue("ESSESESS");
+  await page.getByRole("button", { name: "Avbryt" }).click();
+
+  await row.getByRole("button", { name: "Inaktivera" }).click();
+  await expect(status(row)).toHaveText("Inaktiv");
+});
