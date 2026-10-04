@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { addCompany, expect, register, test } from "./fixtures";
 
 // Spacing measured from the shadcn preset b1Gdz9bFY reference (mira): cards
 // ~336px wide, 16px between fields, 8px from label to input, 16px from the
@@ -24,4 +24,23 @@ test("forms follow the preset's spacing", async ({ page, app }) => {
   expect(m.betweenFields).toBe(16);
   expect(m.lastFieldToButton).toBe(16);
   expect(m.cardWidth).toBeLessThanOrEqual(352);
+});
+
+// An admin with a company sees every header link; the picker must keep its
+// width and nothing may spill out of the header, on a desktop or a phone.
+test("the header keeps the company picker readable", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  const banner = page.getByRole("banner");
+  await expect(banner.getByRole("link", { name: "Rapporter" })).toBeVisible();
+
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    const picker = await page.getByLabel("Aktivt företag").boundingBox();
+    expect(picker!.width, `picker at ${width}px`).toBeGreaterThanOrEqual(150);
+    const spills = await banner.evaluate((header) =>
+      [...header.querySelectorAll("nav")].some((nav) => nav.scrollWidth > nav.clientWidth),
+    );
+    expect(spills, `header spills at ${width}px`).toBe(false);
+  }
 });
