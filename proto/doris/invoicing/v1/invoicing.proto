@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package doris.invoicing.v1;
 
+import "doris/ledger/v1/ledger.proto";
+
 // Customers and suppliers of a company. Every call needs a session and
 // membership of the company; numbers are decided by the server.
 service InvoicingService {
@@ -13,6 +15,12 @@ service InvoicingService {
   rpc AddSupplier(AddSupplierRequest) returns (AddSupplierResponse);
   rpc UpdateSupplier(UpdateSupplierRequest) returns (UpdateSupplierResponse);
   rpc SetSupplierActive(SetSupplierActiveRequest) returns (SetSupplierActiveResponse);
+  rpc ListSupplierInvoices(ListSupplierInvoicesRequest) returns (ListSupplierInvoicesResponse);
+  rpc RegisterSupplierInvoice(RegisterSupplierInvoiceRequest) returns (RegisterSupplierInvoiceResponse);
+  rpc PaySupplierInvoice(PaySupplierInvoiceRequest) returns (PaySupplierInvoiceResponse);
+  rpc CancelSupplierInvoice(CancelSupplierInvoiceRequest) returns (CancelSupplierInvoiceResponse);
+  rpc ReverseSupplierInvoicePayment(ReverseSupplierInvoicePaymentRequest) returns (ReverseSupplierInvoicePaymentResponse);
+  rpc GetSupplierInvoiceAttachment(GetSupplierInvoiceAttachmentRequest) returns (GetSupplierInvoiceAttachmentResponse);
 }
 
 // "" means none for every optional text field. Answers carry the values in
@@ -71,3 +79,62 @@ message UpdateSupplierRequest { string company_id = 1; uint32 number = 2; Suppli
 message UpdateSupplierResponse {}
 message SetSupplierActiveRequest { string company_id = 1; uint32 number = 2; bool active = 3; }
 message SetSupplierActiveResponse {}
+
+// An invoice line: account, amount without VAT in öre, VAT rate in percent
+// (25, 12, 6 or 0).
+message InvoiceLine {
+  uint32 account = 1;
+  int64 net = 2;
+  uint32 vat_rate = 3;
+}
+
+message VoucherRef {
+  string fiscal_year_start = 1;
+  uint32 number = 2;
+}
+
+message SupplierInvoice {
+  uint32 number = 1;
+  uint32 supplier_number = 2;
+  string supplier_name = 3;
+  string invoice_number = 4;
+  string invoice_date = 5;
+  string due_date = 6;
+  string reference = 7;
+  repeated InvoiceLine lines = 8;
+  int64 vat = 9;
+  int64 total = 10;
+  string status = 11;                 // "unpaid", "paid" or "cancelled"
+  string paid_date = 12;              // "" unless paid
+  repeated VoucherRef vouchers = 13;  // registration, payments, corrections, in order
+  repeated doris.ledger.v1.Attachment attachments = 14;
+  string bankgiro = 15;               // from the supplier as it was, for paying
+  string plusgiro = 16;
+  string iban = 17;
+}
+
+message ListSupplierInvoicesRequest { string company_id = 1; }
+message ListSupplierInvoicesResponse {
+  repeated SupplierInvoice invoices = 1;  // newest first
+  bool cash_method = 2;                   // the company uses kontantmetoden
+}
+message RegisterSupplierInvoiceRequest {
+  string company_id = 1;
+  uint32 supplier_number = 2;
+  string invoice_number = 3;
+  string invoice_date = 4;
+  string due_date = 5;
+  string reference = 6;
+  repeated InvoiceLine lines = 7;
+  optional int64 vat = 8;             // unset: computed
+  repeated doris.ledger.v1.NewAttachment attachments = 9;
+}
+message RegisterSupplierInvoiceResponse { uint32 number = 1; }
+message PaySupplierInvoiceRequest { string company_id = 1; uint32 number = 2; string date = 3; uint32 account = 4; }
+message PaySupplierInvoiceResponse {}
+message CancelSupplierInvoiceRequest { string company_id = 1; uint32 number = 2; string reason = 3; }
+message CancelSupplierInvoiceResponse {}
+message ReverseSupplierInvoicePaymentRequest { string company_id = 1; uint32 number = 2; string reason = 3; }
+message ReverseSupplierInvoicePaymentResponse {}
+message GetSupplierInvoiceAttachmentRequest { string company_id = 1; uint32 number = 2; string sha256 = 3; }
+message GetSupplierInvoiceAttachmentResponse { doris.ledger.v1.Attachment attachment = 1; bytes data = 2; }

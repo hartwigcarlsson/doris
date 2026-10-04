@@ -381,7 +381,7 @@ fn domain_lines(lines: &[pb::VoucherLine]) -> Result<Vec<VoucherLine>, Status> {
 
 /// The uploaded files, refused as a whole if together they are over the
 /// per-request limit. Each file is checked by `doris_ledger`.
-fn new_attachments(
+pub(crate) fn new_attachments(
     files: Vec<pb::NewAttachment>,
 ) -> Result<Vec<doris_ledger::NewAttachment>, Status> {
     if files.iter().map(|f| f.data.len()).sum::<usize>() > MAX_ATTACHMENTS_PER_REQUEST {
@@ -396,7 +396,7 @@ fn new_attachments(
         .collect())
 }
 
-fn attachment_message(a: &Attachment) -> pb::Attachment {
+pub(crate) fn attachment_message(a: &Attachment) -> pb::Attachment {
     pb::Attachment {
         id: a.sha256.clone(),
         file_name: a.file_name.as_str().to_owned(),
@@ -431,7 +431,7 @@ fn statement_line(line: StatementLine) -> pb::StatementLine {
     }
 }
 
-fn date(raw: &str) -> Result<Date, Status> {
+pub(crate) fn date(raw: &str) -> Result<Date, Status> {
     raw.parse()
         .map_err(|_| Status::invalid_argument("invalid_date"))
 }

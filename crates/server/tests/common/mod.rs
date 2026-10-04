@@ -122,7 +122,9 @@ impl TestServer {
     }
 
     pub fn invoicing(&self) -> Invoicing {
+        // Room for a 10 MiB underlag coming back from GetSupplierInvoiceAttachment.
         InvoicingServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
+            .max_decoding_message_size(11 << 20)
     }
 
     pub fn companies(&self) -> Companies {

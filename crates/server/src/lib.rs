@@ -54,7 +54,12 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
                 .max_encoding_message_size(ledger::MAX_RESPONSE),
         )
         .add_service(PayrollServiceServer::new(payroll))
-        .add_service(InvoicingServiceServer::new(invoicing))
+        .add_service(
+            // Underlag ride along with supplier invoices, as with vouchers.
+            InvoicingServiceServer::new(invoicing)
+                .max_decoding_message_size(ledger::MAX_REQUEST)
+                .max_encoding_message_size(ledger::MAX_RESPONSE),
+        )
         .into_axum_router()
         .layer(axum::middleware::from_fn_with_state(pool, session_gate))
         .layer(GrpcWebLayer::new())
@@ -71,19 +76,18 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
     app
 }
 
-/// LedgerService accepts bodies of up to 21 MiB, and tonic reserves the size
-/// a frame header claims before any handler runs. So its calls need a valid
+/// LedgerService and InvoicingService accept bodies of up to 21 MiB, and tonic reserves the size
+/// a frame header claims before any handler runs. So their calls need a valid
 /// session before the body is read; the handlers still check it themselves.
 async fn session_gate(
     State(pool): State<SqlitePool>,
     request: axum::extract::Request,
     next: Next,
 ) -> axum::response::Response {
-    let ledger = request
-        .uri()
-        .path()
-        .starts_with("/doris.ledger.v1.LedgerService/");
-    if ledger && let Err(status) = grpc::session_user(&pool, request.headers()).await {
+    let path = request.uri().path();
+    let large = path.starts_with("/doris.ledger.v1.LedgerService/")
+        || path.starts_with("/doris.invoicing.v1.InvoicingService/");
+    if large && let Err(status) = grpc::session_user(&pool, request.headers()).await {
         return status.into_http();
     }
     next.run(request).await

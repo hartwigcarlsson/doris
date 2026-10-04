@@ -887,6 +887,8 @@ version = "0.1.0"
 dependencies = [
  "doris-company",
  "doris-eventstore",
+ "doris-ledger",
+ "jiff",
  "serde",
  "serde_json",
  "sqlx",

@@ -2,7 +2,8 @@
 //! append; rebuildable from the event log.
 
 use crate::domain::{Change, CustomerEvent, SupplierEvent};
-use crate::{CUSTOMERS_STREAM, SUPPLIERS_STREAM};
+use crate::supplier_invoices::{SupplierInvoice, SupplierInvoiceEvent};
+use crate::{CUSTOMERS_STREAM, SUPPLIER_INVOICES_STREAM, SUPPLIERS_STREAM};
 use doris_eventstore::RecordedEvent;
 use serde::Serialize;
 use sqlx::SqliteConnection;
@@ -42,6 +43,58 @@ pub(crate) async fn apply(conn: &mut SqliteConnection, event: &RecordedEvent) ->
         let change: Change<_> = event.decode::<SupplierEvent>()?.into();
         return apply_change(conn, &SUPPLIERS, company_id, change).await;
     }
+    if let Some(company_id) = event.stream_id.strip_prefix(SUPPLIER_INVOICES_STREAM) {
+        return apply_supplier_invoice(conn, company_id, event.decode()?).await;
+    }
+    Ok(())
+}
+
+async fn apply_supplier_invoice(
+    conn: &mut SqliteConnection,
+    company_id: &str,
+    event: SupplierInvoiceEvent,
+) -> crate::Result<()> {
+    if let SupplierInvoiceEvent::SupplierInvoiceRegistered {
+        number,
+        invoice,
+        attachments,
+        voucher,
+    } = event
+    {
+        let invoice = SupplierInvoice::registered(number, invoice, attachments, voucher);
+        sqlx::query(
+            "INSERT INTO supplier_invoices
+             (company_id, number, supplier_number, invoice_number, status, details)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(company_id)
+        .bind(number)
+        .bind(invoice.invoice.supplier.number)
+        .bind(invoice.invoice.invoice_number.as_str())
+        .bind(invoice.status_code())
+        .bind(serde_json::to_string(&invoice)?)
+        .execute(&mut *conn)
+        .await?;
+        return Ok(());
+    }
+    let details: String = sqlx::query_scalar(
+        "SELECT details FROM supplier_invoices WHERE company_id = ? AND number = ?",
+    )
+    .bind(company_id)
+    .bind(event.number())
+    .fetch_one(&mut *conn)
+    .await?;
+    let mut invoice: SupplierInvoice = serde_json::from_str(&details)?;
+    invoice.apply(&event);
+    sqlx::query(
+        "UPDATE supplier_invoices SET status = ?, details = ? WHERE company_id = ? AND number = ?",
+    )
+    .bind(invoice.status_code())
+    .bind(serde_json::to_string(&invoice)?)
+    .bind(company_id)
+    .bind(event.number())
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -78,6 +131,9 @@ pub async fn rebuild_projections(pool: &sqlx::SqlitePool) -> crate::Result<()> {
     for table in [&CUSTOMERS, &SUPPLIERS] {
         sqlx::query(table.clear).execute(&mut *tx).await?;
     }
+    sqlx::query("DELETE FROM supplier_invoices")
+        .execute(&mut *tx)
+        .await?;
     for event in doris_eventstore::read_all(&mut tx, 0).await? {
         apply(&mut tx, &event).await?;
     }

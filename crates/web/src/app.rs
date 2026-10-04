@@ -4,9 +4,9 @@ use crate::active_company::{ActiveCompanySelect, Companies};
 use crate::api::{api, pb};
 use crate::pages::{
     AccountLedger, Accounts, Agi, Companies, CompanyPage, Customers, Employees,
-    FinancialStatements, FiscalYears, Home, Invitations, Login, NewCompany, NewVoucher,
-    OpeningBalances, Passkeys, PayrollRunPage, PayrollRuns, Register, Suppliers, TrialBalance,
-    Vouchers,
+    FinancialStatements, FiscalYears, Home, Invitations, Login, NewCompany, NewSupplierInvoice,
+    NewVoucher, OpeningBalances, Passkeys, PayrollRunPage, PayrollRuns, Register, SupplierInvoices,
+    Suppliers, TrialBalance, Vouchers,
 };
 use crate::ui::{Button, Variant};
 use leptos::prelude::*;
@@ -77,6 +77,8 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/vouchers") view=|| view! { <SignedIn><Vouchers /></SignedIn> } />
                         <Route path=path!("/customers") view=|| view! { <SignedIn><Customers /></SignedIn> } />
                         <Route path=path!("/suppliers") view=|| view! { <SignedIn><Suppliers /></SignedIn> } />
+                        <Route path=path!("/supplier-invoices") view=|| view! { <SignedIn><SupplierInvoices /></SignedIn> } />
+                        <Route path=path!("/supplier-invoices/new") view=|| view! { <SignedIn><NewSupplierInvoice /></SignedIn> } />
                         <Route path=path!("/vouchers/new") view=|| view! { <SignedIn><NewVoucher /></SignedIn> } />
                         <Route path=path!("/trial-balance") view=|| view! { <SignedIn><TrialBalance /></SignedIn> } />
                         <Route path=path!("/trial-balance/:account") view=|| view! { <SignedIn><AccountLedger /></SignedIn> } />
@@ -154,6 +156,7 @@ fn Header() -> impl IntoView {
                         <A href="/vouchers" attr:class="text-muted-foreground hover:text-foreground">"Verifikationer"</A>
                         <A href="/customers" attr:class="text-muted-foreground hover:text-foreground">"Kunder"</A>
                         <A href="/suppliers" attr:class="text-muted-foreground hover:text-foreground">"Leverantörer"</A>
+                        <A href="/supplier-invoices" attr:class="text-muted-foreground hover:text-foreground">"Leverantörsfakturor"</A>
                         <A href="/trial-balance" attr:class="text-muted-foreground hover:text-foreground">"Saldobalans"</A>
                         <A href="/financial-statements" attr:class="text-muted-foreground hover:text-foreground">"Rapporter"</A>
                         <A href="/fiscal-years" attr:class="text-muted-foreground hover:text-foreground">"Räkenskapsår"</A>
