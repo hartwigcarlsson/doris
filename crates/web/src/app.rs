@@ -1,7 +1,7 @@
 //! Routes, the session state and the page shell.
 
 use crate::active_company::{ActiveCompanySelect, Companies};
-use crate::api::{api, pb};
+use crate::api::{api, pb, prefetched_status};
 use crate::pages::{
     AccountLedger, Accounts, Companies, CompanyPage, CustomerInvoices, Customers, Employees,
     FinancialStatements, FiscalYears, Home, Invitations, Login, NewCompany, NewCustomerInvoice,
@@ -51,8 +51,15 @@ pub fn App() -> impl IntoView {
         None => companies.clear(),
     });
     spawn_local(async move {
-        if let Ok(status) = api().get_status(pb::GetStatusRequest {}).await {
-            let status = status.into_inner();
+        let status = match prefetched_status().await {
+            Some(status) => Some(status),
+            None => api()
+                .get_status(pb::GetStatusRequest {})
+                .await
+                .ok()
+                .map(|status| status.into_inner()),
+        };
+        if let Some(status) = status {
             session.bootstrap_required.set(status.bootstrap_required);
             session.user.set(status.current_user);
         }

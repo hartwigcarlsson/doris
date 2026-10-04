@@ -7,9 +7,41 @@
          (CDN). Empty means same origin. -->
     <meta name="doris-api" content="" />
     <title>Doris</title>
-    <link data-trunk rel="tailwind-css" href="style/input.css" />
+    <script>
+      // Asks who is signed in now, while the wasm downloads, rather than a
+      // round trip after it; the app reads it in `api::prefetched_status`.
+      window.dorisStatus = fetch(
+        (document.querySelector("meta[name=doris-api]").content || location.origin) +
+          "/doris.auth.v1.AuthService/GetStatus",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/grpc-web+proto", "x-grpc-web": "1" },
+          // An empty GetStatusRequest: flag 0, length 0.
+          body: new Uint8Array(5),
+        },
+      )
+        .then((response) => (response.ok ? response.arrayBuffer() : null))
+        .catch(() => null);
+    </script>
+    <!-- Inlined, so the progress bar paints without waiting for a stylesheet. -->
+    <link data-trunk rel="tailwind-css" href="style/input.css" data-inline />
     <link data-trunk rel="copy-dir" href="fonts" />
-    <link data-trunk rel="rust" data-wasm-opt="z" />
+    <link data-trunk rel="rust" data-wasm-opt="z" data-initializer="boot.js" />
   </head>
-  <body></body>
+  <body>
+    <!-- Shown until the app starts; boot.js fills in the progress. The system
+         font, so Inter doesn't take bandwidth from the wasm. -->
+    <div id="boot" class="mx-auto w-full max-w-sm px-4 py-10 font-[ui-sans-serif,system-ui,sans-serif]">
+      <div id="boot-progress">
+        <p class="text-muted-foreground">Laddar Doris…</p>
+        <div role="progressbar" aria-label="Laddar Doris" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+          class="relative mt-3 flex h-1 w-full items-center overflow-x-hidden rounded-md bg-muted">
+          <div class="size-full flex-1 bg-primary transition-all" style="transform: translateX(-100%)"></div>
+        </div>
+        <p id="boot-eta" class="mt-2 text-xs/relaxed text-muted-foreground"></p>
+      </div>
+      <p id="boot-failed" role="alert" class="text-destructive" hidden>Kunde inte ladda Doris. Ladda om sidan.</p>
+    </div>
+  </body>
 </html>

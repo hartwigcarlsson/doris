@@ -2,6 +2,7 @@
    theme amber, font Inter (self-hosted), radius small, icons lucide. */
 @import "tailwindcss";
 @source "../src";
+@source "../index.html";
 
 @font-face {
   font-family: "Inter Variable";

@@ -8,3 +8,10 @@ tailwindcss = "4.3.3"
 # `trunk serve` proxies API calls to the server, so dev is same-origin.
 [[proxy]]
 backend = "http://localhost:3000/doris.auth.v1.AuthService"
+
+# Trunk hands the initializer (boot.js) the wasm's size from before wasm-opt,
+# so the progress bar would stop short of the end. Put the real size in.
+[[hooks]]
+stage = "post_build"
+command = "perl"
+command_arguments = ["-pi", "-e", '''BEGIN { @ARGV = "$ENV{TRUNK_STAGING_DIR}/index.html" } s{(__trunkInitializer\(init, '([^']+)', )\d+}{$1 . -s "$ENV{TRUNK_STAGING_DIR}$2"}e''']
