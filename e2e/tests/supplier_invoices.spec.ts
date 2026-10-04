@@ -85,3 +85,27 @@ test("a duplicate invoice number shows a Swedish error", async ({ page, app }) =
   await page.getByRole("button", { name: "Registrera" }).click();
   await expect(page.getByRole("alert")).toHaveText("Den här fakturan från leverantören är redan registrerad.");
 });
+
+test("under kontantmetoden only the payment is booked, and Räkenskapsår warns while unpaid", async ({ page, app }) => {
+  const warning = /Det finns obetalda leverantörsfakturor/;
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB", undefined, "Kontantmetoden");
+  await addSupplier(page, app, "Lev AB");
+  await registerInvoice(page, app, "F-4711");
+
+  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await expect(page.getByRole("row", { name: /Leverantörsfaktura/ })).toHaveCount(0);
+  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await expect(page.getByText(warning)).toBeVisible();
+
+  await page.getByRole("banner").getByRole("link", { name: "Leverantörsfakturor" }).click();
+  await page.getByRole("row", { name: /^1 Lev AB F-4711/ }).getByRole("button", { name: "Betala" }).click();
+  await page.getByRole("button", { name: "Bekräfta betalning" }).click();
+  await expect(page.getByRole("row", { name: /^1 Lev AB F-4711/ })).toHaveCount(0);
+
+  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await expect(page.getByRole("row", { name: /Leverantörsfaktura 1, Lev AB \(F-4711\)/ })).toContainText("1 underlag");
+  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await expect(page.getByRole("heading", { name: "Räkenskapsår" })).toBeVisible();
+  await expect(page.getByText(warning)).toHaveCount(0);
+});

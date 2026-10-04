@@ -134,7 +134,14 @@ export async function logIn(page: Page, app: string, email: string) {
 }
 
 /** Adds a company whose first räkenskapsår starts on `start` (a 1 January), by default this year. */
-export async function addCompany(page: Page, app: string, orgNr: string, name: string, start = `${new Date().getFullYear()}-01-01`) {
+export async function addCompany(
+  page: Page,
+  app: string,
+  orgNr: string,
+  name: string,
+  start = `${new Date().getFullYear()}-01-01`,
+  method: "Faktureringsmetoden" | "Kontantmetoden" = "Faktureringsmetoden",
+) {
   await page.goto(`${app}/companies`);
   await page.getByRole("main").getByRole("link", { name: "Lägg till företag" }).click();
   await page.getByLabel("Organisationsnummer").fill(orgNr);
@@ -143,7 +150,7 @@ export async function addCompany(page: Page, app: string, orgNr: string, name: s
   await page.getByLabel("Postort").fill("Stockholm");
   await page.getByLabel("Räkenskapsåret börjar").fill(start);
   await expect(page.getByText(`Räkenskapsåret slutar ${start.slice(0, 4)}-12-31.`)).toBeVisible();
-  await page.getByLabel("Faktureringsmetoden").check();
+  await page.getByLabel(method).check();
   await page.getByRole("button", { name: "Spara företag" }).click();
   await expect(page.getByRole("heading", { name })).toBeVisible();
 }
