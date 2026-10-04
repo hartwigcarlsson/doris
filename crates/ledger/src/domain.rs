@@ -783,7 +783,7 @@ pub fn result_of(ledger: &Ledger) -> Option<i64> {
 
 /// Where the year's result goes: 2019 for an enskild firma and partnerships,
 /// whose owners are taxed on it personally, and 2099 for everyone else.
-fn result_account(legal_form: LegalForm) -> AccountNumber {
+pub(crate) fn result_account(legal_form: LegalForm) -> AccountNumber {
     match legal_form {
         LegalForm::EnskildFirma | LegalForm::Handelsbolag | LegalForm::Kommanditbolag => {
             AccountNumber(2019)
