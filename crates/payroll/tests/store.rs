@@ -2,10 +2,11 @@ use doris_company::NewCompany;
 use doris_company::domain::{AccountingMethod, LegalForm};
 use doris_payroll::domain::DomainError;
 use doris_payroll::{
-    Error, NewEmployee, add_employee, book_payroll_run, create_payroll_run, deactivate_employee,
-    finalize_payroll_run, get_payroll_run, list_employees, list_payroll_runs, preview_payroll_run,
-    rebuild_projections, reopen_payroll_run, set_employee_tax, store_tax_table, tax_table,
-    unbook_payroll_run, update_employee, update_payroll_run,
+    Error, NewEmployee, add_employee, agi_contact, agi_file, agi_month, agi_months,
+    book_payroll_run, create_payroll_run, deactivate_employee, finalize_payroll_run,
+    get_payroll_run, list_employees, list_payroll_runs, preview_payroll_run, rebuild_projections,
+    reopen_payroll_run, set_agi_contact, set_employee_tax, store_tax_table, submit_agi_month,
+    tax_table, unbook_payroll_run, update_employee, update_payroll_run,
 };
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -1027,4 +1028,177 @@ async fn reopening_forgets_a_computed_tax_but_keeps_a_typed_one() {
     rebuild_projections(&pool).await.unwrap();
 
     assert_eq!(table(&pool, rows).await, before);
+}
+
+use doris_payroll::agi::{AgiStatus, Period};
+
+/// Åsa paid 35 000 kr with 8 000 kr tax on 2025-10-25, booked.
+async fn booked_october(pool: &SqlitePool, id: Uuid, anna: Uuid) -> Uuid {
+    let run = finalized_run(pool, id, anna, "2025-10-25").await;
+    book_payroll_run(pool, id, anna, run, d("2025-10-25"))
+        .await
+        .unwrap();
+    run
+}
+
+fn oct25() -> Period {
+    Period::parse("202510").unwrap()
+}
+
+#[tokio::test]
+async fn a_month_is_declared_and_changes_are_noticed() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let run = booked_october(&pool, id, anna).await;
+
+    let months = agi_months(&pool, id, anna).await.unwrap();
+    assert_eq!(months.len(), 1);
+    assert_eq!(
+        (
+            months[0].period,
+            months[0].gross,
+            months[0].tax_sum,
+            months[0].fee_sum,
+            months[0].status
+        ),
+        (oct25(), 35_000, 8_000, 10_997, AgiStatus::NotSubmitted)
+    );
+    assert!(matches!(
+        agi_file(
+            &pool,
+            id,
+            anna,
+            oct25(),
+            jiff::civil::date(2025, 11, 5).at(9, 0, 0, 0)
+        )
+        .await,
+        Err(Error::Domain(DomainError::AgiContactMissing))
+    ));
+
+    set_agi_contact(
+        &pool,
+        id,
+        anna,
+        "Anna Andersson",
+        "070-123 45 67",
+        "anna@example.se",
+    )
+    .await
+    .unwrap();
+    let (name, xml) = agi_file(
+        &pool,
+        id,
+        anna,
+        oct25(),
+        jiff::civil::date(2025, 11, 5).at(9, 0, 0, 0),
+    )
+    .await
+    .unwrap();
+    assert_eq!(name, "AGI_165560160680_202510.xml");
+    assert!(xml.contains(
+        r#"<agd:BetalningsmottagarId faltkod="215">198001011231</agd:BetalningsmottagarId>"#
+    ));
+    assert!(xml.contains(r#"<agd:SummaArbAvgSlf faltkod="487">10997</agd:SummaArbAvgSlf>"#));
+
+    submit_agi_month(&pool, id, anna, oct25()).await.unwrap();
+    let months = agi_months(&pool, id, anna).await.unwrap();
+    assert_eq!(months[0].status, AgiStatus::Submitted);
+    assert!(months[0].submitted_at.is_some());
+    assert!(matches!(
+        submit_agi_month(&pool, id, anna, oct25()).await,
+        Err(Error::Domain(DomainError::AgiUnchanged))
+    ));
+
+    unbook_payroll_run(&pool, id, anna, run, d("2025-10-27"))
+        .await
+        .unwrap();
+    let month = agi_month(&pool, id, anna, oct25()).await.unwrap();
+    assert_eq!(month.status, AgiStatus::Changed);
+    assert_eq!(month.removed.len(), 1);
+    let (_, xml) = agi_file(
+        &pool,
+        id,
+        anna,
+        oct25(),
+        jiff::civil::date(2025, 11, 5).at(9, 0, 0, 0),
+    )
+    .await
+    .unwrap();
+    assert!(xml.contains(r#"<agd:Borttag faltkod="205">1</agd:Borttag>"#));
+    assert!(xml.contains("198001011231"));
+}
+
+#[tokio::test]
+async fn the_contact_is_checked_and_kept() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    assert_eq!(agi_contact(&pool, id, anna).await.unwrap(), None);
+    assert!(matches!(
+        set_agi_contact(&pool, id, anna, "Anna", "", "anna@example.se").await,
+        Err(Error::Domain(DomainError::InvalidAgiContact))
+    ));
+    set_agi_contact(&pool, id, anna, "Anna", "070", "anna@example.se")
+        .await
+        .unwrap();
+    set_agi_contact(&pool, id, anna, "Anna", "070", "anna@example.se")
+        .await
+        .unwrap();
+    assert_eq!(
+        agi_contact(&pool, id, anna).await.unwrap().unwrap().phone,
+        "070"
+    );
+    assert_eq!(events_of(&pool, "payroll-").await, ["AgiContactChanged"]);
+}
+
+#[tokio::test]
+async fn agi_projections_rebuild_and_record_who_submitted() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    booked_october(&pool, id, anna).await;
+    set_agi_contact(&pool, id, anna, "Anna", "070", "anna@example.se")
+        .await
+        .unwrap();
+    submit_agi_month(&pool, id, anna, oct25()).await.unwrap();
+    let contacts = "SELECT company_id || name || phone || email FROM agi_contacts";
+    let submissions =
+        "SELECT period || ':' || submitted_by || ':' || lines || ':' || fee_sum || ':' || tax_sum
+                       FROM agi_submissions ORDER BY rowid";
+    let before = (
+        table(&pool, contacts).await,
+        table(&pool, submissions).await,
+    );
+    assert!(before.1[0].contains(&anna.to_string()));
+
+    rebuild_projections(&pool).await.unwrap();
+
+    assert_eq!(
+        (
+            table(&pool, contacts).await,
+            table(&pool, submissions).await
+        ),
+        before
+    );
+}
+
+#[tokio::test]
+async fn strangers_see_no_agi() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let eve = Uuid::new_v4();
+    assert!(matches!(
+        agi_months(&pool, id, eve).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        agi_contact(&pool, id, eve).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        submit_agi_month(&pool, id, eve, oct25()).await,
+        Err(Error::NotFound)
+    ));
 }

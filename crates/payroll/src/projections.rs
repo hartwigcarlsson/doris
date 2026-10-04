@@ -157,8 +157,40 @@ pub(crate) async fn apply(conn: &mut SqliteConnection, event: &RecordedEvent) ->
             .execute(&mut *conn)
             .await?;
         }
-        // Projected by Task 4 of plan 14, which replaces this arm.
-        PayrollEvent::AgiContactChanged { .. } | PayrollEvent::AgiMonthSubmitted { .. } => {}
+        PayrollEvent::AgiContactChanged { contact } => {
+            sqlx::query(
+                "INSERT INTO agi_contacts (company_id, name, phone, email) VALUES (?, ?, ?, ?)
+                 ON CONFLICT (company_id) DO UPDATE SET
+                     name = excluded.name, phone = excluded.phone, email = excluded.email",
+            )
+            .bind(company_id)
+            .bind(&contact.name)
+            .bind(&contact.phone)
+            .bind(&contact.email)
+            .execute(&mut *conn)
+            .await?;
+        }
+        PayrollEvent::AgiMonthSubmitted {
+            period,
+            lines,
+            fee_sum,
+            tax_sum,
+        } => {
+            sqlx::query(
+                "INSERT INTO agi_submissions (company_id, period, submitted_at, submitted_by, lines,
+                     fee_sum, tax_sum)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(company_id)
+            .bind(period.get())
+            .bind(&event.recorded_at)
+            .bind(actor(event))
+            .bind(serde_json::to_string(&lines)?)
+            .bind(fee_sum)
+            .bind(tax_sum)
+            .execute(&mut *conn)
+            .await?;
+        }
     }
     Ok(())
 }
@@ -253,6 +285,8 @@ async fn insert_locked_line(
 pub async fn rebuild_projections(pool: &sqlx::SqlitePool) -> crate::Result<()> {
     let mut tx = doris_eventstore::begin(pool).await?;
     for statement in [
+        "DELETE FROM agi_submissions",
+        "DELETE FROM agi_contacts",
         "DELETE FROM payroll_run_bookings",
         "DELETE FROM payroll_run_lines",
         "DELETE FROM payroll_runs",
