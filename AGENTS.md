@@ -305,14 +305,12 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   include it. Also lint the wasm build:
   `cargo clippy -p doris-web --target wasm32-unknown-unknown -- -D warnings`.
 - Keep the wasm small. `make dist` builds it with the `wasm-release` profile
-  (opt-level "z", LTO, `panic = "abort"`), and fails if the gzipped wasm
-  grows past `WASM_BUDGET` (500 KB). That is what crosses the wire: the server
-  sends frontend files compressed (brotli or gzip, via tower-http), and gzip
-  is the larger of the two. Check what a new dependency adds before taking it
-  on.
+  (opt-level "z", LTO, `panic = "abort"`). The server sends frontend files
+  compressed (brotli or gzip, via tower-http). Check what a new dependency
+  adds before taking it on.
 - The wasm is built with `--cfg erase_components` (set in `.cargo/config.toml`
   for `wasm32-unknown-unknown`), which type-erases Leptos views and keeps the
-  wasm under budget; an env `RUSTFLAGS` overrides it, so don't set one for wasm
+  wasm small; an env `RUSTFLAGS` overrides it, so don't set one for wasm
   builds.
 - E2E tests live in `e2e/` (Playwright). Every test spawns its own server on
   a fresh database, and pages get a Chrome DevTools virtual WebAuthn
