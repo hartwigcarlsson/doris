@@ -163,3 +163,12 @@ export async function addSupplier(page: Page, app: string, name: string) {
   await page.getByRole("button", { name: "Spara" }).click();
   await expect(page.getByRole("row", { name: new RegExp(`^1 ${name}`) })).toBeVisible();
 }
+
+export async function addCustomer(page: Page, app: string, name: string, terms = "30") {
+  await page.goto(`${app}/customers`);
+  await page.getByRole("button", { name: "Ny kund" }).click();
+  await page.getByLabel("Namn", { exact: true }).fill(name);
+  await page.getByLabel("Betalningsvillkor (dagar)").fill(terms);
+  await page.getByRole("button", { name: "Spara" }).click();
+  await expect(page.getByRole("row", { name: new RegExp(`^1 ${name}`) })).toBeVisible();
+}
