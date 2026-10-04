@@ -3,7 +3,7 @@
 //! work.
 
 use crate::active_company::Companies;
-use crate::api::{ledger_api, lpb};
+use crate::api::{invoicing_api, ipb, ledger_api, lpb};
 use crate::errors::describe;
 use crate::fiscal_year::{closable, reopenable, use_fiscal_years};
 use crate::format::today;
@@ -26,11 +26,42 @@ pub fn FiscalYears() -> impl IntoView {
         companies.active.track();
         done.set(None);
     });
+    // Kontantmetoden: unpaid supplier invoices belong in the year-end books
+    // (BFL 5 kap. 2 §), which Doris doesn't book yet.
+    let unpaid_under_cash = RwSignal::new(false);
+    Effect::new(move |_| {
+        let company_id = companies.active.get();
+        unpaid_under_cash.set(false);
+        if company_id.is_empty() {
+            return;
+        }
+        spawn_local(async move {
+            let result = invoicing_api()
+                .list_supplier_invoices(ipb::ListSupplierInvoicesRequest {
+                    company_id: company_id.clone(),
+                })
+                .await;
+            if company_id != companies.active.get_untracked() {
+                return;
+            }
+            if let Ok(response) = result {
+                let response = response.into_inner();
+                unpaid_under_cash.set(
+                    response.cash_method && response.invoices.iter().any(|i| i.status == "unpaid"),
+                );
+            }
+        });
+    });
 
     view! {
         <div class="grid gap-6" data-wide>
             <h1 class="text-sm font-medium">"Räkenskapsår"</h1>
             <ErrorAlert message=error />
+            {move || unpaid_under_cash.get().then(|| view! {
+                <p class="text-xs/relaxed text-muted-foreground">
+                    "Det finns obetalda leverantörsfakturor. Med kontantmetoden ska de bokföras vid räkenskapsårets slut (BFL 5 kap. 2 §). Doris gör inte det än."
+                </p>
+            })}
             {move || done.get().map(|text| view! { <p role="status" class="text-xs/relaxed">{text}</p> })}
             <Table>
                 <thead class=TABLE_HEAD>

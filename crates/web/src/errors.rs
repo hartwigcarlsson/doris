@@ -133,6 +133,22 @@ fn message(code: &str) -> &'static str {
         "invalid_bic" => "Ange en giltig BIC (8 eller 11 tecken).",
         "customer_not_found" => "Kunden finns inte.",
         "supplier_not_found" => "Leverantören finns inte.",
+        "supplier_invoice_not_found" => "Leverantörsfakturan finns inte.",
+        "supplier_inactive" => "Leverantören är inaktiv. Aktivera den eller välj en annan.",
+        "invalid_invoice_number" => "Fakturanumret måste vara 1–50 tecken.",
+        "duplicate_supplier_invoice" => "Den här fakturan från leverantören är redan registrerad.",
+        "invalid_due_date" => "Förfallodatumet kan inte vara före fakturadatumet.",
+        "invalid_reference" => "OCR/meddelande får vara högst 50 tecken.",
+        "invalid_invoice_lines" => "En faktura ska ha 1–50 rader med belopp över noll.",
+        "invalid_vat_rate" => "Momssatsen ska vara 25, 12, 6 eller 0 %.",
+        "invalid_vat_amount" => "Momsen får skilja högst 1 kr från den uträknade.",
+        "invalid_invoice_account" => {
+            "Raderna kan inte bokföras på 2440 eller ett momskonto. Doris gör det själv."
+        }
+        "invalid_payment_account" => "Betalkontot ska vara ett konto i 1900–1999.",
+        "supplier_invoice_paid" => "Fakturan är redan betald.",
+        "supplier_invoice_not_paid" => "Fakturan är inte betald.",
+        "supplier_invoice_cancelled" => "Fakturan är makulerad.",
         _ => "Något gick fel. Försök igen.",
     }
 }
@@ -228,6 +244,28 @@ mod tests {
             message("invalid_payment_terms"),
             "Betalningsvillkoret ska vara 0–365 dagar."
         );
+    }
+
+    #[test]
+    fn supplier_invoice_codes_have_swedish_messages() {
+        for code in [
+            "supplier_invoice_not_found",
+            "supplier_inactive",
+            "invalid_invoice_number",
+            "duplicate_supplier_invoice",
+            "invalid_due_date",
+            "invalid_reference",
+            "invalid_invoice_lines",
+            "invalid_vat_rate",
+            "invalid_vat_amount",
+            "invalid_invoice_account",
+            "invalid_payment_account",
+            "supplier_invoice_paid",
+            "supplier_invoice_not_paid",
+            "supplier_invoice_cancelled",
+        ] {
+            assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
+        }
     }
 
     #[test]

@@ -30,7 +30,8 @@ pub fn company_api() -> CompanyApi {
 }
 
 pub fn invoicing_api() -> InvoicingApi {
-    InvoicingServiceClient::new(client())
+    // Room for a 10 MiB underlag coming back from GetSupplierInvoiceAttachment.
+    InvoicingServiceClient::new(client()).max_decoding_message_size(11 << 20)
 }
 
 pub fn payroll_api() -> PayrollApi {

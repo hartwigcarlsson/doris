@@ -33,7 +33,7 @@ spec in `docs/superpowers/specs/` and an implementation plan in
 proto/              .proto files (package doris.<area>.v1)
 migrations/         sqlx migrations, NNNN_name.sql, shared by all crates
 crates/company      doris-company: companies, members, fiscal year and accounting method
-crates/invoicing    doris-invoicing: customers and suppliers (fakturor later)
+crates/invoicing    doris-invoicing: customers, suppliers and supplier invoices
 crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
 crates/identity     doris-identity: users, passkeys, invitations, sessions
 crates/ledger       doris-ledger: chart of accounts, vouchers, opening balances and year closing
@@ -80,8 +80,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - Underlag (PDF, JPEG, PNG; `AttachmentAdded` in the ledger stream) keep
   their bytes in `attachment_files`: primary data like `events`, not a
   projection, append-only by trigger and keyed by SHA-256, so a file is
-  stored once. They are read only through `voucher_attachments` for the
-  company's own voucher, never by hash alone. An underlag is never removed
+  stored once. They are read only through the company's own voucher
+  (`voucher_attachments`) or the company's own supplier invoice, never by
+  hash alone. An underlag is never removed
   or renamed, and it may be added to a voucher in a closed year: it changes
   no amount. The type comes from the bytes, never from the client.
 - Payroll (`payroll-{company_id}`: employees and runs) has its own
@@ -175,6 +176,23 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `customer_not_found` and `supplier_not_found` (plus `invalid_org_nr`,
   `invalid_address` and `invalid_email`). The VAT number's format is
   checked, never looked up in VIES.
+- Supplier invoices (`supplier-invoices-{company}` stream, `supplier_invoices`
+  projection) follow the company's accounting method: faktureringsmetoden
+  books the registration against 2440 and the payment 2440 against the
+  bank; kontantmetoden books nothing until payment, then cost and VAT
+  against the bank, with the underlag. Cancelling (unpaid only) and
+  reversing a payment book `correct_voucher_in` corrections, dated today
+  or the voucher's fiscal year's last day. One live invoice per supplier
+  and invoice number (partial unique index). `InvoicingService` takes 21
+  MiB messages and sends up to 11 MiB, and `session_gate` covers it too.
+  Codes: `supplier_invoice_not_found`, `supplier_inactive`,
+  `invalid_invoice_number`, `duplicate_supplier_invoice`,
+  `invalid_due_date`, `invalid_reference`, `invalid_invoice_lines`,
+  `invalid_vat_rate`, `invalid_vat_amount`, `invalid_invoice_account`,
+  `invalid_payment_account`, `supplier_invoice_paid`,
+  `supplier_invoice_not_paid` and `supplier_invoice_cancelled`; ledger
+  errors keep their codes. Unpaid invoices at year end under
+  kontantmetoden are not booked yet; Räkenskapsår warns.
 - `LedgerService` also has `GetOpeningBalances`, `SetOpeningBalances`,
   `CloseFiscalYear` and `ReopenFiscalYear`. Their codes are
   `not_balance_sheet_account`, `duplicate_account`,
@@ -218,8 +236,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   an external service. It is stored as twelve digits and never changed
   on an employee.
 - tonic reserves the size a frame header claims before a handler runs, so
-  `session_gate` (`crates/server/src/lib.rs`) answers `LedgerService` calls
-  without a valid session with `not_signed_in` before the body is read. The
+  `session_gate` (`crates/server/src/lib.rs`) answers `LedgerService` and
+  `InvoicingService` calls without a valid session with `not_signed_in` before the body is read. The
   handlers still check the session themselves.
 - A reverse proxy in front of Doris must allow request bodies of about
   21 MiB (nginx's default `client_max_body_size` is 1 MiB).

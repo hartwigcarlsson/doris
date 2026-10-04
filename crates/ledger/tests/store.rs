@@ -1,13 +1,15 @@
 use doris_company::NewCompany;
 use doris_company::domain::{AccountingMethod, LegalForm};
+use doris_ledger::domain::AccountNumber;
 use doris_ledger::domain::{ContentType, DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
 use doris_ledger::statements::StatementLine;
 use doris_ledger::{
     Error, NewAttachment, VoucherRef, account_ledger, add_account, add_attachment,
-    close_fiscal_year, correct_voucher, financial_statements, get_attachment, list_accounts,
-    list_fiscal_years, list_vouchers, opening_balances, rebuild_projections, record_voucher,
-    record_voucher_in, record_voucher_with_attachments, rename_account, reopen_fiscal_year,
-    set_account_active, set_opening_balances, trial_balance,
+    check_accounts_in, close_fiscal_year, correct_voucher, financial_statements, get_attachment,
+    link_attachment_in, list_accounts, list_fiscal_years, list_vouchers, opening_balances,
+    rebuild_projections, record_voucher, record_voucher_in, record_voucher_with_attachments,
+    rename_account, reopen_fiscal_year, set_account_active, set_opening_balances,
+    store_attachment_in, trial_balance,
 };
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -1509,4 +1511,100 @@ async fn the_statements_need_a_fiscal_year_start_and_membership() {
         financial_statements(&pool, id, bo, d("2025-02-01"), today).await,
         Err(Error::NotFound)
     ));
+}
+
+#[test]
+fn a_voucher_ref_is_stored_as_json() {
+    let voucher = VoucherRef {
+        fiscal_year_start: d("2026-01-01"),
+        number: 3,
+    };
+    let json = serde_json::to_string(&voucher).unwrap();
+    assert_eq!(json, r#"{"fiscal_year_start":"2026-01-01","number":3}"#);
+    assert_eq!(serde_json::from_str::<VoucherRef>(&json).unwrap(), voucher);
+}
+
+#[tokio::test]
+async fn an_underlag_is_stored_first_and_linked_to_a_voucher_later() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let booked = record_voucher(&pool, id, anna, sale("2025-03-01", 100), d(TODAY))
+        .await
+        .unwrap();
+
+    let mut tx = doris_eventstore::begin(&pool).await.unwrap();
+    let stored = store_attachment_in(&mut tx, png("faktura.png"))
+        .await
+        .unwrap();
+    link_attachment_in(
+        &mut tx,
+        id,
+        anna,
+        booked.fiscal_year_start,
+        booked.number,
+        stored.clone(),
+        d(TODAY),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let vouchers = list_vouchers(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+    assert_eq!(vouchers[0].attachments, std::slice::from_ref(&stored));
+    let (_, data) = get_attachment(&pool, id, anna, d("2025-01-01"), 1, &stored.sha256)
+        .await
+        .unwrap();
+    assert_eq!(data, png("faktura.png").data);
+
+    let mut tx = doris_eventstore::begin(&pool).await.unwrap();
+    let err = store_attachment_in(
+        &mut tx,
+        NewAttachment {
+            file_name: "a.txt".into(),
+            data: b"text".to_vec(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::Domain(DomainError::UnsupportedAttachmentType)
+    ));
+}
+
+#[tokio::test]
+async fn accounts_are_checked_against_the_chart() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    set_account_active(&pool, id, anna, 1910, false)
+        .await
+        .unwrap();
+    let n = |number| AccountNumber::parse(number).unwrap();
+
+    let mut tx = doris_eventstore::begin(&pool).await.unwrap();
+    check_accounts_in(&mut tx, id, anna, &[n(1930), n(5410)])
+        .await
+        .unwrap();
+    let inactive = check_accounts_in(&mut tx, id, anna, &[n(1930), n(1910)])
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        inactive,
+        Error::Domain(DomainError::AccountInactive)
+    ));
+    let missing = check_accounts_in(&mut tx, id, anna, &[n(1931)])
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        missing,
+        Error::Domain(DomainError::AccountNotFound)
+    ));
+    let stranger = check_accounts_in(&mut tx, id, Uuid::new_v4(), &[n(1930)])
+        .await
+        .unwrap_err();
+    assert!(matches!(stranger, Error::NotFound));
 }

@@ -18,7 +18,7 @@ use domain::{
 use doris_company::domain::{Company, FiscalYear};
 use doris_eventstore::{Metadata, NewEvent};
 use jiff::civil::Date;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
@@ -191,7 +191,7 @@ async fn append<E: Serialize>(
 }
 
 /// Where a voucher landed: its fiscal year and its number in that year.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VoucherRef {
     pub fiscal_year_start: Date,
     pub number: u32,
@@ -350,15 +350,95 @@ async fn add_attachment_in(
     let (ledger, version) = load_ledger(conn, company_id, fiscal_year).await?;
     let attachment = Attachment::new(&new.file_name, &new.data, sha256_hex(&new.data))?;
     let event = domain::add_attachment(&ledger, number, attachment.clone())?;
-    sqlx::query("INSERT OR IGNORE INTO attachment_files (sha256, size, data) VALUES (?, ?, ?)")
-        .bind(&attachment.sha256)
-        .bind(new.data.len() as i64)
-        .bind(&new.data)
-        .execute(&mut *conn)
-        .await?;
+    insert_file(conn, &attachment.sha256, &new.data).await?;
     let stream = ledger_stream(company_id, fiscal_year.start);
     append(conn, &stream, version, &[event], actor).await?;
     Ok(attachment)
+}
+
+/// Checks an underlag and stores its bytes in the caller's transaction,
+/// linked to no voucher yet (see [`link_attachment_in`]). Used where the
+/// voucher comes later, as for a supplier invoice under kontantmetoden.
+pub async fn store_attachment_in(
+    conn: &mut SqliteConnection,
+    new: NewAttachment,
+) -> Result<Attachment> {
+    let attachment = Attachment::new(&new.file_name, &new.data, sha256_hex(&new.data))?;
+    insert_file(conn, &attachment.sha256, &new.data).await?;
+    Ok(attachment)
+}
+
+/// Links an underlag already stored by [`store_attachment_in`] to voucher
+/// `number` of the fiscal year starting on `fiscal_year_start`.
+pub async fn link_attachment_in(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    number: u32,
+    attachment: Attachment,
+    today: Date,
+) -> Result<()> {
+    let company = member_company(conn, company_id, actor).await?;
+    let fiscal_year =
+        fiscal_year_at(&company, fiscal_year_start, today).ok_or(DomainError::VoucherNotFound)?;
+    let (ledger, version) = load_ledger(conn, company_id, fiscal_year).await?;
+    let event = domain::add_attachment(&ledger, number, attachment)?;
+    let stream = ledger_stream(company_id, fiscal_year.start);
+    append(conn, &stream, version, &[event], actor).await
+}
+
+/// Each account must be in the company's chart and active. For callers
+/// that need the check without booking a voucher.
+pub async fn check_accounts_in(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    actor: Uuid,
+    accounts: &[AccountNumber],
+) -> Result<()> {
+    member_company(conn, company_id, actor).await?;
+    let chart = seeded_chart(conn, company_id, actor).await?;
+    for &number in accounts {
+        match chart.get(number) {
+            None => return Err(DomainError::AccountNotFound.into()),
+            Some(account) if !account.active => return Err(DomainError::AccountInactive.into()),
+            Some(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// The voucher that corrects voucher `number` of the fiscal year starting
+/// on `fiscal_year_start`, if it has been corrected (for instance by hand in
+/// the grundbok).
+pub async fn correction_of_in(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    number: u32,
+    today: Date,
+) -> Result<Option<VoucherRef>> {
+    let company = member_company(conn, company_id, actor).await?;
+    let fiscal_year =
+        fiscal_year_at(&company, fiscal_year_start, today).ok_or(DomainError::VoucherNotFound)?;
+    let (ledger, _) = load_ledger(conn, company_id, fiscal_year).await?;
+    let voucher = ledger.voucher(number).ok_or(DomainError::VoucherNotFound)?;
+    Ok(voucher.corrected_by.map(|number| VoucherRef {
+        fiscal_year_start,
+        number,
+    }))
+}
+
+/// Bytes are stored once per SHA-256; `attachment_files` is append-only.
+async fn insert_file(conn: &mut SqliteConnection, sha256: &str, data: &[u8]) -> Result<()> {
+    sqlx::query("INSERT OR IGNORE INTO attachment_files (sha256, size, data) VALUES (?, ?, ?)")
+        .bind(sha256)
+        .bind(data.len() as i64)
+        .bind(data)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
 }
 
 /// Lowercase hex SHA-256.
