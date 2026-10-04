@@ -109,3 +109,117 @@ fn the_fee_rounds_half_an_ore_up() {
     // 24,99 kr × 31,42 % = 7,85186 kr.
     assert_eq!(fee(1980, may, 2_499), (FULL_RATE, 785));
 }
+
+use std::collections::HashSet;
+use uuid::Uuid;
+
+fn pin(raw: &str) -> PersonalIdentityNumber {
+    PersonalIdentityNumber::parse(raw).unwrap()
+}
+
+fn name(raw: &str) -> EmployeeName {
+    EmployeeName::parse(raw).unwrap()
+}
+
+fn hired(id: Uuid, personnummer: &str, monthly_salary: i64) -> PayrollEvent {
+    PayrollEvent::EmployeeAdded {
+        employee_id: id,
+        name: name("Åsa Öberg"),
+        personal_identity_number: pin(personnummer),
+        monthly_salary,
+        salary_account: SalaryAccount::DEFAULT,
+    }
+}
+
+fn given(events: &[PayrollEvent]) -> Payroll {
+    Payroll::from_events(events, HashSet::new())
+}
+
+#[test]
+fn an_employee_is_added_once_per_personnummer() {
+    let id = Uuid::new_v4();
+    let cmd = |employee_id| AddEmployee {
+        employee_id,
+        name: name("Åsa Öberg"),
+        personal_identity_number: pin("19800101-1231"),
+        monthly_salary: 35_000 * KR,
+        salary_account: SalaryAccount::DEFAULT,
+    };
+
+    assert_eq!(add_employee(&given(&[]), cmd(id)), Ok(vec![hired(id, "19800101-1231", 35_000 * KR)]));
+
+    let existing = given(&[hired(id, "19800101-1231", 35_000 * KR)]);
+    assert_eq!(add_employee(&existing, cmd(Uuid::new_v4())), Err(DomainError::DuplicateEmployee));
+    // Also when the existing employee is inactive.
+    let inactive = given(&[
+        hired(id, "19800101-1231", 35_000 * KR),
+        PayrollEvent::EmployeeDeactivated { employee_id: id },
+    ]);
+    assert_eq!(add_employee(&inactive, cmd(Uuid::new_v4())), Err(DomainError::DuplicateEmployee));
+}
+
+#[test]
+fn a_monthly_salary_is_more_than_zero_and_at_most_the_ledgers_limit() {
+    for bad in [0, -1, MAX_AMOUNT + 1] {
+        let cmd = AddEmployee {
+            employee_id: Uuid::new_v4(),
+            name: name("Åsa Öberg"),
+            personal_identity_number: pin("19800101-1231"),
+            monthly_salary: bad,
+            salary_account: SalaryAccount::DEFAULT,
+        };
+        assert_eq!(add_employee(&given(&[]), cmd), Err(DomainError::InvalidSalary), "{bad}");
+    }
+}
+
+#[test]
+fn an_active_employee_is_updated_and_deactivated() {
+    let id = Uuid::new_v4();
+    let payroll = given(&[hired(id, "19800101-1231", 35_000 * KR)]);
+    let update = |employee_id, monthly_salary| UpdateEmployee {
+        employee_id,
+        name: name("Åsa Öberg"),
+        monthly_salary,
+        salary_account: SalaryAccount::parse(7220).unwrap(),
+    };
+
+    assert_eq!(
+        update_employee(&payroll, update(id, 36_000 * KR)),
+        Ok(vec![PayrollEvent::EmployeeUpdated {
+            employee_id: id,
+            name: name("Åsa Öberg"),
+            monthly_salary: 36_000 * KR,
+            salary_account: SalaryAccount::parse(7220).unwrap(),
+        }])
+    );
+    assert_eq!(update_employee(&payroll, update(id, 0)), Err(DomainError::InvalidSalary));
+    assert_eq!(
+        update_employee(&payroll, update(Uuid::new_v4(), 36_000 * KR)),
+        Err(DomainError::EmployeeNotFound)
+    );
+    // No change, no event.
+    let same = UpdateEmployee {
+        employee_id: id,
+        name: name("Åsa Öberg"),
+        monthly_salary: 35_000 * KR,
+        salary_account: SalaryAccount::DEFAULT,
+    };
+    assert_eq!(update_employee(&payroll, same), Ok(vec![]));
+
+    assert_eq!(
+        deactivate_employee(&payroll, id),
+        Ok(vec![PayrollEvent::EmployeeDeactivated { employee_id: id }])
+    );
+    assert_eq!(deactivate_employee(&payroll, Uuid::new_v4()), Err(DomainError::EmployeeNotFound));
+
+    let inactive = given(&[
+        hired(id, "19800101-1231", 35_000 * KR),
+        PayrollEvent::EmployeeDeactivated { employee_id: id },
+    ]);
+    assert_eq!(deactivate_employee(&inactive, id), Ok(vec![]));
+    assert_eq!(
+        update_employee(&inactive, update(id, 36_000 * KR)),
+        Err(DomainError::EmployeeInactive)
+    );
+    assert!(!inactive.employee(id).unwrap().active);
+}

@@ -3,6 +3,8 @@
 
 use jiff::civil::{Date, date};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use uuid::Uuid;
 
 /// The largest amount on a voucher line (the ledger's limit), in öre.
 pub const MAX_AMOUNT: i64 = 10_000_000_000_000;
@@ -17,6 +19,12 @@ pub enum DomainError {
     InvalidSalary,
     #[error("salary account must be 7010, 7210 or 7220")]
     InvalidSalaryAccount,
+    #[error("an employee with this personnummer exists")]
+    DuplicateEmployee,
+    #[error("no such employee")]
+    EmployeeNotFound,
+    #[error("the employee is inactive")]
+    EmployeeInactive,
 }
 
 /// A personnummer or samordningsnummer, as twelve digits.
@@ -142,4 +150,201 @@ pub fn employer_fee(
     let over_cap = gross - under_cap;
     let fee = (under_cap * i64::from(rate) + over_cap * i64::from(FULL_RATE) + 5_000) / 10_000;
     (rate, fee)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum PayrollEvent {
+    EmployeeAdded {
+        employee_id: Uuid,
+        name: EmployeeName,
+        personal_identity_number: PersonalIdentityNumber,
+        monthly_salary: i64,
+        salary_account: SalaryAccount,
+    },
+    EmployeeUpdated {
+        employee_id: Uuid,
+        name: EmployeeName,
+        monthly_salary: i64,
+        salary_account: SalaryAccount,
+    },
+    EmployeeDeactivated {
+        employee_id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Employee {
+    pub id: Uuid,
+    pub name: EmployeeName,
+    pub personal_identity_number: PersonalIdentityNumber,
+    pub monthly_salary: i64,
+    pub salary_account: SalaryAccount,
+    pub active: bool,
+}
+
+/// A voucher a payroll run was booked as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BookedVoucher {
+    pub fiscal_year_start: Date,
+    pub number: u32,
+}
+
+/// Filled in with the payroll run events.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PayrollRun {
+    pub id: Uuid,
+}
+
+/// A company's employees and payroll runs. `reversed` holds the ledger
+/// vouchers that have been corrected (rättade): a run booked as one of
+/// them is no longer booked.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Payroll {
+    pub employees: Vec<Employee>,
+    pub runs: Vec<PayrollRun>,
+    pub reversed: HashSet<BookedVoucher>,
+}
+
+impl Payroll {
+    pub fn from_events(events: &[PayrollEvent], reversed: HashSet<BookedVoucher>) -> Self {
+        let mut payroll = Self {
+            reversed,
+            ..Self::default()
+        };
+        for event in events {
+            payroll.apply(event);
+        }
+        payroll
+    }
+
+    pub fn apply(&mut self, event: &PayrollEvent) {
+        match event.clone() {
+            PayrollEvent::EmployeeAdded {
+                employee_id,
+                name,
+                personal_identity_number,
+                monthly_salary,
+                salary_account,
+            } => self.employees.push(Employee {
+                id: employee_id,
+                name,
+                personal_identity_number,
+                monthly_salary,
+                salary_account,
+                active: true,
+            }),
+            PayrollEvent::EmployeeUpdated {
+                employee_id,
+                name,
+                monthly_salary,
+                salary_account,
+            } => {
+                if let Some(e) = self.employee_mut(employee_id) {
+                    e.name = name;
+                    e.monthly_salary = monthly_salary;
+                    e.salary_account = salary_account;
+                }
+            }
+            PayrollEvent::EmployeeDeactivated { employee_id } => {
+                if let Some(e) = self.employee_mut(employee_id) {
+                    e.active = false;
+                }
+            }
+        }
+    }
+
+    pub fn employee(&self, id: Uuid) -> Option<&Employee> {
+        self.employees.iter().find(|e| e.id == id)
+    }
+
+    fn employee_mut(&mut self, id: Uuid) -> Option<&mut Employee> {
+        self.employees.iter_mut().find(|e| e.id == id)
+    }
+
+    fn active_employee(&self, id: Uuid) -> Result<&Employee, DomainError> {
+        match self.employee(id) {
+            None => Err(DomainError::EmployeeNotFound),
+            Some(e) if !e.active => Err(DomainError::EmployeeInactive),
+            Some(e) => Ok(e),
+        }
+    }
+}
+
+fn check_salary(ore: i64) -> Result<i64, DomainError> {
+    if (1..=MAX_AMOUNT).contains(&ore) {
+        Ok(ore)
+    } else {
+        Err(DomainError::InvalidSalary)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AddEmployee {
+    pub employee_id: Uuid,
+    pub name: EmployeeName,
+    pub personal_identity_number: PersonalIdentityNumber,
+    pub monthly_salary: i64,
+    pub salary_account: SalaryAccount,
+}
+
+/// A personnummer is unique in the company, also among inactive
+/// employees; the `employees` projection's UNIQUE backs this up.
+pub fn add_employee(payroll: &Payroll, cmd: AddEmployee) -> Result<Vec<PayrollEvent>, DomainError> {
+    check_salary(cmd.monthly_salary)?;
+    if payroll
+        .employees
+        .iter()
+        .any(|e| e.personal_identity_number == cmd.personal_identity_number)
+    {
+        return Err(DomainError::DuplicateEmployee);
+    }
+    Ok(vec![PayrollEvent::EmployeeAdded {
+        employee_id: cmd.employee_id,
+        name: cmd.name,
+        personal_identity_number: cmd.personal_identity_number,
+        monthly_salary: cmd.monthly_salary,
+        salary_account: cmd.salary_account,
+    }])
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateEmployee {
+    pub employee_id: Uuid,
+    pub name: EmployeeName,
+    pub monthly_salary: i64,
+    pub salary_account: SalaryAccount,
+}
+
+/// The personnummer never changes: a wrong one is a new employee.
+pub fn update_employee(
+    payroll: &Payroll,
+    cmd: UpdateEmployee,
+) -> Result<Vec<PayrollEvent>, DomainError> {
+    check_salary(cmd.monthly_salary)?;
+    let e = payroll.active_employee(cmd.employee_id)?;
+    if (&e.name, e.monthly_salary, e.salary_account)
+        == (&cmd.name, cmd.monthly_salary, cmd.salary_account)
+    {
+        return Ok(vec![]);
+    }
+    Ok(vec![PayrollEvent::EmployeeUpdated {
+        employee_id: cmd.employee_id,
+        name: cmd.name,
+        monthly_salary: cmd.monthly_salary,
+        salary_account: cmd.salary_account,
+    }])
+}
+
+pub fn deactivate_employee(
+    payroll: &Payroll,
+    employee_id: Uuid,
+) -> Result<Vec<PayrollEvent>, DomainError> {
+    let e = payroll
+        .employee(employee_id)
+        .ok_or(DomainError::EmployeeNotFound)?;
+    if !e.active {
+        return Ok(vec![]);
+    }
+    Ok(vec![PayrollEvent::EmployeeDeactivated { employee_id }])
 }
