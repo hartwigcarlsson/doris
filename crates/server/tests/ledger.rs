@@ -1099,3 +1099,99 @@ async fn a_huge_frame_without_a_session_is_refused_before_its_body_is_read() {
         "{head}"
     );
 }
+
+fn statements_of(company_id: &str, fiscal_year_start: &str) -> pb::GetFinancialStatementsRequest {
+    pb::GetFinancialStatementsRequest {
+        company_id: company_id.into(),
+        fiscal_year_start: fiscal_year_start.into(),
+    }
+}
+
+#[tokio::test]
+async fn the_financial_statements_follow_the_vouchers() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.ledger();
+    api.record_voucher(authed(sale(&id, 125_000), &anna))
+        .await
+        .unwrap();
+
+    let s = api
+        .get_financial_statements(authed(statements_of(&id, "2026-01-01"), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(s.previous_fiscal_year_start, "");
+    assert_eq!((s.difference, s.previous_difference), (0, None));
+    assert_eq!(
+        s.income_statement[0],
+        pb::StatementLine {
+            label: "Rörelseintäkter, lagerförändringar m.m.".into(),
+            kind: pb::StatementLineKind::Heading as i32,
+            amount: 0,
+            previous: None,
+        }
+    );
+    assert!(s.income_statement.contains(&pb::StatementLine {
+        label: "Nettoomsättning".into(),
+        kind: pb::StatementLineKind::Item as i32,
+        amount: 125_000,
+        previous: None,
+    }));
+    assert!(s.income_statement.contains(&pb::StatementLine {
+        label: "Rörelseresultat".into(),
+        kind: pb::StatementLineKind::Subtotal as i32,
+        amount: 125_000,
+        previous: None,
+    }));
+    assert!(s.balance_sheet.contains(&pb::StatementLine {
+        label: "Kassa och bank".into(),
+        kind: pb::StatementLineKind::Item as i32,
+        amount: 125_000,
+        previous: None,
+    }));
+}
+
+#[tokio::test]
+async fn the_financial_statements_refuse_bad_input_and_non_members() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let bo = server.invite(&anna, "bo@example.se").await;
+    let id = company(&server, &anna).await;
+    let mut api = server.ledger();
+
+    let err = api
+        .get_financial_statements(authed(statements_of(&id, "2026-13-01"), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(err),
+        (Code::InvalidArgument, "invalid_date".to_owned())
+    );
+    let err = api
+        .get_financial_statements(authed(statements_of(&id, "2026-02-01"), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(err),
+        (Code::NotFound, "fiscal_year_not_found".to_owned())
+    );
+    let err = api
+        .get_financial_statements(authed(statements_of(&id, "2026-01-01"), &bo))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(err),
+        (Code::NotFound, "company_not_found".to_owned())
+    );
+    let err = api
+        .get_financial_statements(statements_of(&id, "2026-01-01"))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(err),
+        (Code::Unauthenticated, "not_signed_in".to_owned())
+    );
+}

@@ -5,6 +5,7 @@ use crate::domain::{
     ContentType, DomainError, FiscalYearStatus, TrialBalanceRow, Voucher, VoucherLine,
     running_balance,
 };
+use crate::statements::{FinancialStatements, build};
 use crate::{Error, Result};
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -213,6 +214,44 @@ pub async fn trial_balance(
             credit,
         })
         .collect())
+}
+
+/// The resultaträkning and balansräkning for the fiscal year starting on
+/// `fiscal_year_start`, with the year before it (if any) for comparison.
+// ponytail: two saldobalans queries, so two snapshots; a voucher booked in
+// between can show in one column only. Share a read transaction if that
+// ever matters.
+pub async fn financial_statements(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    user_id: Uuid,
+    fiscal_year_start: Date,
+    today: Date,
+) -> Result<FinancialStatements> {
+    let company = doris_company::get_company(pool, company_id, user_id).await?;
+    let fiscal_year = crate::fiscal_year_at(&company, fiscal_year_start, today)
+        .ok_or(DomainError::FiscalYearNotFound)?;
+    let current = trial_balance(pool, company_id, user_id, fiscal_year.start).await?;
+    let previous = if fiscal_year == company.first_fiscal_year {
+        None
+    } else {
+        let day_before = fiscal_year
+            .start
+            .yesterday()
+            .expect("fiscal years are far from the date limits");
+        let start = company.first_fiscal_year.containing(day_before).start;
+        Some((
+            start,
+            trial_balance(pool, company_id, user_id, start).await?,
+        ))
+    };
+    build(
+        &current,
+        previous
+            .as_ref()
+            .map(|(start, rows)| (*start, rows.as_slice())),
+        company.legal_form,
+    )
 }
 
 /// One account's huvudbok for one fiscal year: its ingående balans, then its

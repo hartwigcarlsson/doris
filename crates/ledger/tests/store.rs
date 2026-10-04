@@ -1,12 +1,13 @@
 use doris_company::NewCompany;
 use doris_company::domain::{AccountingMethod, LegalForm};
 use doris_ledger::domain::{ContentType, DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
+use doris_ledger::statements::StatementLine;
 use doris_ledger::{
     Error, NewAttachment, VoucherRef, account_ledger, add_account, add_attachment,
-    close_fiscal_year, correct_voucher, get_attachment, list_accounts, list_fiscal_years,
-    list_vouchers, opening_balances, rebuild_projections, record_voucher, record_voucher_in,
-    record_voucher_with_attachments, rename_account, reopen_fiscal_year, set_account_active,
-    set_opening_balances, trial_balance,
+    close_fiscal_year, correct_voucher, financial_statements, get_attachment, list_accounts,
+    list_fiscal_years, list_vouchers, opening_balances, rebuild_projections, record_voucher,
+    record_voucher_in, record_voucher_with_attachments, rename_account, reopen_fiscal_year,
+    set_account_active, set_opening_balances, trial_balance,
 };
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -1433,4 +1434,79 @@ async fn an_attachment_is_read_only_through_the_companys_own_voucher() {
             .len(),
         1
     );
+}
+
+fn post(lines: &[StatementLine], label: &str) -> (i64, Option<i64>) {
+    let line = lines.iter().find(|l| l.label == label).unwrap();
+    (line.amount, line.previous)
+}
+
+#[tokio::test]
+async fn the_statements_compare_with_the_year_before() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    for cmd in [sale("2025-03-01", 1_000), sale("2026-02-01", 50)] {
+        record_voucher(&pool, id, anna, cmd, today).await.unwrap();
+    }
+
+    let first = financial_statements(&pool, id, anna, d("2025-01-01"), today)
+        .await
+        .unwrap();
+    assert_eq!(first.previous_fiscal_year_start, None);
+    assert_eq!(post(&first.income, "Nettoomsättning"), (1_000, None));
+
+    // 2025 is open, so 2026's balansräkning is short its result.
+    let open = financial_statements(&pool, id, anna, d("2026-01-01"), today)
+        .await
+        .unwrap();
+    assert_eq!(open.previous_fiscal_year_start, Some(d("2025-01-01")));
+    assert_eq!(post(&open.income, "Nettoomsättning"), (50, Some(1_000)));
+    assert_eq!(post(&open.balance, "Kassa och bank"), (1_050, Some(1_000)));
+    assert_eq!(
+        (open.difference, open.previous_difference),
+        (1_000, Some(0))
+    );
+
+    close_fiscal_year(&pool, id, anna, d("2025-01-01"), today)
+        .await
+        .unwrap();
+    let closed = financial_statements(&pool, id, anna, d("2026-01-01"), today)
+        .await
+        .unwrap();
+    assert_eq!(
+        (closed.difference, closed.previous_difference),
+        (0, Some(0))
+    );
+    // 2025's result is still on 2099, so 2026 shows it as balanserat.
+    assert_eq!(post(&closed.balance, "Årets resultat"), (50, Some(1_000)));
+    assert_eq!(
+        post(&closed.balance, "Balanserat resultat"),
+        (1_000, Some(0))
+    );
+}
+
+#[tokio::test]
+async fn the_statements_need_a_fiscal_year_start_and_membership() {
+    let pool = db().await;
+    let (anna, bo) = (Uuid::new_v4(), Uuid::new_v4());
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+
+    // Mid-year, before the first year, and after today.
+    for start in ["2025-02-01", "2024-01-01", "2027-01-01", "9999-01-01"] {
+        assert!(
+            matches!(
+                financial_statements(&pool, id, anna, d(start), today).await,
+                Err(Error::Domain(DomainError::FiscalYearNotFound))
+            ),
+            "{start}"
+        );
+    }
+    // Membership is checked before the year.
+    assert!(matches!(
+        financial_statements(&pool, id, bo, d("2025-02-01"), today).await,
+        Err(Error::NotFound)
+    ));
 }

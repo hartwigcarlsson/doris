@@ -28,6 +28,9 @@ service LedgerService {
   // One account's huvudbok for one fiscal year: its lines by date, then
   // voucher number, with the balance after each.
   rpc GetAccountLedger(GetAccountLedgerRequest) returns (GetAccountLedgerResponse);
+  // The resultaträkning and balansräkning for one fiscal year under ÅRL
+  // headings, with the year before as comparison.
+  rpc GetFinancialStatements(GetFinancialStatementsRequest) returns (GetFinancialStatementsResponse);
   // The first fiscal year's ingående balanser, by account.
   rpc GetOpeningBalances(GetOpeningBalancesRequest) returns (GetOpeningBalancesResponse);
   // Replaces them. Only while the first fiscal year is open.
@@ -160,6 +163,37 @@ message TrialBalanceRow {
 
 message GetTrialBalanceResponse {
   repeated TrialBalanceRow rows = 1;
+}
+
+message GetFinancialStatementsRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+}
+
+enum StatementLineKind {
+  STATEMENT_LINE_KIND_UNSPECIFIED = 0;
+  STATEMENT_LINE_KIND_HEADING = 1;   // no amounts
+  STATEMENT_LINE_KIND_ITEM = 2;
+  STATEMENT_LINE_KIND_SUBTOTAL = 3;
+}
+
+// Öre, with the sign the statement shows: income, equity and liabilities
+// positive, costs negative.
+message StatementLine {
+  string label = 1;
+  StatementLineKind kind = 2;
+  int64 amount = 3;
+  optional int64 previous = 4;  // unset when there is no previous year
+}
+
+message GetFinancialStatementsResponse {
+  repeated StatementLine income_statement = 1;
+  repeated StatementLine balance_sheet = 2;
+  string previous_fiscal_year_start = 3;  // empty when there is none
+  // Summa tillgångar − summa eget kapital och skulder; not 0 only while an
+  // earlier year is open.
+  int64 difference = 4;
+  optional int64 previous_difference = 5;
 }
 
 message GetAccountLedgerRequest {

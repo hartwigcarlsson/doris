@@ -254,6 +254,29 @@ test("the trial balance follows the active company", async ({ page, app }) => {
   await expect(page.getByRole("row", { name: /^1930 / })).toHaveCount(0);
 });
 
+test("the income statement and balance sheet show what was booked", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560360793", "Bolaget AB");
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.goto(`${app}/vouchers`);
+  await bookSale(page, "Försäljning kassa", "1250");
+  await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
+
+  await page.getByRole("banner").getByRole("link", { name: "Rapporter" }).click();
+  await expect(page.getByRole("heading", { name: "Resultat- och balansräkning" })).toBeVisible();
+  await expect(page.getByRole("row", { name: /^Nettoomsättning/ })).toContainText("1 250,00");
+  const result = page.getByRole("row", { name: /^Årets resultat/ });
+  await expect(result).toHaveCount(2);
+  await expect(result.first()).toContainText("1 250,00");
+  await expect(result.last()).toContainText("1 250,00");
+  await expect(page.getByRole("row", { name: /^Kassa och bank/ })).toContainText("1 250,00");
+  await expect(page.getByText(/balanserar inte/)).toHaveCount(0);
+
+  await page.getByLabel("Aktivt företag").selectOption({ label: "Bolaget AB" });
+  await expect(page.getByRole("row", { name: /^Nettoomsättning/ })).toHaveCount(0);
+  await expect(page.getByRole("row", { name: /^Rörelseresultat/ })).toContainText("0,00");
+});
+
 test("a junk account in the URL shows a Swedish error", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
