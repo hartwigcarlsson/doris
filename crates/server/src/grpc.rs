@@ -386,6 +386,12 @@ pub(crate) fn today() -> Date {
     today_in_sweden(Timestamp::now())
 }
 
+/// The time now in Sweden, without a zone: the AGI file's Skapad.
+pub(crate) fn now() -> jiff::civil::DateTime {
+    let sweden = TimeZone::get("Europe/Stockholm").expect("bundled tz database");
+    Timestamp::now().to_zoned(sweden).datetime()
+}
+
 /// The date in Sweden at `ts`.
 fn today_in_sweden(ts: Timestamp) -> Date {
     // The tz database is bundled (jiff `tzdb-bundle-always`), so this holds

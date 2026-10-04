@@ -3,15 +3,16 @@
 //! looks exactly like one that doesn't exist. Personnummer and names are
 //! personal data and never logged.
 
-use crate::grpc::{signed_in_user, today};
+use crate::grpc::{now, signed_in_user, today};
 use crate::skatteverket::TaxTables;
 use doris_ledger::domain::VoucherLine;
+use doris_payroll::agi::{AgiChange, AgiMonth, AgiStatus, Period};
 use doris_payroll::domain::{
     BookedVoucher, DomainError, DraftLine, Employee, PayrollRunDraft, PayrollRunLine,
     PayrollRunStatus,
 };
 use doris_payroll::tax::{TaxBasis, TaxSetting};
-use doris_payroll::{Error, NewEmployee, PayrollRunView};
+use doris_payroll::{AgiMonthSummary, Error, NewEmployee, PayrollRunView};
 use doris_proto::ledger::v1 as lpb;
 use doris_proto::payroll::v1 as pb;
 use doris_proto::payroll::v1::payroll_service_server::PayrollService;
@@ -302,6 +303,88 @@ impl PayrollService for PayrollApi {
             .collect();
         Ok(Response::new(pb::ListPayrollRunsResponse { payroll_runs }))
     }
+
+    async fn get_agi_contact(
+        &self,
+        request: Request<pb::GetAgiContactRequest>,
+    ) -> Result<Response<pb::AgiContact>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let contact = doris_payroll::agi_contact(&self.pool, company, user)
+            .await
+            .map_err(status)?
+            .map(|c| pb::AgiContact {
+                name: c.name,
+                phone: c.phone,
+                email: c.email,
+            })
+            .unwrap_or_default();
+        Ok(Response::new(contact))
+    }
+
+    async fn set_agi_contact(
+        &self,
+        request: Request<pb::SetAgiContactRequest>,
+    ) -> Result<Response<pb::SetAgiContactResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let c = request.into_inner().contact.unwrap_or_default();
+        doris_payroll::set_agi_contact(&self.pool, company, user, &c.name, &c.phone, &c.email)
+            .await
+            .map_err(status)?;
+        Ok(Response::new(pb::SetAgiContactResponse {}))
+    }
+
+    async fn list_agi_months(
+        &self,
+        request: Request<pb::ListAgiMonthsRequest>,
+    ) -> Result<Response<pb::ListAgiMonthsResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let months = doris_payroll::agi_months(&self.pool, company, user)
+            .await
+            .map_err(status)?
+            .into_iter()
+            .map(summary_message)
+            .collect();
+        Ok(Response::new(pb::ListAgiMonthsResponse { months }))
+    }
+
+    async fn get_agi_month(
+        &self,
+        request: Request<pb::AgiMonthRef>,
+    ) -> Result<Response<pb::AgiMonth>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let period = period(&request.get_ref().period)?;
+        let month = doris_payroll::agi_month(&self.pool, company, user, period)
+            .await
+            .map_err(status)?;
+        let employees = doris_payroll::list_employees(&self.pool, company, user)
+            .await
+            .map_err(status)?;
+        Ok(Response::new(month_message(month, &employees)))
+    }
+
+    async fn export_agi_file(
+        &self,
+        request: Request<pb::AgiMonthRef>,
+    ) -> Result<Response<pb::AgiFile>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let period = period(&request.get_ref().period)?;
+        let (file_name, xml) = doris_payroll::agi_file(&self.pool, company, user, period, now())
+            .await
+            .map_err(status)?;
+        Ok(Response::new(pb::AgiFile { file_name, xml }))
+    }
+
+    async fn mark_agi_submitted(
+        &self,
+        request: Request<pb::AgiMonthRef>,
+    ) -> Result<Response<pb::MarkAgiSubmittedResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let period = period(&request.get_ref().period)?;
+        doris_payroll::submit_agi_month(&self.pool, company, user, period)
+            .await
+            .map_err(status)?;
+        Ok(Response::new(pb::MarkAgiSubmittedResponse {}))
+    }
 }
 
 fn employee_message(e: &Employee) -> pb::Employee {
@@ -501,5 +584,73 @@ fn status(err: Error) -> Status {
             tracing::error!("store: {err}");
             Status::internal("internal")
         }
+    }
+}
+
+fn period(raw: &str) -> Result<Period, Status> {
+    Period::parse(raw).map_err(domain_status)
+}
+
+fn status_message(status: AgiStatus) -> pb::AgiStatus {
+    match status {
+        AgiStatus::NotSubmitted => pb::AgiStatus::NotSubmitted,
+        AgiStatus::Submitted => pb::AgiStatus::Submitted,
+        AgiStatus::Changed => pb::AgiStatus::Changed,
+    }
+}
+
+fn summary_message(s: AgiMonthSummary) -> pb::AgiMonthSummary {
+    pb::AgiMonthSummary {
+        period: s.period.to_string(),
+        gross: s.gross,
+        tax_sum: s.tax_sum,
+        fee_sum: s.fee_sum,
+        status: status_message(s.status) as i32,
+        submitted_at: s.submitted_at.unwrap_or_default(),
+    }
+}
+
+fn month_message(month: AgiMonth, employees: &[Employee]) -> pb::AgiMonth {
+    let line = |l: &doris_payroll::agi::AgiLine, change: pb::AgiChange| {
+        let e = employees.iter().find(|e| e.id == l.employee_id);
+        pb::AgiLine {
+            employee_id: l.employee_id.to_string(),
+            employee_name: e.map(|e| e.name.as_str().to_owned()).unwrap_or_default(),
+            personal_identity_number: e
+                .map(|e| e.personal_identity_number.formatted())
+                .unwrap_or_default(),
+            specification_number: l.specification_number,
+            gross: l.gross,
+            tax: l.tax,
+            change: change as i32,
+        }
+    };
+    let changed = |c: AgiChange| match c {
+        AgiChange::New => pb::AgiChange::New,
+        AgiChange::Changed => pb::AgiChange::Changed,
+        AgiChange::Unchanged => pb::AgiChange::Unchanged,
+    };
+    let lines = month
+        .lines
+        .iter()
+        .map(|(l, c)| line(l, changed(*c)))
+        .chain(
+            month
+                .removed
+                .iter()
+                .map(|l| line(l, pb::AgiChange::Removed)),
+        )
+        .collect();
+    pb::AgiMonth {
+        summary: Some(pb::AgiMonthSummary {
+            period: month.period.to_string(),
+            gross: month.lines.iter().map(|(l, _)| l.gross).sum(),
+            tax_sum: month.tax_sum,
+            fee_sum: month.fee_sum,
+            status: status_message(month.status) as i32,
+            submitted_at: String::new(),
+        }),
+        lines,
+        booked_fees: month.booked_fees,
     }
 }

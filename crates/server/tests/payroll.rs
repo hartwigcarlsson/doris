@@ -643,3 +643,189 @@ async fn finalizing_a_blank_tax_run_fetches_the_year_and_locks_the_computed_tax(
         }))
     );
 }
+
+fn agi_ref(company_id: &str, period: &str) -> pb::AgiMonthRef {
+    pb::AgiMonthRef {
+        company_id: company_id.into(),
+        period: period.into(),
+    }
+}
+
+#[tokio::test]
+async fn a_month_is_declared_and_corrected() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.payroll();
+    let asa = hire(&mut api, &anna, &id).await;
+    let run = api
+        .create_payroll_run(authed(
+            pb::CreatePayrollRunRequest {
+                company_id: id.clone(),
+                draft: draft("2026-01-25", &asa, 35_000 * KR, 8_000 * KR),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .payroll_run_id;
+    api.finalize_payroll_run(authed(run_ref(&id, &run), &anna))
+        .await
+        .unwrap();
+    api.book_payroll_run(authed(run_ref(&id, &run), &anna))
+        .await
+        .unwrap();
+
+    let months = api
+        .list_agi_months(authed(
+            pb::ListAgiMonthsRequest {
+                company_id: id.clone(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .months;
+    assert_eq!(months[0].period, "202601");
+    assert_eq!(
+        (months[0].gross, months[0].tax_sum, months[0].fee_sum),
+        (35_000, 8_000, 10_997)
+    );
+    assert_eq!(months[0].status(), pb::AgiStatus::NotSubmitted);
+
+    let missing = api
+        .export_agi_file(authed(agi_ref(&id, "202601"), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(missing),
+        (Code::FailedPrecondition, "agi_contact_missing".into())
+    );
+    let contact = pb::AgiContact {
+        name: "Anna Andersson".into(),
+        phone: "070-123 45 67".into(),
+        email: "anna@example.se".into(),
+    };
+    api.set_agi_contact(authed(
+        pb::SetAgiContactRequest {
+            company_id: id.clone(),
+            contact: Some(contact.clone()),
+        },
+        &anna,
+    ))
+    .await
+    .unwrap();
+    let got = api
+        .get_agi_contact(authed(
+            pb::GetAgiContactRequest {
+                company_id: id.clone(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(got, contact);
+
+    let file = api
+        .export_agi_file(authed(agi_ref(&id, "202601"), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(file.file_name, "AGI_165560160680_202601.xml");
+    assert!(
+        file.xml
+            .contains(r#"<agd:SummaSkatteavdr faltkod="497">8000</agd:SummaSkatteavdr>"#)
+    );
+    assert!(file.xml.contains("198001011231"));
+
+    api.mark_agi_submitted(authed(agi_ref(&id, "202601"), &anna))
+        .await
+        .unwrap();
+    let again = api
+        .mark_agi_submitted(authed(agi_ref(&id, "202601"), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(again),
+        (Code::FailedPrecondition, "agi_unchanged".into())
+    );
+
+    api.unbook_payroll_run(authed(run_ref(&id, &run), &anna))
+        .await
+        .unwrap();
+    let month = api
+        .get_agi_month(authed(agi_ref(&id, "202601"), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(month.summary.unwrap().status(), pb::AgiStatus::Changed);
+    assert_eq!(month.lines[0].change(), pb::AgiChange::Removed);
+    assert_eq!(month.lines[0].personal_identity_number, "19800101-1231");
+    let file = api
+        .export_agi_file(authed(agi_ref(&id, "202601"), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(
+        file.xml
+            .contains(r#"<agd:Borttag faltkod="205">1</agd:Borttag>"#)
+    );
+}
+
+#[tokio::test]
+async fn agi_input_is_checked() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.payroll();
+
+    let bad = api
+        .get_agi_month(authed(agi_ref(&id, "2026-01"), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(bad),
+        (Code::InvalidArgument, "invalid_period".into())
+    );
+    let contact = pb::AgiContact {
+        name: "Anna".into(),
+        phone: "".into(),
+        email: "anna@example.se".into(),
+    };
+    let bad = api
+        .set_agi_contact(authed(
+            pb::SetAgiContactRequest {
+                company_id: id.clone(),
+                contact: Some(contact),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(bad),
+        (Code::InvalidArgument, "invalid_agi_contact".into())
+    );
+    let empty = api
+        .mark_agi_submitted(authed(agi_ref(&id, "202601"), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(empty),
+        (Code::FailedPrecondition, "agi_period_empty".into())
+    );
+    let none = api
+        .get_agi_contact(authed(
+            pb::GetAgiContactRequest {
+                company_id: id.clone(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(none, pb::AgiContact::default());
+}
