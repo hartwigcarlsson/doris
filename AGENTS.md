@@ -147,6 +147,13 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `invalid_attachment_name`, `empty_attachment`, `attachment_too_large`,
   `duplicate_attachment` and `attachment_not_found`. File names are never
   logged.
+- `LedgerService` also has `GetFinancialStatements`: the resultaträkning
+  and balansräkning for one fiscal year under ÅRL headings (K2's
+  abbreviated forms), with the year before as comparison. The mapping from
+  BAS account to post lives only in `crates/ledger/src/statements.rs`; the
+  frontend draws the lines it gets. "Årets resultat" in the balansräkning
+  is the result account plus every account 3000–8999, so it reads the same
+  whether or not the year is closed.
 - tonic reserves the size a frame header claims before a handler runs, so
   `session_gate` (`crates/server/src/lib.rs`) answers `LedgerService` calls
   without a valid session with `not_signed_in` before the body is read. The
