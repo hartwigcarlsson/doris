@@ -3,10 +3,10 @@
 use crate::active_company::{ActiveCompanySelect, Companies};
 use crate::api::{api, pb, prefetched_status};
 use crate::pages::{
-    AccountLedger, Accounts, Companies, CompanyPage, Customers, Employees, FinancialStatements,
-    FiscalYears, Home, Invitations, Login, NewCompany, NewSupplierInvoice, NewVoucher,
-    OpeningBalances, Passkeys, PayrollRunPage, PayrollRuns, Register, SupplierInvoices, Suppliers,
-    TrialBalance, Vouchers,
+    AccountLedger, Accounts, Companies, CompanyPage, CustomerInvoices, Customers, Employees,
+    FinancialStatements, FiscalYears, Home, Invitations, Login, NewCompany, NewCustomerInvoice,
+    NewSupplierInvoice, NewVoucher, OpeningBalances, Passkeys, PayrollRunPage, PayrollRuns,
+    Register, SupplierInvoices, Suppliers, TrialBalance, Vouchers,
 };
 use crate::ui::{Button, Variant};
 use leptos::prelude::*;
@@ -83,6 +83,8 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/accounts") view=|| view! { <SignedIn><Accounts /></SignedIn> } />
                         <Route path=path!("/vouchers") view=|| view! { <SignedIn><Vouchers /></SignedIn> } />
                         <Route path=path!("/customers") view=|| view! { <SignedIn><Customers /></SignedIn> } />
+                        <Route path=path!("/customer-invoices") view=|| view! { <SignedIn><CustomerInvoices /></SignedIn> } />
+                        <Route path=path!("/customer-invoices/new") view=|| view! { <SignedIn><NewCustomerInvoice /></SignedIn> } />
                         <Route path=path!("/suppliers") view=|| view! { <SignedIn><Suppliers /></SignedIn> } />
                         <Route path=path!("/supplier-invoices") view=|| view! { <SignedIn><SupplierInvoices /></SignedIn> } />
                         <Route path=path!("/supplier-invoices/new") view=|| view! { <SignedIn><NewSupplierInvoice /></SignedIn> } />
@@ -161,6 +163,7 @@ fn Header() -> impl IntoView {
                     <nav aria-label="Bokföring" class="flex flex-wrap items-center gap-x-4 gap-y-2 pb-3">
                         <A href="/vouchers" attr:class="text-muted-foreground hover:text-foreground">"Verifikationer"</A>
                         <A href="/customers" attr:class="text-muted-foreground hover:text-foreground">"Kunder"</A>
+                        <A href="/customer-invoices" attr:class="text-muted-foreground hover:text-foreground">"Kundfakturor"</A>
                         <A href="/suppliers" attr:class="text-muted-foreground hover:text-foreground">"Leverantörer"</A>
                         <A href="/supplier-invoices" attr:class="text-muted-foreground hover:text-foreground">"Leverantörsfakturor"</A>
                         <A href="/trial-balance" attr:class="text-muted-foreground hover:text-foreground">"Saldobalans"</A>

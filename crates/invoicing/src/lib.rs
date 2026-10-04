@@ -5,7 +5,10 @@
 //! the register, decide, append, project. A number is decided inside that
 //! transaction, so concurrent writers never share one.
 
+mod customer_invoice_store;
+pub mod customer_invoices;
 pub mod domain;
+pub mod invoices;
 mod projections;
 pub mod supplier_invoices;
 pub mod vat;
@@ -29,11 +32,16 @@ use supplier_invoices::{
 };
 use uuid::Uuid;
 
+pub use customer_invoice_store::{
+    cancel_customer_invoice, customer_invoice_attachment, list_customer_invoices,
+    pay_customer_invoice, register_customer_invoice, reverse_customer_invoice_payment,
+};
 pub use projections::rebuild_projections;
 
 const CUSTOMERS_STREAM: &str = "customers-";
 const SUPPLIERS_STREAM: &str = "suppliers-";
 const SUPPLIER_INVOICES_STREAM: &str = "supplier-invoices-";
+const CUSTOMER_INVOICES_STREAM: &str = "customer-invoices-";
 const SCHEMA_VERSION: i64 = 1;
 
 pub type Customer = Party<CustomerDetails>;
@@ -307,14 +315,7 @@ pub async fn register_supplier_invoice(
     }
     let (state, version) = load_invoices(&mut tx, company_id).await?;
     let number = supplier_invoices::register(&state, &invoice)?;
-    let mut stored: Vec<Attachment> = Vec::new();
-    for new in attachments {
-        let attachment = doris_ledger::store_attachment_in(&mut tx, new).await?;
-        if stored.iter().any(|s| s.sha256 == attachment.sha256) {
-            return Err(ledger(LedgerError::DuplicateAttachment));
-        }
-        stored.push(attachment);
-    }
+    let stored = store_all(&mut tx, attachments).await?;
     let voucher = match company.accounting_method {
         AccountingMethod::Invoice => {
             let booked = doris_ledger::record_voucher_in(
@@ -528,6 +529,23 @@ pub async fn supplier_invoice_attachment(
         .fetch_one(pool)
         .await?;
     Ok((attachment, data))
+}
+
+/// Stores each underlag in the caller's transaction; the same file twice in
+/// one request is `duplicate_attachment`.
+async fn store_all(
+    conn: &mut SqliteConnection,
+    attachments: Vec<NewAttachment>,
+) -> Result<Vec<Attachment>> {
+    let mut stored: Vec<Attachment> = Vec::new();
+    for new in attachments {
+        let attachment = doris_ledger::store_attachment_in(conn, new).await?;
+        if stored.iter().any(|s| s.sha256 == attachment.sha256) {
+            return Err(ledger(LedgerError::DuplicateAttachment));
+        }
+        stored.push(attachment);
+    }
+    Ok(stored)
 }
 
 async fn link_all(

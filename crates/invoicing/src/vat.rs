@@ -64,12 +64,13 @@ pub struct InvoiceLine {
 }
 
 impl InvoiceLine {
-    /// 2440 and the VAT accounts 2600–2699 are booked by Doris itself, and
-    /// a number outside 1000–8999 is no account at all.
+    /// The reskontra accounts 1510 and 2440 and the VAT accounts 2600–2699
+    /// are booked by Doris itself, and a number outside 1000–8999 is no
+    /// account at all.
     pub fn new(account: u32, net: i64, vat_rate: u32) -> Result<Self, DomainError> {
         let account =
             AccountNumber::parse(account).map_err(|_| DomainError::InvalidInvoiceAccount)?;
-        if account.get() == 2440 || (2600..=2699).contains(&account.get()) {
+        if matches!(account.get(), 1510 | 2440 | 2600..=2699) {
             return Err(DomainError::InvalidInvoiceAccount);
         }
         if !(1..=MAX_LINE_NET).contains(&net) {
@@ -96,16 +97,33 @@ pub fn net(lines: &[InvoiceLine]) -> i64 {
     lines.iter().map(|l| l.net).sum()
 }
 
-/// VAT per rate on that rate's summed net, rounded half up to whole öre.
-pub fn computed(lines: &[InvoiceLine]) -> i64 {
-    let mut by_rate = BTreeMap::<VatRate, i64>::new();
+/// VAT at one rate on an invoice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VatAmount {
+    pub vat_rate: VatRate,
+    pub amount: i64,
+}
+
+/// VAT per rate on that rate's summed net, rounded half up to whole öre;
+/// highest rate first, rates without VAT left out.
+pub fn by_rate(lines: &[InvoiceLine]) -> Vec<VatAmount> {
+    let mut nets = BTreeMap::<VatRate, i64>::new();
     for line in lines {
-        *by_rate.entry(line.vat_rate).or_default() += line.net;
+        *nets.entry(line.vat_rate).or_default() += line.net;
     }
-    by_rate
-        .into_iter()
-        .map(|(rate, net)| (net * i64::from(rate.percent()) + 50) / 100)
-        .sum()
+    // VatRate orders 25, 12, 6, 0: the declaration order.
+    nets.into_iter()
+        .map(|(vat_rate, net)| VatAmount {
+            vat_rate,
+            amount: (net * i64::from(vat_rate.percent()) + 50) / 100,
+        })
+        .filter(|v| v.amount > 0)
+        .collect()
+}
+
+/// All the VAT, per rate as in [`by_rate`].
+pub fn computed(lines: &[InvoiceLine]) -> i64 {
+    by_rate(lines).iter().map(|v| v.amount).sum()
 }
 
 /// The VAT to book: the computed amount, or the given one if it is ≥ 0 and

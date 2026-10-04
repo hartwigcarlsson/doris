@@ -7,6 +7,7 @@ mod attachments;
 mod errors;
 mod fiscal_year;
 mod format;
+mod invoice_ui;
 mod pages;
 mod passkey;
 mod ui;

@@ -142,13 +142,21 @@ fn message(code: &str) -> &'static str {
         "invalid_invoice_lines" => "En faktura ska ha 1–50 rader med belopp över noll.",
         "invalid_vat_rate" => "Momssatsen ska vara 25, 12, 6 eller 0 %.",
         "invalid_vat_amount" => "Momsen får skilja högst 1 kr från den uträknade.",
-        "invalid_invoice_account" => {
-            "Raderna kan inte bokföras på 2440 eller ett momskonto. Doris gör det själv."
-        }
         "invalid_payment_account" => "Betalkontot ska vara ett konto i 1900–1999.",
         "supplier_invoice_paid" => "Fakturan är redan betald.",
         "supplier_invoice_not_paid" => "Fakturan är inte betald.",
         "supplier_invoice_cancelled" => "Fakturan är makulerad.",
+        "invalid_invoice_account" => {
+            "Raderna kan inte bokföras på reskontrakontot (1510/2440) eller ett momskonto."
+        }
+        "customer_invoice_not_found" => "Kundfakturan finns inte.",
+        "customer_inactive" => "Kunden är inaktiv. Aktivera den eller välj en annan.",
+        "duplicate_customer_invoice" => {
+            "Fakturanumret är redan använt. Ett utfärdat nummer återanvänds aldrig, inte heller efter makulering."
+        }
+        "customer_invoice_paid" => "Fakturan är redan betald.",
+        "customer_invoice_not_paid" => "Fakturan är inte betald.",
+        "customer_invoice_cancelled" => "Fakturan är makulerad.",
         _ => "Något gick fel. Försök igen.",
     }
 }
@@ -266,6 +274,24 @@ mod tests {
         ] {
             assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
         }
+    }
+
+    #[test]
+    fn customer_invoice_codes_have_swedish_messages() {
+        for code in [
+            "customer_invoice_not_found",
+            "customer_inactive",
+            "duplicate_customer_invoice",
+            "customer_invoice_paid",
+            "customer_invoice_not_paid",
+            "customer_invoice_cancelled",
+        ] {
+            assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
+        }
+        assert_eq!(
+            message("invalid_invoice_account"),
+            "Raderna kan inte bokföras på reskontrakontot (1510/2440) eller ett momskonto."
+        );
     }
 
     #[test]

@@ -23,7 +23,7 @@ fn a_line_needs_a_positive_amount_and_a_cost_account() {
             "{net}"
         );
     }
-    for account in [2440, 2640, 2611, 2600, 2699, 999, 9000] {
+    for account in [1510, 2440, 2640, 2611, 2600, 2699, 999, 9000] {
         assert_eq!(
             InvoiceLine::new(account, 100, 25),
             Err(DomainError::InvalidInvoiceAccount),
@@ -73,4 +73,22 @@ fn a_given_vat_may_differ_by_at_most_one_krona() {
         vat::check(&[line(6110, 100, 0)], Some(-1)),
         Err(DomainError::InvalidVatAmount)
     );
+}
+
+#[test]
+fn vat_by_rate_lists_the_rates_with_vat_highest_first() {
+    let lines = [
+        line(6110, 700, 0),
+        line(4010, 50, 6),
+        line(5410, 33, 25),
+        line(5410, 1000, 12),
+        line(5410, 33, 25),
+        line(5410, 33, 25),
+    ];
+    let by_rate: Vec<(u32, i64)> = vat::by_rate(&lines)
+        .iter()
+        .map(|v| (v.vat_rate.percent(), v.amount))
+        .collect();
+    assert_eq!(by_rate, [(25, 25), (12, 120), (6, 3)]);
+    assert_eq!(vat::computed(&lines), 148);
 }

@@ -1,5 +1,6 @@
-//! Leverantörsfakturor: the active company's supplier invoices. They are
-//! paid, cancelled and payments reversed from here; the server books it all.
+//! Kundfakturor: the active company's customer invoices. Payments are
+//! registered, invoices cancelled and payments reversed from here; the
+//! server books it all.
 
 use crate::active_company::Companies;
 use crate::api::{invoicing_api, ipb};
@@ -16,10 +17,10 @@ use leptos::task::spawn_local;
 use leptos_router::components::A;
 
 #[component]
-pub fn SupplierInvoices() -> impl IntoView {
+pub fn CustomerInvoices() -> impl IntoView {
     let companies = expect_context::<Companies>();
     // The invoices and the company they were loaded for, set together.
-    let invoices = RwSignal::new((String::new(), Vec::<ipb::SupplierInvoice>::new()));
+    let invoices = RwSignal::new((String::new(), Vec::<ipb::CustomerInvoice>::new()));
     let show_all = RwSignal::new(false);
     let error = RwSignal::new(None::<String>);
 
@@ -30,7 +31,7 @@ pub fn SupplierInvoices() -> impl IntoView {
         }
         spawn_local(async move {
             let result = invoicing_api()
-                .list_supplier_invoices(ipb::ListSupplierInvoicesRequest {
+                .list_customer_invoices(ipb::ListCustomerInvoicesRequest {
                     company_id: company_id.clone(),
                 })
                 .await;
@@ -55,19 +56,16 @@ pub fn SupplierInvoices() -> impl IntoView {
     view! {
         <div class="grid gap-6" data-wide>
             <div class="flex items-center justify-between">
-                <h1 class="text-sm font-medium">"Leverantörsfakturor"</h1>
-                <A href="/supplier-invoices/new" attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline">
-                    "Ny leverantörsfaktura"
-                </A>
+                <h1 class="text-sm font-medium">"Kundfakturor"</h1>
+                <A href="/customer-invoices/new" attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline">"Ny kundfaktura"</A>
             </div>
             <ErrorAlert message=error />
-            <Checkbox label="Visa betalda och makulerade" id="show_all_invoices" checked=show_all />
+            <Checkbox label="Visa betalda och makulerade" id="show_all_customer_invoices" checked=show_all />
             <Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
-                        <th class=TABLE_HEADER_CELL>"Nr"</th>
-                        <th class=TABLE_HEADER_CELL>"Leverantör"</th>
                         <th class=TABLE_HEADER_CELL>"Fakturanr"</th>
+                        <th class=TABLE_HEADER_CELL>"Kund"</th>
                         <th class=TABLE_HEADER_CELL>"Fakturadatum"</th>
                         <th class=TABLE_HEADER_CELL>"Förfaller"</th>
                         <th class=TABLE_HEADER_CELL>"Belopp"</th>
@@ -107,7 +105,7 @@ enum Panel {
 #[component]
 fn InvoiceRow(
     company_id: String,
-    invoice: ipb::SupplierInvoice,
+    invoice: ipb::CustomerInvoice,
     changed: Callback<()>,
     error: RwSignal<Option<String>>,
 ) -> impl IntoView {
@@ -133,7 +131,7 @@ fn InvoiceRow(
             let mut api = invoicing_api();
             let result = match action {
                 Panel::Pay => api
-                    .pay_supplier_invoice(ipb::PaySupplierInvoiceRequest {
+                    .pay_customer_invoice(ipb::PayCustomerInvoiceRequest {
                         company_id,
                         number,
                         date: pay_date.get_untracked(),
@@ -142,7 +140,7 @@ fn InvoiceRow(
                     .await
                     .map(|_| ()),
                 Panel::Cancel => api
-                    .cancel_supplier_invoice(ipb::CancelSupplierInvoiceRequest {
+                    .cancel_customer_invoice(ipb::CancelCustomerInvoiceRequest {
                         company_id,
                         number,
                         reason: reason.get_untracked(),
@@ -150,7 +148,7 @@ fn InvoiceRow(
                     .await
                     .map(|_| ()),
                 Panel::Reverse => api
-                    .reverse_supplier_invoice_payment(ipb::ReverseSupplierInvoicePaymentRequest {
+                    .reverse_customer_invoice_payment(ipb::ReverseCustomerInvoicePaymentRequest {
                         company_id,
                         number,
                         reason: reason.get_untracked(),
@@ -182,7 +180,7 @@ fn InvoiceRow(
         let company = company_id.get_value();
         spawn_local(async move {
             let result = invoicing_api()
-                .get_supplier_invoice_attachment(ipb::GetSupplierInvoiceAttachmentRequest {
+                .get_customer_invoice_attachment(ipb::GetCustomerInvoiceAttachmentRequest {
                     company_id: company,
                     number,
                     sha256,
@@ -208,9 +206,8 @@ fn InvoiceRow(
     let i = invoice.get_value();
     view! {
         <tr class=TABLE_ROW>
-            <td class=TABLE_CELL>{number}</td>
-            <td class=TABLE_CELL>{i.supplier_name.clone()}</td>
             <td class=TABLE_CELL>{i.invoice_number.clone()}</td>
+            <td class=TABLE_CELL>{i.customer_name.clone()}</td>
             <td class=TABLE_CELL>{i.invoice_date.clone()}</td>
             <td class=TABLE_CELL>{i.due_date.clone()}</td>
             <td class=format!("{TABLE_CELL} text-right tabular-nums")>{amount(i.total)}</td>
@@ -218,7 +215,7 @@ fn InvoiceRow(
             <td class=format!("{TABLE_CELL} text-right")>
                 <Button variant=Variant::Ghost kind="button" on:click=move |_| toggle(Panel::Details)>"Detaljer"</Button>
                 {unpaid.then(|| view! {
-                    <Button variant=Variant::Ghost kind="button" on:click=move |_| toggle(Panel::Pay)>"Betala"</Button>
+                    <Button variant=Variant::Ghost kind="button" on:click=move |_| toggle(Panel::Pay)>"Registrera inbetalning"</Button>
                     <Button variant=Variant::Ghost kind="button" on:click=move |_| toggle(Panel::Cancel)>"Makulera"</Button>
                 })}
                 {paid.then(|| view! {
@@ -228,7 +225,7 @@ fn InvoiceRow(
         </tr>
         <Show when=move || panel.get() != Panel::Closed>
             <tr class=TABLE_ROW>
-                <td class=TABLE_CELL colspan="8">
+                <td class=TABLE_CELL colspan="7">
                     {move || match panel.get() {
                         Panel::Details => {
                             let i = invoice.get_value();
@@ -239,11 +236,11 @@ fn InvoiceRow(
                                             <li>{format!("{} · {} · {} %", l.account, amount(l.net), l.vat_rate)}</li>
                                         }).collect_view()}
                                     </ul>
-                                    <p>{format!("Moms {} · Att betala {}", amount(i.vat), amount(i.total))}</p>
+                                    <p>
+                                        {i.vat.iter().map(|v| format!("Moms {} % {}", v.vat_rate, amount(v.amount))).collect::<Vec<_>>().join(" · ")}
+                                        {format!(" · Att betala {}", amount(i.total))}
+                                    </p>
                                     {(!i.reference.is_empty()).then(|| view! { <p>{format!("OCR/meddelande {}", i.reference)}</p> })}
-                                    {(!i.bankgiro.is_empty()).then(|| view! { <p>{format!("Bankgiro {}", i.bankgiro)}</p> })}
-                                    {(!i.plusgiro.is_empty()).then(|| view! { <p>{format!("Plusgiro {}", i.plusgiro)}</p> })}
-                                    {(!i.iban.is_empty()).then(|| view! { <p>{format!("IBAN {}", i.iban)}</p> })}
                                     {(!i.vouchers.is_empty()).then(|| view! {
                                         <p>
                                             {i.vouchers.iter().map(|v| format!("Ver {} ({})", v.number, v.fiscal_year_start)).collect::<Vec<_>>().join(", ")}
@@ -267,7 +264,7 @@ fn InvoiceRow(
                             }.into_any()
                         }
                         Panel::Pay => view! {
-                            <PayForm date=pay_date account=pay_account confirm="Bekräfta betalning" on_confirm=Callback::new(move |()| act(Panel::Pay)) />
+                            <PayForm date=pay_date account=pay_account confirm="Bekräfta inbetalning" on_confirm=Callback::new(move |()| act(Panel::Pay)) />
                         }.into_any(),
                         Panel::Cancel => view! {
                             <ReasonForm reason=reason confirm="Bekräfta makulering" on_confirm=Callback::new(move |()| act(Panel::Cancel)) />

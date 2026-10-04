@@ -26,8 +26,8 @@ pub fn FiscalYears() -> impl IntoView {
         companies.active.track();
         done.set(None);
     });
-    // Kontantmetoden: unpaid supplier invoices belong in the year-end books
-    // (BFL 5 kap. 2 §), which Doris doesn't book yet.
+    // Kontantmetoden: unpaid customer and supplier invoices belong in the
+    // year-end books (BFL 5 kap. 2 §), which Doris doesn't book yet.
     let unpaid_under_cash = RwSignal::new(false);
     Effect::new(move |_| {
         let company_id = companies.active.get();
@@ -36,20 +36,30 @@ pub fn FiscalYears() -> impl IntoView {
             return;
         }
         spawn_local(async move {
-            let result = invoicing_api()
+            let mut api = invoicing_api();
+            let suppliers = api
                 .list_supplier_invoices(ipb::ListSupplierInvoicesRequest {
+                    company_id: company_id.clone(),
+                })
+                .await;
+            let customers = api
+                .list_customer_invoices(ipb::ListCustomerInvoicesRequest {
                     company_id: company_id.clone(),
                 })
                 .await;
             if company_id != companies.active.get_untracked() {
                 return;
             }
-            if let Ok(response) = result {
-                let response = response.into_inner();
-                unpaid_under_cash.set(
-                    response.cash_method && response.invoices.iter().any(|i| i.status == "unpaid"),
-                );
-            }
+            let supplier_unpaid = suppliers.map(|r| {
+                let r = r.into_inner();
+                r.cash_method && r.invoices.iter().any(|i| i.status == "unpaid")
+            });
+            let customer_unpaid = customers.map(|r| {
+                let r = r.into_inner();
+                r.cash_method && r.invoices.iter().any(|i| i.status == "unpaid")
+            });
+            unpaid_under_cash
+                .set(supplier_unpaid.unwrap_or(false) || customer_unpaid.unwrap_or(false));
         });
     });
 
@@ -59,7 +69,7 @@ pub fn FiscalYears() -> impl IntoView {
             <ErrorAlert message=error />
             {move || unpaid_under_cash.get().then(|| view! {
                 <p class="text-xs/relaxed text-muted-foreground">
-                    "Det finns obetalda leverantörsfakturor. Med kontantmetoden ska de bokföras vid räkenskapsårets slut (BFL 5 kap. 2 §). Doris gör inte det än."
+                    "Det finns obetalda kund- eller leverantörsfakturor. Med kontantmetoden ska de bokföras vid räkenskapsårets slut (BFL 5 kap. 2 §). Doris gör inte det än."
                 </p>
             })}
             {move || done.get().map(|text| view! { <p role="status" class="text-xs/relaxed">{text}</p> })}
