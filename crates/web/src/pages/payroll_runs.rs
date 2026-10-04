@@ -28,6 +28,25 @@ pub fn fee_rate(basis_points: u32) -> String {
     format!("{},{:02} %", basis_points / 100, basis_points % 100)
 }
 
+/// An employee's setting: "Tabell 33, kol 1", "30 %", or "–" without one.
+pub fn tax_setting_label(setting: Option<&ppb::TaxSetting>) -> String {
+    match setting.and_then(|s| s.kind.as_ref()) {
+        Some(ppb::tax_setting::Kind::Table(t)) => format!("Tabell {}, kol {}", t.table, t.column),
+        Some(ppb::tax_setting::Kind::Percent(p)) => format!("{p} %"),
+        None => "–".to_owned(),
+    }
+}
+
+/// How a locked line's tax came about: "T33 k1", "30 %" or "Manuell".
+pub fn tax_basis_label(basis: Option<&ppb::TaxBasis>) -> String {
+    match basis.and_then(|b| b.kind.as_ref()) {
+        Some(ppb::tax_basis::Kind::Table(t)) => format!("T{} k{}", t.table, t.column),
+        Some(ppb::tax_basis::Kind::Percent(p)) => format!("{p} %"),
+        Some(ppb::tax_basis::Kind::Manual(_)) => "Manuell".to_owned(),
+        None => String::new(),
+    }
+}
+
 #[component]
 pub fn PayrollRuns() -> impl IntoView {
     let companies = expect_context::<Companies>();
@@ -84,7 +103,7 @@ pub fn PayrollRuns() -> impl IntoView {
                         {
                             let sum = |amount: fn(&ppb::PayrollRunLine) -> i64| run.lines.iter().map(amount).sum::<i64>();
                             let locked = run.status() != ppb::PayrollRunStatus::Open;
-                            let (gross, tax, fee, net) = (sum(|l| l.gross), sum(|l| l.tax), sum(|l| l.fee), sum(|l| l.net));
+                            let (gross, tax, fee, net) = (sum(|l| l.gross), sum(|l| l.tax.unwrap_or(0)), sum(|l| l.fee), sum(|l| l.net));
                             let label = status_label(run.status(), &run.pay_date, &today);
                             let shown = move |ore: i64| if locked { amount(ore) } else { "–".to_owned() };
                             view! {
@@ -94,7 +113,7 @@ pub fn PayrollRuns() -> impl IntoView {
                                     </td>
                                     <td class=TABLE_CELL>{run.text.clone()}</td>
                                     <td class=TABLE_AMOUNT_CELL>{amount(gross)}</td>
-                                    <td class=TABLE_AMOUNT_CELL>{amount(tax)}</td>
+                                    <td class=TABLE_AMOUNT_CELL>{shown(tax)}</td>
                                     <td class=TABLE_AMOUNT_CELL>{shown(fee)}</td>
                                     <td class=TABLE_AMOUNT_CELL>{shown(net)}</td>
                                     <td class=TABLE_CELL>{label}</td>
@@ -122,6 +141,7 @@ pub fn RunLines(
                     <th class=TABLE_HEADER_CELL>"Anställd"</th>
                     <th class=format!("{TABLE_HEADER_CELL} text-right")>"Brutto"</th>
                     <th class=format!("{TABLE_HEADER_CELL} text-right")>"Skatt"</th>
+                    <th class=TABLE_HEADER_CELL>"Skattegrund"</th>
                     <th class=format!("{TABLE_HEADER_CELL} text-right")>"Avgiftssats"</th>
                     <th class=format!("{TABLE_HEADER_CELL} text-right")>"Avgift"</th>
                     <th class=format!("{TABLE_HEADER_CELL} text-right")>"Netto"</th>
@@ -130,16 +150,19 @@ pub fn RunLines(
             <tbody class=TABLE_BODY>
                 {lines
                     .into_iter()
-                    .map(|l| view! {
+                    .map(|l| {
+                        let basis = tax_basis_label(l.tax_basis.as_ref());
+                        view! {
                         <tr class=TABLE_ROW>
                             <td class=TABLE_CELL>{l.employee_name}</td>
                             <td class=TABLE_AMOUNT_CELL>{amount(l.gross)}</td>
-                            <td class=TABLE_AMOUNT_CELL>{amount(l.tax)}</td>
+                            <td class=TABLE_AMOUNT_CELL>{amount(l.tax.unwrap_or(0))}</td>
+                            <td class=TABLE_CELL>{basis}</td>
                             <td class=TABLE_AMOUNT_CELL>{fee_rate(l.fee_rate)}</td>
                             <td class=TABLE_AMOUNT_CELL>{amount(l.fee)}</td>
                             <td class=TABLE_AMOUNT_CELL>{amount(l.net)}</td>
                         </tr>
-                    })
+                    }})
                     .collect_view()}
             </tbody>
         </Table>
@@ -192,5 +215,40 @@ mod tests {
         assert_eq!(fee_rate(3142), "31,42 %");
         assert_eq!(fee_rate(1021), "10,21 %");
         assert_eq!(fee_rate(0), "0,00 %");
+    }
+
+    #[test]
+    fn tax_settings_and_bases_read_as_short_swedish_labels() {
+        use crate::api::ppb::{TableBasis, TableTax, TaxBasis, TaxSetting, tax_basis, tax_setting};
+        let table = TaxSetting {
+            kind: Some(tax_setting::Kind::Table(TableTax {
+                table: 33,
+                column: 1,
+            })),
+        };
+        let percent = TaxSetting {
+            kind: Some(tax_setting::Kind::Percent(30)),
+        };
+        assert_eq!(tax_setting_label(Some(&table)), "Tabell 33, kol 1");
+        assert_eq!(tax_setting_label(Some(&percent)), "30 %");
+        assert_eq!(tax_setting_label(None), "–");
+        let basis = |kind| TaxBasis { kind: Some(kind) };
+        assert_eq!(
+            tax_basis_label(Some(&basis(tax_basis::Kind::Table(TableBasis {
+                year: 2026,
+                table: 33,
+                column: 1
+            })))),
+            "T33 k1"
+        );
+        assert_eq!(
+            tax_basis_label(Some(&basis(tax_basis::Kind::Percent(30)))),
+            "30 %"
+        );
+        assert_eq!(
+            tax_basis_label(Some(&basis(tax_basis::Kind::Manual(true)))),
+            "Manuell"
+        );
+        assert_eq!(tax_basis_label(None), "");
     }
 }

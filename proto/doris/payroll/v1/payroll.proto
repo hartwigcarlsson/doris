@@ -12,6 +12,8 @@ service PayrollService {
   // Name, monthly salary and salary account; never the personnummer.
   rpc UpdateEmployee(UpdateEmployeeRequest) returns (UpdateEmployeeResponse);
   rpc DeactivateEmployee(DeactivateEmployeeRequest) returns (DeactivateEmployeeResponse);
+  // The employee's A-skatt setting: a table and column, or a percentage.
+  rpc SetEmployeeTax(SetEmployeeTaxRequest) returns (SetEmployeeTaxResponse);
 
   // What a draft would lock if finalized now. Writes nothing.
   rpc PreviewPayrollRun(PreviewPayrollRunRequest) returns (PreviewPayrollRunResponse);
@@ -38,6 +40,7 @@ message Employee {
   int64 monthly_salary = 4;
   uint32 salary_account = 5;
   bool active = 6;
+  TaxSetting tax = 7; // unset: no setting, tax is typed
 }
 
 message ListEmployeesRequest {
@@ -53,6 +56,7 @@ message AddEmployeeRequest {
   string personal_identity_number = 3;
   int64 monthly_salary = 4;
   uint32 salary_account = 5;
+  TaxSetting tax = 6; // optional
 }
 message AddEmployeeResponse {
   string employee_id = 1;
@@ -76,7 +80,7 @@ message DeactivateEmployeeResponse {}
 message PayrollRunLineInput {
   string employee_id = 1;
   int64 gross = 2;
-  int64 tax = 3;
+  optional int64 tax = 3; // unset: computed
 }
 message PayrollRunDraft {
   string pay_date = 1; // YYYY-MM-DD
@@ -137,12 +141,13 @@ message PayrollRunLine {
   string employee_id = 1;
   string employee_name = 2;
   int64 gross = 3;
-  int64 tax = 4;
+  optional int64 tax = 4; // unset: an open line, computed when finalized
   // Set once finalized (and in a preview).
   uint32 salary_account = 5;
   uint32 fee_rate = 6; // basis points
   int64 fee = 7;
   int64 net = 8;
+  TaxBasis tax_basis = 9; // once finalized, and in a preview
 }
 
 message PayrollRun {
@@ -154,3 +159,32 @@ message PayrollRun {
   repeated doris.ledger.v1.VoucherLine voucher_lines = 6; // once finalized
   VoucherRef voucher = 7;                                  // while booked
 }
+
+message TableTax {
+  uint32 table = 1;  // 29-42
+  uint32 column = 2; // 1-6
+}
+message TaxSetting {
+  oneof kind {
+    TableTax table = 1;
+    uint32 percent = 2; // 0-100
+  }
+}
+message TableBasis {
+  uint32 year = 1;
+  uint32 table = 2;
+  uint32 column = 3;
+}
+message TaxBasis {
+  oneof kind {
+    TableBasis table = 1;
+    uint32 percent = 2;
+    bool manual = 3;
+  }
+}
+message SetEmployeeTaxRequest {
+  string company_id = 1;
+  string employee_id = 2;
+  TaxSetting tax = 3;
+}
+message SetEmployeeTaxResponse {}

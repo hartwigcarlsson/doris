@@ -48,6 +48,12 @@ fn message(code: &str) -> &'static str {
         }
         "lookup_not_found" => "Bolagsverket hittade inget företag med det numret.",
         "lookup_failed" => "Bolagsverket svarade inte. Försök igen eller fyll i uppgifterna själv.",
+        "invalid_tax_table" => "Välj tabell 29–42 och kolumn 1–6.",
+        "invalid_tax_percent" => "Procentsatsen måste vara 0–100.",
+        "tax_required" => "Ange skatt eller en skatteinställning för den anställda.",
+        "tax_table_unavailable" => {
+            "Skattetabellen kunde inte hämtas från Skatteverket. Försök igen senare eller skriv in skatten för hand."
+        }
         "invalid_account_number" => "Kontonumret ska vara fyra siffror, 1000–8999.",
         "invalid_account_name" => "Kontonamnet måste vara 1–100 tecken.",
         "account_exists" => "Kontot finns redan i kontoplanen.",
@@ -157,6 +163,26 @@ fn message(code: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tax_table_codes_have_swedish_messages() {
+        assert_eq!(
+            message("invalid_tax_table"),
+            "Välj tabell 29–42 och kolumn 1–6."
+        );
+        assert_eq!(
+            message("invalid_tax_percent"),
+            "Procentsatsen måste vara 0–100."
+        );
+        assert_eq!(
+            message("tax_required"),
+            "Ange skatt eller en skatteinställning för den anställda."
+        );
+        assert_eq!(
+            message("tax_table_unavailable"),
+            "Skattetabellen kunde inte hämtas från Skatteverket. Försök igen senare eller skriv in skatten för hand."
+        );
+    }
+
     use super::message;
     #[test]
     fn closing_codes_have_swedish_messages() {

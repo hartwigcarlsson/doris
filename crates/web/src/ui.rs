@@ -262,12 +262,14 @@ pub fn TextInput(
     #[prop(default = "text")] kind: &'static str,
     #[prop(optional)] inputmode: &'static str,
     #[prop(optional)] list: &'static str,
+    #[prop(optional, into)] placeholder: String,
 ) -> impl IntoView {
     view! {
         <input
             type=kind
             class=INPUT
             aria-label=label
+            placeholder=(!placeholder.is_empty()).then_some(placeholder)
             inputmode=(!inputmode.is_empty()).then_some(inputmode)
             list=(!list.is_empty()).then_some(list)
             bind:value=value

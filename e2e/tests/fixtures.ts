@@ -83,6 +83,7 @@ export const test = base.extend<Fixtures>({
         DORIS_LISTEN: `127.0.0.1:${port}`,
         DORIS_RP_ID: "localhost",
         DORIS_RP_ORIGIN: origin,
+        DORIS_TAX_TABLES_URL: "http://127.0.0.1:9/rowstore",
       },
       stdio: "inherit",
     });
