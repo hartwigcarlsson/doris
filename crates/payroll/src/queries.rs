@@ -5,6 +5,7 @@ use crate::domain::{
     self, BookedVoucher, DomainError, Employee, EmployeeName, PayrollRunLine, PayrollRunStatus,
     PersonalIdentityNumber, SalaryAccount,
 };
+use crate::tax::TaxSetting;
 use doris_ledger::domain::VoucherLine;
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -18,24 +19,53 @@ pub async fn list_employees(
     user_id: Uuid,
 ) -> Result<Vec<Employee>> {
     doris_company::get_company(pool, company_id, user_id).await?;
-    let rows: Vec<(String, String, String, i64, u32, bool)> = sqlx::query_as(
-        "SELECT employee_id, name, personal_identity_number, monthly_salary, salary_account, active
+    type Row = (
+        String,
+        String,
+        String,
+        i64,
+        u32,
+        bool,
+        Option<u32>,
+        Option<u32>,
+        Option<u32>,
+    );
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT employee_id, name, personal_identity_number, monthly_salary, salary_account, active,
+                tax_table, tax_column, tax_percent
          FROM employees WHERE company_id = ? ORDER BY name, employee_id",
     )
     .bind(company_id.to_string())
     .fetch_all(pool)
     .await?;
     rows.into_iter()
-        .map(|(id, name, pin, monthly_salary, account, active)| {
-            Ok(Employee {
-                id: id.parse().expect("stored uuids parse"),
-                name: EmployeeName::parse(&name)?,
-                personal_identity_number: PersonalIdentityNumber::parse(&pin)?,
+        .map(
+            |(
+                id,
+                name,
+                pin,
                 monthly_salary,
-                salary_account: SalaryAccount::parse(account)?,
+                account,
                 active,
-            })
-        })
+                tax_table,
+                tax_column,
+                tax_percent,
+            )| {
+                Ok(Employee {
+                    id: id.parse().expect("stored uuids parse"),
+                    name: EmployeeName::parse(&name)?,
+                    personal_identity_number: PersonalIdentityNumber::parse(&pin)?,
+                    monthly_salary,
+                    salary_account: SalaryAccount::parse(account)?,
+                    active,
+                    tax: match (tax_table, tax_column, tax_percent) {
+                        (Some(table), Some(column), _) => Some(TaxSetting::table(table, column)?),
+                        (_, _, Some(percent)) => Some(TaxSetting::percent(percent)?),
+                        _ => None,
+                    },
+                })
+            },
+        )
         .collect()
 }
 
@@ -53,7 +83,8 @@ pub struct PayrollRunLineView {
     pub employee_id: Uuid,
     pub employee_name: String,
     pub gross: i64,
-    pub tax: i64,
+    /// `None`: computed when the run is finalized.
+    pub tax: Option<i64>,
     /// Set while the run is finalized or booked.
     pub locked: Option<PayrollRunLine>,
 }
@@ -111,15 +142,16 @@ pub async fn list_payroll_runs(
         String,
         String,
         i64,
-        i64,
+        Option<i64>,
         Option<u32>,
         Option<u32>,
         Option<i64>,
         Option<i64>,
+        Option<String>,
     );
     let rows: Vec<Line> = sqlx::query_as(
         "SELECT l.payroll_run_id, l.employee_id, e.name, l.gross, l.tax,
-                l.salary_account, l.fee_rate, l.fee, l.net
+                l.salary_account, l.fee_rate, l.fee, l.net, l.tax_basis
          FROM payroll_run_lines l
          JOIN employees e ON e.company_id = l.company_id AND e.employee_id = l.employee_id
          WHERE l.company_id = ?
@@ -131,18 +163,24 @@ pub async fn list_payroll_runs(
     tx.commit().await?;
 
     let mut lines = HashMap::<String, Vec<PayrollRunLineView>>::new();
-    for (run, employee, name, gross, tax, account, fee_rate, fee, net) in rows {
+    for (run, employee, name, gross, tax, account, fee_rate, fee, net, tax_basis) in rows {
         let employee_id: Uuid = employee.parse().expect("stored uuids parse");
-        let locked = match (account, fee_rate, fee, net) {
-            (Some(account), Some(fee_rate), Some(fee), Some(net)) => Some(PayrollRunLine {
-                employee_id,
-                salary_account: SalaryAccount::parse(account)?,
-                gross,
-                tax,
-                fee_rate,
-                fee,
-                net,
-            }),
+        let locked = match (tax, account, fee_rate, fee, net) {
+            (Some(tax), Some(account), Some(fee_rate), Some(fee), Some(net)) => {
+                Some(PayrollRunLine {
+                    employee_id,
+                    salary_account: SalaryAccount::parse(account)?,
+                    gross,
+                    tax,
+                    fee_rate,
+                    fee,
+                    net,
+                    tax_basis: tax_basis
+                        .map(|json| serde_json::from_str(&json))
+                        .transpose()?
+                        .unwrap_or_default(),
+                })
+            }
             _ => None,
         };
         lines.entry(run).or_default().push(PayrollRunLineView {

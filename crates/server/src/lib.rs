@@ -7,6 +7,7 @@ mod grpc;
 mod invoicing;
 mod ledger;
 mod payroll;
+pub mod skatteverket;
 
 use axum::Router;
 use axum::extract::State;

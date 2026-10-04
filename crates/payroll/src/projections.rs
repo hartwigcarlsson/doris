@@ -3,6 +3,7 @@
 
 use crate::PAYROLL_STREAM;
 use crate::domain::{DraftLine, PayrollEvent, PayrollRunLine};
+use crate::tax::TaxSetting;
 use doris_eventstore::RecordedEvent;
 use sqlx::SqliteConnection;
 
@@ -45,6 +46,23 @@ pub(crate) async fn apply(conn: &mut SqliteConnection, event: &RecordedEvent) ->
             .bind(name.as_str())
             .bind(monthly_salary)
             .bind(salary_account.get())
+            .bind(company_id)
+            .bind(employee_id.to_string())
+            .execute(&mut *conn)
+            .await?;
+        }
+        PayrollEvent::EmployeeTaxChanged { employee_id, tax } => {
+            let (table, column, percent) = match tax {
+                TaxSetting::Table { table, column } => (Some(table), Some(column), None),
+                TaxSetting::Percent { percent } => (None, None, Some(percent)),
+            };
+            sqlx::query(
+                "UPDATE employees SET tax_table = ?, tax_column = ?, tax_percent = ?
+                 WHERE company_id = ? AND employee_id = ?",
+            )
+            .bind(table)
+            .bind(column)
+            .bind(percent)
             .bind(company_id)
             .bind(employee_id.to_string())
             .execute(&mut *conn)
@@ -113,7 +131,9 @@ pub(crate) async fn apply(conn: &mut SqliteConnection, event: &RecordedEvent) ->
             set_finalized(conn, company_id, &run, false, event).await?;
             sqlx::query(
                 "UPDATE payroll_run_lines
-                 SET salary_account = NULL, fee_rate = NULL, fee = NULL, net = NULL
+                 SET tax = CASE WHEN json_extract(tax_basis, '$.kind') = 'manual' THEN tax END,
+                     salary_account = NULL, fee_rate = NULL, fee = NULL, net = NULL,
+                     tax_basis = NULL
                  WHERE company_id = ? AND payroll_run_id = ?",
             )
             .bind(company_id)
@@ -209,8 +229,8 @@ async fn insert_locked_line(
 ) -> crate::Result<()> {
     sqlx::query(
         "INSERT INTO payroll_run_lines (company_id, payroll_run_id, employee_id, gross, tax,
-             salary_account, fee_rate, fee, net)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             salary_account, fee_rate, fee, net, tax_basis)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(company_id)
     .bind(run)
@@ -221,6 +241,7 @@ async fn insert_locked_line(
     .bind(line.fee_rate)
     .bind(line.fee)
     .bind(line.net)
+    .bind(serde_json::to_string(&line.tax_basis)?)
     .execute(&mut *conn)
     .await?;
     Ok(())

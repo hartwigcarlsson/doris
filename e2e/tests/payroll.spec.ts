@@ -14,6 +14,7 @@ async function addEmployee(page: Page, name: string, personnummer: string, salar
   await page.getByLabel("Namn").fill(name);
   await page.getByLabel("Personnummer").fill(personnummer);
   await page.getByLabel("Månadslön (kr)").fill(salary);
+  await page.getByLabel("Skatt", { exact: true }).selectOption({ label: "Ingen (skatten skrivs in för hand)" });
   await page.getByRole("button", { name: "Lägg till anställd" }).click();
   await expect(page.getByRole("row", { name: new RegExp(`^${name}`) })).toBeVisible();
 }
@@ -117,6 +118,7 @@ test("employees are refused in Swedish and edited without their personnummer", a
   await page.getByLabel("Namn").fill("Åsa Öberg");
   await page.getByLabel("Personnummer").fill("19800101-1232");
   await page.getByLabel("Månadslön (kr)").fill("35000");
+  await page.getByLabel("Skatt", { exact: true }).selectOption({ label: "Ingen (skatten skrivs in för hand)" });
   await page.getByRole("button", { name: "Lägg till anställd" }).click();
   await expect(page.getByRole("alert")).toHaveText("Personnumret är ogiltigt (ÅÅÅÅMMDD-NNNN).");
 

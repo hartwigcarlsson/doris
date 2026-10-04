@@ -3,8 +3,9 @@
 
 use crate::active_company::Companies;
 use crate::api::{payroll_api, ppb};
-use crate::errors::describe;
+use crate::errors::{describe, describe_code};
 use crate::format::{amount, parse_amount};
+use crate::pages::payroll_runs::tax_setting_label;
 use crate::ui::{
     Button, Card, Checkbox, ErrorAlert, Field, SELECT_OPTION, Select, TABLE_AMOUNT_CELL,
     TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, Variant,
@@ -20,6 +21,36 @@ pub const SALARY_ACCOUNTS: [(u32, &str); 3] = [
     (7220, "7220 Löner till företagsledare"),
 ];
 
+/// Skatteverket's columns, as offered in the form.
+pub const TAX_COLUMNS: [(u32, &str); 6] = [
+    (1, "1 – Lön (under 66 år)"),
+    (2, "2 – Pension (66 år eller äldre)"),
+    (3, "3 – Lön (66 år eller äldre)"),
+    (4, "4 – Sjuk- och aktivitetsersättning"),
+    (5, "5 – Annan pensionsgrundande ersättning"),
+    (6, "6 – Pension (under 66 år)"),
+];
+
+/// The error code for a Skatt choice that can't be saved: "table" needs a table.
+pub fn tax_fields_error(kind: &str, table: &str) -> Option<&'static str> {
+    (kind == "table" && table.trim().is_empty()).then_some("invalid_tax_table")
+}
+
+/// The Skatt fields as a setting: "table", "percent" or "none". A field that
+/// isn't a number becomes a value the server refuses with its own message.
+pub fn tax_input(kind: &str, table: &str, column: &str, percent: &str) -> Option<ppb::TaxSetting> {
+    let number = |s: &str, fallback: u32| s.trim().parse().unwrap_or(fallback);
+    let kind = match kind {
+        "table" => ppb::tax_setting::Kind::Table(ppb::TableTax {
+            table: number(table, 0),
+            column: number(column, 0),
+        }),
+        "percent" => ppb::tax_setting::Kind::Percent(number(percent, 1000)),
+        _ => return None,
+    };
+    Some(ppb::TaxSetting { kind: Some(kind) })
+}
+
 #[component]
 pub fn Employees() -> impl IntoView {
     let companies = expect_context::<Companies>();
@@ -32,6 +63,12 @@ pub fn Employees() -> impl IntoView {
     let personnummer = RwSignal::new(String::new());
     let salary = RwSignal::new(String::new());
     let account = RwSignal::new("7210".to_owned());
+    let tax_kind = RwSignal::new("table".to_owned());
+    let tax_table = RwSignal::new(String::new());
+    let tax_column = RwSignal::new("1".to_owned());
+    let tax_percent = RwSignal::new(String::new());
+    // The setting of the employee being edited: it can change, not go away.
+    let edited_tax = RwSignal::new(None::<ppb::TaxSetting>);
     let error = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
 
@@ -41,6 +78,11 @@ pub fn Employees() -> impl IntoView {
         personnummer.set(String::new());
         salary.set(String::new());
         account.set("7210".to_owned());
+        tax_kind.set("table".to_owned());
+        tax_table.set(String::new());
+        tax_column.set("1".to_owned());
+        tax_percent.set(String::new());
+        edited_tax.set(None);
     };
     let load = move || {
         let company_id = companies.active.get_untracked();
@@ -79,17 +121,45 @@ pub fn Employees() -> impl IntoView {
         personnummer.set(e.personal_identity_number);
         salary.set(amount(e.monthly_salary));
         account.set(e.salary_account.to_string());
+        let (kind, table, column, percent) = match e.tax.as_ref().and_then(|t| t.kind.as_ref()) {
+            Some(ppb::tax_setting::Kind::Table(t)) => (
+                "table",
+                t.table.to_string(),
+                t.column.to_string(),
+                String::new(),
+            ),
+            Some(ppb::tax_setting::Kind::Percent(p)) => {
+                ("percent", String::new(), "1".to_owned(), p.to_string())
+            }
+            None => ("none", String::new(), "1".to_owned(), String::new()),
+        };
+        tax_kind.set(kind.to_owned());
+        tax_table.set(table);
+        tax_column.set(column);
+        tax_percent.set(percent);
+        edited_tax.set(e.tax);
     });
 
     let save = move |ev: SubmitEvent| {
         ev.prevent_default();
-        busy.set(true);
         error.set(None);
+        if let Some(code) = tax_fields_error(&tax_kind.get_untracked(), &tax_table.get_untracked())
+        {
+            error.set(Some(describe_code(code)));
+            return;
+        }
+        busy.set(true);
         // The company whose employees are on screen, not whatever is active now.
         let company_id = employees.with_untracked(|(id, _)| id.clone());
         // Not an amount: 0, which the server refuses with its own message.
         let monthly_salary = parse_amount(&salary.get_untracked()).unwrap_or(0);
         let salary_account = account.get_untracked().parse().unwrap_or(0);
+        let tax = tax_input(
+            &tax_kind.get_untracked(),
+            &tax_table.get_untracked(),
+            &tax_column.get_untracked(),
+            &tax_percent.get_untracked(),
+        );
         spawn_local(async move {
             let result = match editing.get_untracked() {
                 None => payroll_api()
@@ -99,19 +169,34 @@ pub fn Employees() -> impl IntoView {
                         personal_identity_number: personnummer.get_untracked(),
                         monthly_salary,
                         salary_account,
+                        tax,
                     })
                     .await
                     .map(|_| ()),
-                Some(employee_id) => payroll_api()
-                    .update_employee(ppb::UpdateEmployeeRequest {
-                        company_id,
-                        employee_id,
-                        name: name.get_untracked(),
-                        monthly_salary,
-                        salary_account,
-                    })
-                    .await
-                    .map(|_| ()),
+                Some(employee_id) => {
+                    let updated = payroll_api()
+                        .update_employee(ppb::UpdateEmployeeRequest {
+                            company_id: company_id.clone(),
+                            employee_id: employee_id.clone(),
+                            name: name.get_untracked(),
+                            monthly_salary,
+                            salary_account,
+                        })
+                        .await;
+                    match updated {
+                        Ok(_) if tax.is_some() && tax != edited_tax.get_untracked() => {
+                            payroll_api()
+                                .set_employee_tax(ppb::SetEmployeeTaxRequest {
+                                    company_id,
+                                    employee_id,
+                                    tax,
+                                })
+                                .await
+                                .map(|_| ())
+                        }
+                        other => other.map(|_| ()),
+                    }
+                }
             };
             match result {
                 Ok(()) => {
@@ -147,6 +232,34 @@ pub fn Employees() -> impl IntoView {
                             })
                             .collect_view()}
                     </Select>
+                    <Select label="Skatt" id="tax_kind" value=tax_kind>
+                        <option class=SELECT_OPTION value="table">"Skattetabell"</option>
+                        <option class=SELECT_OPTION value="percent">"Fast procent"</option>
+                        <option
+                            class=SELECT_OPTION
+                            value="none"
+                            disabled=move || edited_tax.get().is_some()
+                            hidden=move || edited_tax.get().is_some()
+                        >
+                            "Ingen (skatten skrivs in för hand)"
+                        </option>
+                    </Select>
+                    <Show when=move || tax_kind.get() == "table">
+                        <Select label="Tabell" id="tax_table" value=tax_table>
+                            <option class=SELECT_OPTION value="">"Välj…"</option>
+                            {(29..=42u32)
+                                .map(|t| view! { <option class=SELECT_OPTION value=t.to_string()>{t}</option> })
+                                .collect_view()}
+                        </Select>
+                        <Select label="Kolumn" id="tax_column" value=tax_column>
+                            {TAX_COLUMNS
+                                .map(|(n, label)| view! { <option class=SELECT_OPTION value=n.to_string()>{label}</option> })
+                                .collect_view()}
+                        </Select>
+                    </Show>
+                    <Show when=move || tax_kind.get() == "percent">
+                        <Field label="Procent" id="tax_percent" value=tax_percent />
+                    </Show>
                     <div class="col-span-2 flex gap-2">
                         <Button disabled=busy>
                             {move || if editing.get().is_some() { "Spara ändringar" } else { "Lägg till anställd" }}
@@ -165,6 +278,7 @@ pub fn Employees() -> impl IntoView {
                         <th class=TABLE_HEADER_CELL>"Personnummer"</th>
                         <th class=format!("{TABLE_HEADER_CELL} text-right")>"Månadslön"</th>
                         <th class=TABLE_HEADER_CELL>"Konto"</th>
+                        <th class=TABLE_HEADER_CELL>"Skatt"</th>
                         <th class=TABLE_HEADER_CELL>"Status"</th>
                         <th class=TABLE_HEADER_CELL></th>
                     </tr>
@@ -179,7 +293,7 @@ pub fn Employees() -> impl IntoView {
                                 .collect::<Vec<_>>()
                         }
                         key=|(company_id, e)| {
-                            (company_id.clone(), e.id.clone(), e.name.clone(), e.monthly_salary, e.salary_account, e.active)
+                            (company_id.clone(), e.id.clone(), e.name.clone(), e.monthly_salary, e.salary_account, e.active, tax_setting_label(e.tax.as_ref()))
                         }
                         let((company_id, employee))
                     >
@@ -230,6 +344,7 @@ fn EmployeeRow(
             <td class=format!("{TABLE_CELL} tabular-nums")>{employee.personal_identity_number.clone()}</td>
             <td class=TABLE_AMOUNT_CELL>{amount(employee.monthly_salary)}</td>
             <td class=TABLE_CELL>{account}</td>
+            <td class=TABLE_CELL>{tax_setting_label(employee.tax.as_ref())}</td>
             <td class=TABLE_CELL>{if employee.active { "Aktiv" } else { "Inaktiv" }}</td>
             <td class=format!("{TABLE_CELL} text-right")>
                 <Show when=move || stored.with_value(|e| e.active)>
@@ -249,5 +364,47 @@ fn EmployeeRow(
                 </Show>
             </td>
         </tr>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tax_fields_error, tax_input};
+    use crate::api::ppb::{TableTax, tax_setting::Kind};
+
+    #[test]
+    fn a_table_setting_without_a_table_is_caught_before_saving() {
+        assert_eq!(tax_fields_error("table", " "), Some("invalid_tax_table"));
+        assert_eq!(tax_fields_error("table", "33"), None);
+        assert_eq!(tax_fields_error("percent", ""), None);
+        assert_eq!(tax_fields_error("none", ""), None);
+    }
+
+    #[test]
+    fn the_tax_fields_become_a_setting_or_none() {
+        assert_eq!(
+            tax_input("table", "33", "1", "").and_then(|t| t.kind),
+            Some(Kind::Table(TableTax {
+                table: 33,
+                column: 1
+            }))
+        );
+        assert_eq!(
+            tax_input("percent", "", "", " 30 ").and_then(|t| t.kind),
+            Some(Kind::Percent(30))
+        );
+        assert_eq!(tax_input("none", "33", "1", "30"), None);
+        // Not a number: 0, which the server refuses with its own message.
+        assert_eq!(
+            tax_input("table", "", "1", "").and_then(|t| t.kind),
+            Some(Kind::Table(TableTax {
+                table: 0,
+                column: 1
+            }))
+        );
+        assert_eq!(
+            tax_input("percent", "", "", "tre").and_then(|t| t.kind),
+            Some(Kind::Percent(1000))
+        );
     }
 }

@@ -9,7 +9,9 @@
 pub mod domain;
 mod projections;
 mod queries;
+pub mod tax;
 
+use crate::tax::{RowKind, TaxSetting, TaxTable, TaxTableRow};
 use domain::{
     AddEmployee, BookedVoucher, DomainError, EmployeeName, Payroll, PayrollEvent, PayrollRunDraft,
     PayrollRunLine, PersonalIdentityNumber, SalaryAccount, UpdateEmployee,
@@ -73,6 +75,7 @@ pub struct NewEmployee<'a> {
     pub personal_identity_number: &'a str,
     pub monthly_salary: i64,
     pub salary_account: u32,
+    pub tax: Option<TaxSetting>,
 }
 
 pub async fn add_employee(
@@ -87,6 +90,7 @@ pub async fn add_employee(
         personal_identity_number: PersonalIdentityNumber::parse(new.personal_identity_number)?,
         monthly_salary: new.monthly_salary,
         salary_account: SalaryAccount::parse(new.salary_account)?,
+        tax: new.tax,
     };
     let employee_id = cmd.employee_id;
     change(pool, company_id, actor, |payroll| {
@@ -146,7 +150,8 @@ pub async fn preview_payroll_run(
     let mut conn = pool.acquire().await?;
     let (_, payroll, _) = load(&mut conn, company_id, actor).await?;
     let draft = domain::validate_draft(&payroll, draft)?;
-    let lines = domain::compute_lines(&payroll, None, &draft)?;
+    let table = load_tax_table(&mut conn, draft.pay_date.year()).await?;
+    let lines = domain::compute_lines(&payroll, None, &draft, table.as_ref())?;
     Ok(Preview {
         text: draft.text,
         lines,
@@ -194,10 +199,104 @@ pub async fn finalize_payroll_run(
     actor: Uuid,
     payroll_run_id: Uuid,
 ) -> Result<()> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let (_, payroll, version) = load(&mut tx, company_id, actor).await?;
+    let table = match payroll.run(payroll_run_id) {
+        Some(run) => load_tax_table(&mut tx, run.draft.pay_date.year()).await?,
+        None => None,
+    };
+    let event = domain::finalize_payroll_run(&payroll, payroll_run_id, table.as_ref())?;
+    append(&mut tx, company_id, version, &[event], actor).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn set_employee_tax(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    employee_id: Uuid,
+    tax: TaxSetting,
+) -> Result<()> {
     change(pool, company_id, actor, |payroll| {
-        Ok(vec![domain::finalize_payroll_run(payroll, payroll_run_id)?])
+        domain::set_employee_tax(payroll, employee_id, tax)
     })
     .await
+}
+
+/// The stored monthly tables for `year`, if any.
+pub async fn tax_table(pool: &SqlitePool, year: i16) -> Result<Option<TaxTable>> {
+    let mut conn = pool.acquire().await?;
+    load_tax_table(&mut conn, year).await
+}
+
+/// Stores a year's tables, replacing any earlier copy, in one transaction.
+pub async fn store_tax_table(pool: &SqlitePool, table: &TaxTable) -> Result<()> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    sqlx::query("DELETE FROM tax_tables WHERE year = ?")
+        .bind(table.year())
+        .execute(&mut *tx)
+        .await?;
+    for row in table.rows() {
+        let kind = match row.kind {
+            RowKind::Amount => "amount",
+            RowKind::Percent => "percent",
+        };
+        let [c1, c2, c3, c4, c5, c6] = row.columns;
+        sqlx::query(
+            "INSERT INTO tax_tables (year, table_no, kind, income_from, income_to,
+                 col1, col2, col3, col4, col5, col6)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(table.year())
+        .bind(row.table)
+        .bind(kind)
+        .bind(row.from)
+        .bind(row.to)
+        .bind(c1)
+        .bind(c2)
+        .bind(c3)
+        .bind(c4)
+        .bind(c5)
+        .bind(c6)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// `None` when the year isn't stored (or no longer validates, which makes
+/// the server fetch it again).
+async fn load_tax_table(conn: &mut SqliteConnection, year: i16) -> Result<Option<TaxTable>> {
+    type Row = (u8, String, i64, Option<i64>, i64, i64, i64, i64, i64, i64);
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT table_no, kind, income_from, income_to, col1, col2, col3, col4, col5, col6
+         FROM tax_tables WHERE year = ?",
+    )
+    .bind(year)
+    .fetch_all(&mut *conn)
+    .await?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let rows = rows
+        .into_iter()
+        .map(
+            |(table, kind, from, to, c1, c2, c3, c4, c5, c6)| TaxTableRow {
+                table,
+                kind: if kind == "amount" {
+                    RowKind::Amount
+                } else {
+                    RowKind::Percent
+                },
+                from,
+                to,
+                columns: [c1, c2, c3, c4, c5, c6],
+            },
+        )
+        .collect();
+    Ok(TaxTable::validate(year, rows).ok())
 }
 
 pub async fn reopen_payroll_run(

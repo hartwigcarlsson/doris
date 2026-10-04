@@ -101,6 +101,14 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   19–23-year-olds from 2026-04-01 to 2027-09-30. The youth cap counts
   booked runs only; a booking whose fee would change is refused
   (`payroll_run_outdated`).
+- Preliminary tax (`doris_payroll::tax`) comes from an employee's setting
+  (`EmployeeTaxChanged`: tabell 29–42 + kolumn 1–6, or a whole percent),
+  or is typed on the run line (manual). Skatteverket's monthly tables are
+  reference data in `tax_tables`, not events: the server fetches a year
+  from Skatteverket's open data the first time it's needed and stores it,
+  replacing any earlier copy. Every locked line records its `tax_basis`
+  (table/year/column, percent or manual); lines from before have none
+  and read as manual.
 
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.
@@ -198,6 +206,14 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `payroll_run_not_booked`, `payroll_run_not_due` and
   `payroll_run_outdated`. A run text over 200 characters is
   `invalid_voucher_text`; ledger refusals keep the ledger's codes.
+- `PayrollService` also has `SetEmployeeTax`, and a run line's `tax` is
+  optional (unset: computed). Codes: `invalid_tax_table`,
+  `invalid_tax_percent`, `tax_required` and `tax_table_unavailable`
+  (Skatteverket unreachable, or the year not published yet; a typed tax
+  still works).
+- The server's outbound HTTP also fetches tax tables from Skatteverket
+  (`crates/server/src/skatteverket.rs`, no credentials). It never holds
+  the SQLite write lock while fetching.
 - A personnummer is personal data: never log it and never send it to
   an external service. It is stored as twelve digits and never changed
   on an employee.
@@ -294,7 +310,7 @@ Server configuration comes from env vars or CLI flags: `DORIS_DATABASE`,
 `DORIS_LISTEN`, `DORIS_RP_ID`, `DORIS_RP_ORIGIN`, `DORIS_CORS_ORIGINS`,
 `DORIS_SERVE_FRONTEND`, `DORIS_BOLAGSVERKET_CLIENT_ID`,
 `DORIS_BOLAGSVERKET_CLIENT_SECRET`, `DORIS_BOLAGSVERKET_TOKEN_URL`,
-`DORIS_BOLAGSVERKET_API_URL`.
+`DORIS_BOLAGSVERKET_API_URL`, `DORIS_TAX_TABLES_URL`.
 
 Every push runs `cargo test --workspace` in GitHub Actions
 (`.github/workflows/ci.yml`). If it passes, the `Dockerfile` is built and

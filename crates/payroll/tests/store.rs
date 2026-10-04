@@ -4,8 +4,8 @@ use doris_payroll::domain::DomainError;
 use doris_payroll::{
     Error, NewEmployee, add_employee, book_payroll_run, create_payroll_run, deactivate_employee,
     finalize_payroll_run, get_payroll_run, list_employees, list_payroll_runs, preview_payroll_run,
-    rebuild_projections, reopen_payroll_run, unbook_payroll_run, update_employee,
-    update_payroll_run,
+    rebuild_projections, reopen_payroll_run, set_employee_tax, store_tax_table, tax_table,
+    unbook_payroll_run, update_employee, update_payroll_run,
 };
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -43,6 +43,7 @@ fn asa() -> NewEmployee<'static> {
         personal_identity_number: "19800101-1231",
         monthly_salary: 35_000 * KR,
         salary_account: 7210,
+        tax: None,
     }
 }
 
@@ -72,6 +73,7 @@ async fn employees_are_added_updated_deactivated_and_listed_by_name() {
         personal_identity_number: "198507099870",
         monthly_salary: 30_000 * KR,
         salary_account: 7010,
+        tax: None,
     };
     let bo_id = add_employee(&pool, id, anna, bo).await.unwrap();
     update_employee(&pool, id, anna, asa_id, "Åsa Öberg Lind", 36_000 * KR, 7220)
@@ -221,6 +223,7 @@ async fn the_employee_projection_rebuilds_from_the_events() {
 use doris_payroll::domain::{
     DraftLine, FULL_RATE, PayrollRunDraft, PayrollRunLine, PayrollRunStatus, SalaryAccount,
 };
+use doris_payroll::tax::TaxBasis;
 use jiff::civil::Date;
 
 fn d(s: &str) -> Date {
@@ -236,7 +239,7 @@ fn draft(pay_date: &str, lines: &[(Uuid, i64, i64)]) -> PayrollRunDraft {
             .map(|&(employee_id, gross, tax)| DraftLine {
                 employee_id,
                 gross,
-                tax,
+                tax: Some(tax),
             })
             .collect(),
     }
@@ -269,6 +272,7 @@ async fn a_preview_computes_the_lines_and_writes_nothing() {
             fee_rate: FULL_RATE,
             fee: 1_099_700,
             net: 27_000 * KR,
+            tax_basis: TaxBasis::Manual,
         }]
     );
     assert_eq!(events_of(&pool, "payroll-").await, ["EmployeeAdded"]);
@@ -295,7 +299,7 @@ async fn a_run_is_created_changed_finalized_and_reopened() {
     assert_eq!(view.lines[0].employee_name, "Åsa Öberg");
     assert_eq!(
         (view.lines[0].gross, view.lines[0].tax, view.lines[0].locked),
-        (35_000 * KR, 8_000 * KR, None)
+        (35_000 * KR, Some(8_000 * KR), None)
     );
     assert!(view.voucher_lines().is_empty());
 
@@ -667,4 +671,360 @@ async fn all_projections_rebuild_with_bookings_in_place() {
     assert_eq!(after, before);
     assert_eq!(before.2.len(), 2);
     assert_eq!(get_payroll_run(&pool, id, anna, run).await.unwrap(), view);
+}
+
+use doris_payroll::tax::{RowKind, TaxSetting, TaxTable, TaxTableRow};
+
+/// Every table 29–42 with one amount band (1–80 000 kr, `kronor` in each
+/// column) and one open 40 % band.
+fn flat_table(year: i16, kronor: i64) -> TaxTable {
+    let rows = (29..=42u8)
+        .flat_map(|table| {
+            [
+                TaxTableRow {
+                    table,
+                    kind: RowKind::Amount,
+                    from: 1,
+                    to: Some(80_000),
+                    columns: [kronor; 6],
+                },
+                TaxTableRow {
+                    table,
+                    kind: RowKind::Percent,
+                    from: 80_001,
+                    to: None,
+                    columns: [40; 6],
+                },
+            ]
+        })
+        .collect();
+    TaxTable::validate(year, rows).unwrap()
+}
+
+fn computed(pay_date: &str, lines: &[(Uuid, i64)]) -> PayrollRunDraft {
+    PayrollRunDraft {
+        pay_date: d(pay_date),
+        text: String::new(),
+        lines: lines
+            .iter()
+            .map(|&(employee_id, gross)| DraftLine {
+                employee_id,
+                gross,
+                tax: None,
+            })
+            .collect(),
+    }
+}
+
+/// Åsa on tabell 33, kolumn 1.
+async fn asa_on_table(pool: &SqlitePool, id: Uuid, anna: Uuid) -> Uuid {
+    let new = NewEmployee {
+        tax: Some(TaxSetting::table(33, 1).unwrap()),
+        ..asa()
+    };
+    add_employee(pool, id, anna, new).await.unwrap()
+}
+
+#[tokio::test]
+async fn a_stored_year_reads_back_and_storing_it_again_replaces_it() {
+    let pool = db().await;
+    assert_eq!(tax_table(&pool, 2026).await.unwrap(), None);
+
+    store_tax_table(&pool, &flat_table(2026, 7_000))
+        .await
+        .unwrap();
+    store_tax_table(&pool, &flat_table(2026, 7_100))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tax_table(&pool, 2026).await.unwrap(),
+        Some(flat_table(2026, 7_100))
+    );
+    assert_eq!(
+        table(&pool, "SELECT COUNT(*) || '' FROM tax_tables").await,
+        ["28"]
+    );
+    // Another year is not this one.
+    assert_eq!(tax_table(&pool, 2027).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn employees_carry_their_tax_setting() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let asa_id = asa_on_table(&pool, id, anna).await;
+
+    assert_eq!(
+        list_employees(&pool, id, anna).await.unwrap()[0].tax,
+        Some(TaxSetting::Table {
+            table: 33,
+            column: 1
+        })
+    );
+    set_employee_tax(&pool, id, anna, asa_id, TaxSetting::percent(30).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        list_employees(&pool, id, anna).await.unwrap()[0].tax,
+        Some(TaxSetting::Percent { percent: 30 })
+    );
+    assert_eq!(
+        events_of(&pool, "payroll-").await,
+        ["EmployeeAdded", "EmployeeTaxChanged", "EmployeeTaxChanged"]
+    );
+}
+
+#[tokio::test]
+async fn a_blank_tax_needs_the_years_table_and_nothing_is_written_without_it() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let asa_id = asa_on_table(&pool, id, anna).await;
+    let run = create_payroll_run(
+        &pool,
+        id,
+        anna,
+        computed("2026-01-25", &[(asa_id, 35_000 * KR)]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        get_payroll_run(&pool, id, anna, run).await.unwrap().lines[0].tax,
+        None
+    );
+    // Only last year's table is stored: January needs the new year's.
+    store_tax_table(&pool, &flat_table(2025, 6_000))
+        .await
+        .unwrap();
+    let before = events_of(&pool, "payroll-").await;
+
+    let missing = finalize_payroll_run(&pool, id, anna, run)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        missing,
+        Error::Domain(DomainError::TaxTableMissing(2026))
+    ));
+    assert!(matches!(
+        preview_payroll_run(
+            &pool,
+            id,
+            anna,
+            computed("2026-01-25", &[(asa_id, 35_000 * KR)])
+        )
+        .await,
+        Err(Error::Domain(DomainError::TaxTableMissing(2026)))
+    ));
+    assert_eq!(events_of(&pool, "payroll-").await, before);
+
+    store_tax_table(&pool, &flat_table(2026, 7_000))
+        .await
+        .unwrap();
+    finalize_payroll_run(&pool, id, anna, run).await.unwrap();
+    let line = get_payroll_run(&pool, id, anna, run).await.unwrap().lines[0]
+        .locked
+        .unwrap();
+    assert_eq!(
+        (line.tax, line.tax_basis),
+        (
+            7_000 * KR,
+            TaxBasis::Table {
+                year: 2026,
+                table: 33,
+                column: 1
+            }
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_changed_setting_moves_an_open_run_but_not_a_finalized_one() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let asa_id = asa_on_table(&pool, id, anna).await;
+    store_tax_table(&pool, &flat_table(2026, 7_000))
+        .await
+        .unwrap();
+    let locked = create_payroll_run(
+        &pool,
+        id,
+        anna,
+        computed("2026-01-25", &[(asa_id, 35_000 * KR)]),
+    )
+    .await
+    .unwrap();
+    finalize_payroll_run(&pool, id, anna, locked).await.unwrap();
+
+    set_employee_tax(&pool, id, anna, asa_id, TaxSetting::percent(30).unwrap())
+        .await
+        .unwrap();
+
+    let preview = preview_payroll_run(
+        &pool,
+        id,
+        anna,
+        computed("2026-02-25", &[(asa_id, 35_000 * KR)]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (preview.lines[0].tax, preview.lines[0].tax_basis),
+        (10_500 * KR, TaxBasis::Percent { percent: 30 })
+    );
+    let kept = get_payroll_run(&pool, id, anna, locked)
+        .await
+        .unwrap()
+        .lines[0]
+        .locked
+        .unwrap();
+    assert_eq!(
+        (kept.tax, kept.tax_basis),
+        (
+            7_000 * KR,
+            TaxBasis::Table {
+                year: 2026,
+                table: 33,
+                column: 1
+            }
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_run_finalized_before_tax_bases_reads_as_manual() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let asa_id = add_employee(&pool, id, anna, asa()).await.unwrap();
+    let run = Uuid::new_v4();
+    // Events as step 9 wrote them: a number for tax, no tax_basis.
+    let old = [
+        format!(
+            r#"{{"type":"PayrollRunCreated","payroll_run_id":"{run}","draft":{{"pay_date":"2025-10-25","text":"Lön oktober 2025","lines":[{{"employee_id":"{asa_id}","gross":3500000,"tax":800000}}]}}}}"#
+        ),
+        format!(
+            r#"{{"type":"PayrollRunFinalized","payroll_run_id":"{run}","lines":[{{"employee_id":"{asa_id}","salary_account":7210,"gross":3500000,"tax":800000,"fee_rate":3142,"fee":1099700,"net":2700000}}]}}"#
+        ),
+    ];
+    for (version, payload) in (2..).zip(old) {
+        let event_type = if version == 2 {
+            "PayrollRunCreated"
+        } else {
+            "PayrollRunFinalized"
+        };
+        sqlx::query(
+            "INSERT INTO events (stream_id, stream_version, event_type, schema_version, payload, metadata)
+             VALUES (?, ?, ?, 1, ?, '{\"actor\":null}')",
+        )
+        .bind(format!("payroll-{id}"))
+        .bind(version)
+        .bind(event_type)
+        .bind(payload)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    rebuild_projections(&pool).await.unwrap();
+
+    let line = get_payroll_run(&pool, id, anna, run).await.unwrap().lines[0]
+        .locked
+        .unwrap();
+    assert_eq!((line.tax, line.tax_basis), (800_000, TaxBasis::Manual));
+    // And it still books.
+    let voucher = book_payroll_run(&pool, id, anna, run, d("2025-10-25"))
+        .await
+        .unwrap();
+    assert_eq!(voucher.number, 1);
+}
+
+#[tokio::test]
+async fn tax_settings_and_bases_rebuild_from_the_events() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let asa_id = asa_on_table(&pool, id, anna).await;
+    store_tax_table(&pool, &flat_table(2026, 7_000))
+        .await
+        .unwrap();
+    let run = create_payroll_run(
+        &pool,
+        id,
+        anna,
+        computed("2026-01-25", &[(asa_id, 35_000 * KR)]),
+    )
+    .await
+    .unwrap();
+    finalize_payroll_run(&pool, id, anna, run).await.unwrap();
+    let open = create_payroll_run(
+        &pool,
+        id,
+        anna,
+        computed("2026-02-25", &[(asa_id, 35_000 * KR)]),
+    )
+    .await
+    .unwrap();
+    let employees = "SELECT employee_id || ':' || COALESCE(tax_table, '-') || ':'
+                     || COALESCE(tax_column, '-') || ':' || COALESCE(tax_percent, '-') FROM employees";
+    let lines =
+        "SELECT payroll_run_id || ':' || COALESCE(tax, '-') || ':' || COALESCE(tax_basis, '-')
+                 FROM payroll_run_lines ORDER BY 1";
+    let before = (table(&pool, employees).await, table(&pool, lines).await);
+
+    rebuild_projections(&pool).await.unwrap();
+
+    assert_eq!(
+        (table(&pool, employees).await, table(&pool, lines).await),
+        before
+    );
+    assert_eq!(
+        get_payroll_run(&pool, id, anna, open).await.unwrap().lines[0].tax,
+        None
+    );
+}
+
+#[tokio::test]
+async fn reopening_forgets_a_computed_tax_but_keeps_a_typed_one() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let asa_id = asa_on_table(&pool, id, anna).await;
+    store_tax_table(&pool, &flat_table(2026, 7_000))
+        .await
+        .unwrap();
+    let computed_run = create_payroll_run(
+        &pool,
+        id,
+        anna,
+        computed("2026-01-25", &[(asa_id, 35_000 * KR)]),
+    )
+    .await
+    .unwrap();
+    let typed_run = create_payroll_run(
+        &pool,
+        id,
+        anna,
+        draft("2026-02-25", &[(asa_id, 35_000 * KR, 8_000 * KR)]),
+    )
+    .await
+    .unwrap();
+    for run in [computed_run, typed_run] {
+        finalize_payroll_run(&pool, id, anna, run).await.unwrap();
+        reopen_payroll_run(&pool, id, anna, run).await.unwrap();
+    }
+    let tax_of = |run| {
+        let pool = pool.clone();
+        async move { get_payroll_run(&pool, id, anna, run).await.unwrap().lines[0].tax }
+    };
+    assert_eq!(tax_of(computed_run).await, None);
+    assert_eq!(tax_of(typed_run).await, Some(8_000 * KR));
+    let rows = "SELECT COALESCE(tax, '-') || ':' || COALESCE(tax_basis, '-') FROM payroll_run_lines ORDER BY 1";
+    let before = table(&pool, rows).await;
+    assert!(before.iter().any(|r| r == "-:-"));
+
+    rebuild_projections(&pool).await.unwrap();
+
+    assert_eq!(table(&pool, rows).await, before);
 }

@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
+use crate::tax::{TaxBasis, TaxSetting, TaxTable, preliminary_tax};
+
 /// The largest amount on a voucher line (the ledger's limit), in öre.
 pub const MAX_AMOUNT: i64 = 10_000_000_000_000;
 
@@ -48,6 +50,15 @@ pub enum DomainError {
     PayrollRunNotDue,
     #[error("the fees changed since the payroll run was finalized")]
     PayrollRunOutdated,
+    #[error("tax table must be 29-42 and column 1-6")]
+    InvalidTaxTable,
+    #[error("tax percentage must be 0-100")]
+    InvalidTaxPercent,
+    #[error("the line needs a tax or the employee a tax setting")]
+    TaxRequired,
+    /// The year's table isn't stored yet; the server fetches it.
+    #[error("no tax table for {0}")]
+    TaxTableMissing(i16),
 }
 
 /// A personnummer or samordningsnummer, as twelve digits.
@@ -194,6 +205,11 @@ pub enum PayrollEvent {
     EmployeeDeactivated {
         employee_id: Uuid,
     },
+    /// The employee's A-skatt setting: a table and column, or a percentage.
+    EmployeeTaxChanged {
+        employee_id: Uuid,
+        tax: TaxSetting,
+    },
     /// A new, open run.
     PayrollRunCreated {
         payroll_run_id: Uuid,
@@ -228,6 +244,7 @@ pub struct Employee {
     pub monthly_salary: i64,
     pub salary_account: SalaryAccount,
     pub active: bool,
+    pub tax: Option<TaxSetting>,
 }
 
 /// A voucher a payroll run was booked as.
@@ -248,7 +265,8 @@ pub struct PayrollRunDraft {
 pub struct DraftLine {
     pub employee_id: Uuid,
     pub gross: i64,
-    pub tax: i64,
+    /// `None`: computed from the employee's tax setting.
+    pub tax: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -263,6 +281,10 @@ pub struct PayrollRunLine {
     pub fee_rate: u32,
     pub fee: i64,
     pub net: i64,
+    /// How the tax came about. Lines locked before tax settings existed
+    /// have none and read as `Manual`.
+    #[serde(default)]
+    pub tax_basis: TaxBasis,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -320,6 +342,7 @@ impl Payroll {
                 monthly_salary,
                 salary_account,
                 active: true,
+                tax: None,
             }),
             PayrollEvent::EmployeeUpdated {
                 employee_id,
@@ -336,6 +359,11 @@ impl Payroll {
             PayrollEvent::EmployeeDeactivated { employee_id } => {
                 if let Some(e) = self.employee_mut(employee_id) {
                     e.active = false;
+                }
+            }
+            PayrollEvent::EmployeeTaxChanged { employee_id, tax } => {
+                if let Some(e) = self.employee_mut(employee_id) {
+                    e.tax = Some(tax);
                 }
             }
             PayrollEvent::PayrollRunCreated {
@@ -445,6 +473,7 @@ pub struct AddEmployee {
     pub personal_identity_number: PersonalIdentityNumber,
     pub monthly_salary: i64,
     pub salary_account: SalaryAccount,
+    pub tax: Option<TaxSetting>,
 }
 
 /// A personnummer is unique in the company, also among inactive
@@ -458,13 +487,18 @@ pub fn add_employee(payroll: &Payroll, cmd: AddEmployee) -> Result<Vec<PayrollEv
     {
         return Err(DomainError::DuplicateEmployee);
     }
-    Ok(vec![PayrollEvent::EmployeeAdded {
+    let mut events = vec![PayrollEvent::EmployeeAdded {
         employee_id: cmd.employee_id,
         name: cmd.name,
         personal_identity_number: cmd.personal_identity_number,
         monthly_salary: cmd.monthly_salary,
         salary_account: cmd.salary_account,
-    }])
+    }];
+    events.extend(cmd.tax.map(|tax| PayrollEvent::EmployeeTaxChanged {
+        employee_id: cmd.employee_id,
+        tax,
+    }));
+    Ok(events)
 }
 
 #[derive(Debug, Clone)]
@@ -508,6 +542,20 @@ pub fn deactivate_employee(
     Ok(vec![PayrollEvent::EmployeeDeactivated { employee_id }])
 }
 
+/// A new tax setting for an active employee. Runs already finalized keep
+/// the tax they locked.
+pub fn set_employee_tax(
+    payroll: &Payroll,
+    employee_id: Uuid,
+    tax: TaxSetting,
+) -> Result<Vec<PayrollEvent>, DomainError> {
+    let e = payroll.active_employee(employee_id)?;
+    if e.tax == Some(tax) {
+        return Ok(vec![]);
+    }
+    Ok(vec![PayrollEvent::EmployeeTaxChanged { employee_id, tax }])
+}
+
 const MONTHS: [&str; 12] = [
     "januari",
     "februari",
@@ -539,7 +587,7 @@ pub fn validate_draft(
         }
         payroll.active_employee(line.employee_id)?;
         check_salary(line.gross)?;
-        if !(0..=line.gross).contains(&line.tax) {
+        if line.tax.is_some_and(|tax| !(0..=line.gross).contains(&tax)) {
             return Err(DomainError::InvalidTax);
         }
     }
@@ -564,7 +612,7 @@ fn line(
     pay_date: Date,
     employee: &Employee,
     gross: i64,
-    tax: i64,
+    (tax, tax_basis): (i64, TaxBasis),
 ) -> PayrollRunLine {
     let earlier = payroll.booked_gross(employee.id, pay_date, except);
     let birth_year = employee.personal_identity_number.birth_year();
@@ -577,25 +625,41 @@ fn line(
         fee_rate,
         fee,
         net: gross - tax,
+        tax_basis,
     }
 }
 
 /// The lines `draft` would lock if run `run_id` (or a new run, `None`)
-/// were finalized now.
+/// were finalized now. `table` is the pay date's year, if stored; a blank
+/// tax for an employee with a table setting needs it.
 pub fn compute_lines(
     payroll: &Payroll,
     run_id: Option<Uuid>,
     draft: &PayrollRunDraft,
+    table: Option<&TaxTable>,
 ) -> Result<Vec<PayrollRunLine>, DomainError> {
     let draft = validate_draft(payroll, draft.clone())?;
-    Ok(draft
+    let year = draft.pay_date.year();
+    draft
         .lines
         .iter()
         .map(|l| {
             let employee = payroll.employee(l.employee_id).expect("validated");
-            line(payroll, run_id, draft.pay_date, employee, l.gross, l.tax)
+            let tax = match (l.tax, employee.tax) {
+                (Some(tax), _) => (tax, TaxBasis::Manual),
+                (None, Some(setting)) => preliminary_tax(setting, year, table, l.gross)?,
+                (None, None) => return Err(DomainError::TaxRequired),
+            };
+            Ok(line(
+                payroll,
+                run_id,
+                draft.pay_date,
+                employee,
+                l.gross,
+                tax,
+            ))
         })
-        .collect())
+        .collect()
 }
 
 /// The payroll voucher: gross on each salary account, tax on 2710, net
@@ -673,11 +737,12 @@ pub fn update_payroll_run(
 pub fn finalize_payroll_run(
     payroll: &Payroll,
     payroll_run_id: Uuid,
+    table: Option<&TaxTable>,
 ) -> Result<PayrollEvent, DomainError> {
     let run = open_run(payroll, payroll_run_id)?;
     Ok(PayrollEvent::PayrollRunFinalized {
         payroll_run_id,
-        lines: compute_lines(payroll, Some(payroll_run_id), &run.draft)?,
+        lines: compute_lines(payroll, Some(payroll_run_id), &run.draft, table)?,
     })
 }
 
@@ -714,7 +779,7 @@ pub fn book_payroll_run(
             pay_date,
             employee,
             l.gross,
-            l.tax,
+            (l.tax, l.tax_basis),
         );
         (fresh.fee_rate, fresh.fee) == (l.fee_rate, l.fee)
     });
