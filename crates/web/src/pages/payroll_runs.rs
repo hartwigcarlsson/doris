@@ -84,7 +84,7 @@ pub fn PayrollRuns() -> impl IntoView {
                         {
                             let sum = |amount: fn(&ppb::PayrollRunLine) -> i64| run.lines.iter().map(amount).sum::<i64>();
                             let locked = run.status() != ppb::PayrollRunStatus::Open;
-                            let (gross, tax, fee, net) = (sum(|l| l.gross), sum(|l| l.tax), sum(|l| l.fee), sum(|l| l.net));
+                            let (gross, tax, fee, net) = (sum(|l| l.gross), sum(|l| l.tax.unwrap_or(0)), sum(|l| l.fee), sum(|l| l.net));
                             let label = status_label(run.status(), &run.pay_date, &today);
                             let shown = move |ore: i64| if locked { amount(ore) } else { "–".to_owned() };
                             view! {
@@ -134,7 +134,7 @@ pub fn RunLines(
                         <tr class=TABLE_ROW>
                             <td class=TABLE_CELL>{l.employee_name}</td>
                             <td class=TABLE_AMOUNT_CELL>{amount(l.gross)}</td>
-                            <td class=TABLE_AMOUNT_CELL>{amount(l.tax)}</td>
+                            <td class=TABLE_AMOUNT_CELL>{amount(l.tax.unwrap_or(0))}</td>
                             <td class=TABLE_AMOUNT_CELL>{fee_rate(l.fee_rate)}</td>
                             <td class=TABLE_AMOUNT_CELL>{amount(l.fee)}</td>
                             <td class=TABLE_AMOUNT_CELL>{amount(l.net)}</td>

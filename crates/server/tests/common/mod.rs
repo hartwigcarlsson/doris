@@ -14,6 +14,7 @@ use doris_proto::company::v1::company_service_client::CompanyServiceClient;
 use doris_proto::ledger::v1::ledger_service_client::LedgerServiceClient;
 use doris_proto::payroll::v1::payroll_service_client::PayrollServiceClient;
 use doris_server::bolagsverket::Bolagsverket;
+use doris_server::skatteverket::TaxTables;
 use doris_server::{AuthApi, CompanyApi, LedgerApi, PayrollApi, SESSION_COOKIE};
 use http::HeaderValue;
 use hyper_util::client::legacy::Client;
@@ -43,6 +44,9 @@ pub type Device = WebauthnAuthenticator<SoftPasskey>;
 #[folder = "tests/fixtures/dist"]
 pub struct TestDist;
 
+/// Nothing listens on the discard port: tests never reach Skatteverket.
+const UNREACHABLE: &str = "http://127.0.0.1:9/rowstore";
+
 pub struct TestServer {
     pub base: String,
     pub origin: Url,
@@ -55,17 +59,22 @@ impl TestServer {
     }
 
     pub async fn start_with(cors_origins: Vec<HeaderValue>, serve_frontend: bool) -> Self {
-        Self::launch(cors_origins, serve_frontend, None).await
+        Self::launch(cors_origins, serve_frontend, None, UNREACHABLE).await
     }
 
     pub async fn start_with_bolagsverket(bolagsverket: Bolagsverket) -> Self {
-        Self::launch(vec![], true, Some(bolagsverket)).await
+        Self::launch(vec![], true, Some(bolagsverket), UNREACHABLE).await
+    }
+
+    pub async fn start_with_tax_tables(url: &str) -> Self {
+        Self::launch(vec![], true, None, url).await
     }
 
     async fn launch(
         cors_origins: Vec<HeaderValue>,
         serve_frontend: bool,
         bolagsverket: Option<Bolagsverket>,
+        tax_tables_url: &str,
     ) -> Self {
         let pool = doris_eventstore::open("sqlite::memory:").await.unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -76,7 +85,7 @@ impl TestServer {
             AuthApi::new(pool.clone(), auth),
             CompanyApi::new(pool.clone(), bolagsverket),
             LedgerApi::new(pool.clone()),
-            PayrollApi::new(pool.clone()),
+            PayrollApi::new(pool.clone(), TaxTables::new(tax_tables_url)),
             cors_origins,
             serve_frontend,
         );

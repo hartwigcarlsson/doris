@@ -1,6 +1,7 @@
 use clap::Parser;
 use doris_identity::Auth;
 use doris_server::bolagsverket::Bolagsverket;
+use doris_server::skatteverket::TaxTables;
 use doris_server::{AuthApi, CompanyApi, LedgerApi, PayrollApi, assets::WebDist};
 use http::HeaderValue;
 use std::net::SocketAddr;
@@ -37,6 +38,9 @@ struct Config {
     bolagsverket_token_url: String,
     #[arg(long, env = "DORIS_BOLAGSVERKET_API_URL", default_value = doris_server::bolagsverket::API_URL)]
     bolagsverket_api_url: String,
+    /// Skatteverket's open dataset of monthly tax tables.
+    #[arg(long, env = "DORIS_TAX_TABLES_URL", default_value = doris_server::skatteverket::TAX_TABLES_URL)]
+    tax_tables_url: String,
 }
 
 #[tokio::main]
@@ -81,7 +85,7 @@ async fn run(config: Config) -> Result<(), String> {
             None
         }
     };
-    let payroll = PayrollApi::new(pool.clone());
+    let payroll = PayrollApi::new(pool.clone(), TaxTables::new(&config.tax_tables_url));
     let app = doris_server::router::<WebDist>(
         AuthApi::new(pool.clone(), auth),
         CompanyApi::new(pool.clone(), bolagsverket),

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{Payroll, TestServer, authed, device};
+use common::{Payroll, TestServer, authed, device, fake_skatteverket, tax_rows};
 use doris_proto::company::v1 as cpb;
 use doris_proto::ledger::v1 as lpb;
 use doris_proto::payroll::v1 as pb;
@@ -42,6 +42,7 @@ async fn hire(api: &mut Payroll, session: &str, company_id: &str) -> String {
             personal_identity_number: "19800101-1231".into(),
             monthly_salary: 35_000 * KR,
             salary_account: 7210,
+            tax: None,
         },
         session,
     ))
@@ -58,7 +59,7 @@ fn draft(pay_date: &str, employee_id: &str, gross: i64, tax: i64) -> Option<pb::
         lines: vec![pb::PayrollRunLineInput {
             employee_id: employee_id.into(),
             gross,
-            tax,
+            tax: Some(tax),
         }],
     })
 }
@@ -261,6 +262,7 @@ async fn invalid_input_gets_stable_codes() {
                 personal_identity_number: "19800101-1232".into(),
                 monthly_salary: 1,
                 salary_account: 7210,
+                tax: None,
             },
             &anna,
         ))
@@ -281,6 +283,7 @@ async fn invalid_input_gets_stable_codes() {
                 personal_identity_number: "198001011231".into(),
                 monthly_salary: 1,
                 salary_account: 7210,
+                tax: None,
             },
             &anna,
         ))
@@ -351,4 +354,247 @@ async fn strangers_and_signed_out_callers_find_nothing() {
         code_of(signed_out),
         (Code::Unauthenticated, "not_signed_in".into())
     );
+}
+
+use std::sync::atomic::Ordering;
+
+fn table_33() -> Option<pb::TaxSetting> {
+    Some(pb::TaxSetting {
+        kind: Some(pb::tax_setting::Kind::Table(pb::TableTax {
+            table: 33,
+            column: 1,
+        })),
+    })
+}
+
+async fn hire_with(
+    api: &mut Payroll,
+    session: &str,
+    company_id: &str,
+    pin: &str,
+    tax: Option<pb::TaxSetting>,
+) -> String {
+    api.add_employee(authed(
+        pb::AddEmployeeRequest {
+            company_id: company_id.into(),
+            name: "Åsa Öberg".into(),
+            personal_identity_number: pin.into(),
+            monthly_salary: 35_000 * KR,
+            salary_account: 7210,
+            tax,
+        },
+        session,
+    ))
+    .await
+    .unwrap()
+    .into_inner()
+    .employee_id
+}
+
+fn computed(pay_date: &str, employee_id: &str) -> Option<pb::PayrollRunDraft> {
+    Some(pb::PayrollRunDraft {
+        pay_date: pay_date.into(),
+        text: String::new(),
+        lines: vec![pb::PayrollRunLineInput {
+            employee_id: employee_id.into(),
+            gross: 35_000 * KR,
+            tax: None,
+        }],
+    })
+}
+
+#[tokio::test]
+async fn a_table_employees_tax_is_fetched_once_and_computed() {
+    let fake = fake_skatteverket(tax_rows(2026)).await;
+    let server = TestServer::start_with_tax_tables(&fake.url).await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.payroll();
+    let asa = hire_with(&mut api, &anna, &id, "19800101-1231", table_33()).await;
+
+    let preview = async |api: &mut Payroll| {
+        api.preview_payroll_run(authed(
+            pb::PreviewPayrollRunRequest {
+                company_id: id.clone(),
+                draft: computed("2026-01-25", &asa),
+            },
+            &anna,
+        ))
+        .await
+    };
+    let line = preview(&mut api)
+        .await
+        .unwrap()
+        .into_inner()
+        .lines
+        .remove(0);
+    assert_eq!(line.tax, Some(7_134 * KR));
+    assert_eq!(
+        line.tax_basis.and_then(|b| b.kind),
+        Some(pb::tax_basis::Kind::Table(pb::TableBasis {
+            year: 2026,
+            table: 33,
+            column: 1
+        }))
+    );
+    assert_eq!(fake.requests.load(Ordering::SeqCst), 3);
+
+    preview(&mut api).await.unwrap();
+    assert_eq!(
+        fake.requests.load(Ordering::SeqCst),
+        3,
+        "the stored year is reused"
+    );
+    let employees = api
+        .list_employees(authed(
+            pb::ListEmployeesRequest {
+                company_id: id.clone(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .employees;
+    assert_eq!(employees[0].tax, table_33());
+}
+
+#[tokio::test]
+async fn without_skatteverket_a_computed_tax_is_unavailable_but_a_typed_one_works() {
+    let fake = fake_skatteverket(tax_rows(2026)).await;
+    fake.broken.store(true, Ordering::SeqCst);
+    let server = TestServer::start_with_tax_tables(&fake.url).await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.payroll();
+    let asa = hire_with(&mut api, &anna, &id, "19800101-1231", table_33()).await;
+
+    let refused = api
+        .preview_payroll_run(authed(
+            pb::PreviewPayrollRunRequest {
+                company_id: id.clone(),
+                draft: computed("2026-01-25", &asa),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(refused),
+        (Code::Unavailable, "tax_table_unavailable".into())
+    );
+
+    let typed = api
+        .preview_payroll_run(authed(
+            pb::PreviewPayrollRunRequest {
+                company_id: id.clone(),
+                draft: draft("2026-01-25", &asa, 35_000 * KR, 8_000 * KR),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(typed.lines[0].tax, Some(8_000 * KR));
+    assert_eq!(
+        typed.lines[0].tax_basis.and_then(|b| b.kind),
+        Some(pb::tax_basis::Kind::Manual(true))
+    );
+}
+
+#[tokio::test]
+async fn a_year_skatteverket_has_not_published_is_unavailable() {
+    let fake = fake_skatteverket(tax_rows(2026)).await;
+    let server = TestServer::start_with_tax_tables(&fake.url).await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.payroll();
+    let asa = hire_with(&mut api, &anna, &id, "19800101-1231", table_33()).await;
+
+    let refused = api
+        .preview_payroll_run(authed(
+            pb::PreviewPayrollRunRequest {
+                company_id: id.clone(),
+                draft: computed("2027-01-25", &asa),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        code_of(refused),
+        (Code::Unavailable, "tax_table_unavailable".into())
+    );
+}
+
+#[tokio::test]
+async fn tax_settings_are_checked_and_a_blank_tax_needs_one() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.payroll();
+    let asa = hire_with(&mut api, &anna, &id, "19800101-1231", None).await;
+    let set = |tax: pb::tax_setting::Kind| pb::SetEmployeeTaxRequest {
+        company_id: id.clone(),
+        employee_id: asa.clone(),
+        tax: Some(pb::TaxSetting { kind: Some(tax) }),
+    };
+
+    let blank = api
+        .preview_payroll_run(authed(
+            pb::PreviewPayrollRunRequest {
+                company_id: id.clone(),
+                draft: computed("2026-01-25", &asa),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(blank),
+        (Code::InvalidArgument, "tax_required".into())
+    );
+
+    let bad = api
+        .set_employee_tax(authed(
+            set(pb::tax_setting::Kind::Table(pb::TableTax {
+                table: 43,
+                column: 1,
+            })),
+            &anna,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(bad),
+        (Code::InvalidArgument, "invalid_tax_table".into())
+    );
+    let bad = api
+        .set_employee_tax(authed(set(pb::tax_setting::Kind::Percent(101)), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(bad),
+        (Code::InvalidArgument, "invalid_tax_percent".into())
+    );
+
+    api.set_employee_tax(authed(set(pb::tax_setting::Kind::Percent(30)), &anna))
+        .await
+        .unwrap();
+    // A percentage needs no table, so no Skatteverket either.
+    let line = api
+        .preview_payroll_run(authed(
+            pb::PreviewPayrollRunRequest {
+                company_id: id.clone(),
+                draft: computed("2026-01-25", &asa),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .lines
+        .remove(0);
+    assert_eq!(line.tax, Some(10_500 * KR));
 }

@@ -99,6 +99,7 @@ pub fn Employees() -> impl IntoView {
                         personal_identity_number: personnummer.get_untracked(),
                         monthly_salary,
                         salary_account,
+                        tax: None,
                     })
                     .await
                     .map(|_| ()),

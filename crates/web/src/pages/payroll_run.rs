@@ -44,7 +44,7 @@ fn form_rows(employees: &[ppb::Employee], run: Option<&ppb::PayrollRun>) -> Vec<
                 name: StoredValue::new(e.name.clone()),
                 included: RwSignal::new(run.is_none() || line.is_some()),
                 gross: RwSignal::new(amount(line.map_or(e.monthly_salary, |l| l.gross))),
-                tax: RwSignal::new(line.map(|l| amount(l.tax)).unwrap_or_default()),
+                tax: RwSignal::new(line.and_then(|l| l.tax).map(amount).unwrap_or_default()),
             })
         })
         .collect()
@@ -151,7 +151,7 @@ pub fn PayrollRunPage() -> impl IntoView {
                 employee_id: r.employee_id.get_value(),
                 // Not an amount: 0 or -1, which the server refuses with its own message.
                 gross: parse_amount(&r.gross.get_untracked()).unwrap_or(0),
-                tax: parse_amount(&r.tax.get_untracked()).unwrap_or(-1),
+                tax: Some(parse_amount(&r.tax.get_untracked()).unwrap_or(-1)),
             })
             .collect(),
     };

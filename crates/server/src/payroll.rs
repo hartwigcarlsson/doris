@@ -4,11 +4,13 @@
 //! personal data and never logged.
 
 use crate::grpc::{signed_in_user, today};
+use crate::skatteverket::TaxTables;
 use doris_ledger::domain::VoucherLine;
 use doris_payroll::domain::{
     BookedVoucher, DomainError, DraftLine, Employee, PayrollRunDraft, PayrollRunLine,
     PayrollRunStatus,
 };
+use doris_payroll::tax::{TaxBasis, TaxSetting};
 use doris_payroll::{Error, NewEmployee, PayrollRunView};
 use doris_proto::ledger::v1 as lpb;
 use doris_proto::payroll::v1 as pb;
@@ -21,11 +23,35 @@ use uuid::Uuid;
 
 pub struct PayrollApi {
     pool: SqlitePool,
+    tax_tables: TaxTables,
 }
 
 impl PayrollApi {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: SqlitePool, tax_tables: TaxTables) -> Self {
+        Self { pool, tax_tables }
+    }
+
+    /// Runs `call`; when the pay date's tax table isn't stored, fetches it
+    /// from Skatteverket, stores it and runs `call` once more. The fetch
+    /// happens outside any write transaction.
+    async fn with_tax_table<T, F, Fut>(&self, call: F) -> Result<T, Status>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = doris_payroll::Result<T>>,
+    {
+        match call().await {
+            Err(Error::Domain(DomainError::TaxTableMissing(year))) => {
+                let table = self.tax_tables.fetch(year).await.map_err(|reason| {
+                    tracing::warn!("tax table: {reason}");
+                    Status::unavailable("tax_table_unavailable")
+                })?;
+                doris_payroll::store_tax_table(&self.pool, &table)
+                    .await
+                    .map_err(status)?;
+                call().await.map_err(status)
+            }
+            result => result.map_err(status),
+        }
     }
 
     /// The signed-in user and the company id they asked about. Membership
@@ -80,7 +106,7 @@ impl PayrollService for PayrollApi {
             personal_identity_number: &req.personal_identity_number,
             monthly_salary: req.monthly_salary,
             salary_account: req.salary_account,
-            tax: None,
+            tax: tax_setting(req.tax)?,
         };
         let employee_id = doris_payroll::add_employee(&self.pool, company, user, new)
             .await
@@ -110,6 +136,27 @@ impl PayrollService for PayrollApi {
         Ok(Response::new(pb::UpdateEmployeeResponse {}))
     }
 
+    async fn set_employee_tax(
+        &self,
+        request: Request<pb::SetEmployeeTaxRequest>,
+    ) -> Result<Response<pb::SetEmployeeTaxResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let req = request.into_inner();
+        // A setting can be changed, not removed: none is not a valid input.
+        let tax =
+            tax_setting(req.tax)?.ok_or_else(|| Status::invalid_argument("invalid_tax_table"))?;
+        doris_payroll::set_employee_tax(
+            &self.pool,
+            company,
+            user,
+            employee_id(&req.employee_id)?,
+            tax,
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::SetEmployeeTaxResponse {}))
+    }
+
     async fn deactivate_employee(
         &self,
         request: Request<pb::DeactivateEmployeeRequest>,
@@ -128,9 +175,11 @@ impl PayrollService for PayrollApi {
     ) -> Result<Response<pb::PreviewPayrollRunResponse>, Status> {
         let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
         let draft = draft(request.into_inner().draft)?;
-        let preview = doris_payroll::preview_payroll_run(&self.pool, company, user, draft)
-            .await
-            .map_err(status)?;
+        let preview = self
+            .with_tax_table(|| {
+                doris_payroll::preview_payroll_run(&self.pool, company, user, draft.clone())
+            })
+            .await?;
         let names = self.names(company, user).await?;
         Ok(Response::new(pb::PreviewPayrollRunResponse {
             text: preview.text,
@@ -187,9 +236,8 @@ impl PayrollService for PayrollApi {
     ) -> Result<Response<pb::FinalizePayrollRunResponse>, Status> {
         let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
         let run = run_id(&request.get_ref().payroll_run_id)?;
-        doris_payroll::finalize_payroll_run(&self.pool, company, user, run)
-            .await
-            .map_err(status)?;
+        self.with_tax_table(|| doris_payroll::finalize_payroll_run(&self.pool, company, user, run))
+            .await?;
         Ok(Response::new(pb::FinalizePayrollRunResponse {}))
     }
 
@@ -264,6 +312,7 @@ fn employee_message(e: &Employee) -> pb::Employee {
         monthly_salary: e.monthly_salary,
         salary_account: e.salary_account.get(),
         active: e.active,
+        tax: e.tax.map(tax_setting_message),
     }
 }
 
@@ -272,7 +321,8 @@ fn locked_line_message(l: &PayrollRunLine, employee_name: String) -> pb::Payroll
         employee_id: l.employee_id.to_string(),
         employee_name,
         gross: l.gross,
-        tax: l.tax,
+        tax: Some(l.tax),
+        tax_basis: Some(tax_basis_message(l.tax_basis)),
         salary_account: l.salary_account.get(),
         fee_rate: l.fee_rate,
         fee: l.fee,
@@ -320,7 +370,7 @@ fn run_message(view: PayrollRunView) -> pb::PayrollRun {
                     employee_id: l.employee_id.to_string(),
                     employee_name: l.employee_name,
                     gross: l.gross,
-                    tax: l.tax.unwrap_or(0),
+                    tax: l.tax,
                     ..Default::default()
                 },
             })
@@ -342,11 +392,51 @@ fn draft(message: Option<pb::PayrollRunDraft>) -> Result<PayrollRunDraft, Status
                 Ok(DraftLine {
                     employee_id: employee_id(&l.employee_id)?,
                     gross: l.gross,
-                    tax: Some(l.tax),
+                    tax: l.tax,
                 })
             })
             .collect::<Result<_, Status>>()?,
     })
+}
+
+fn tax_setting(message: Option<pb::TaxSetting>) -> Result<Option<TaxSetting>, Status> {
+    match message.and_then(|m| m.kind) {
+        None => Ok(None),
+        Some(pb::tax_setting::Kind::Table(t)) => TaxSetting::table(t.table, t.column)
+            .map(Some)
+            .map_err(domain_status),
+        Some(pb::tax_setting::Kind::Percent(p)) => {
+            TaxSetting::percent(p).map(Some).map_err(domain_status)
+        }
+    }
+}
+
+fn tax_setting_message(setting: TaxSetting) -> pb::TaxSetting {
+    let kind = match setting {
+        TaxSetting::Table { table, column } => pb::tax_setting::Kind::Table(pb::TableTax {
+            table: table.into(),
+            column: column.into(),
+        }),
+        TaxSetting::Percent { percent } => pb::tax_setting::Kind::Percent(percent.into()),
+    };
+    pb::TaxSetting { kind: Some(kind) }
+}
+
+fn tax_basis_message(basis: TaxBasis) -> pb::TaxBasis {
+    let kind = match basis {
+        TaxBasis::Table {
+            year,
+            table,
+            column,
+        } => pb::tax_basis::Kind::Table(pb::TableBasis {
+            year: u32::try_from(year).unwrap_or_default(),
+            table: table.into(),
+            column: column.into(),
+        }),
+        TaxBasis::Percent { percent } => pb::tax_basis::Kind::Percent(percent.into()),
+        TaxBasis::Manual => pb::tax_basis::Kind::Manual(true),
+    };
+    pb::TaxBasis { kind: Some(kind) }
 }
 
 fn date(raw: &str) -> Result<Date, Status> {
