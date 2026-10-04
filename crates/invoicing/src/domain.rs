@@ -1,7 +1,8 @@
 //! Pure rules for the customer and supplier registers. No I/O.
 
-use doris_company::domain::{OrgNr, luhn};
+use doris_company::domain::{Address, OrgNr, luhn};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DomainError {
@@ -279,4 +280,336 @@ impl Bic {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+/// A customer as typed into the form; blank optional fields become `None`.
+/// No `Debug`: the org.nr may be a personnummer.
+#[derive(Clone, Copy)]
+pub struct CustomerForm<'a> {
+    pub name: &'a str,
+    pub org_nr: &'a str,
+    pub vat_number: &'a str,
+    pub street: &'a str,
+    pub postal_code: &'a str,
+    pub city: &'a str,
+    pub email: &'a str,
+    pub payment_terms: u32,
+}
+
+#[derive(Clone, Copy)]
+pub struct SupplierForm<'a> {
+    pub name: &'a str,
+    pub org_nr: &'a str,
+    pub vat_number: &'a str,
+    pub street: &'a str,
+    pub postal_code: &'a str,
+    pub city: &'a str,
+    pub email: &'a str,
+    pub bankgiro: &'a str,
+    pub plusgiro: &'a str,
+    pub iban: &'a str,
+    pub bic: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomerDetails {
+    pub name: PartyName,
+    pub org_nr: Option<OrgNr>,
+    pub vat_number: Option<VatNumber>,
+    pub address: Address,
+    pub email: Option<Email>,
+    pub payment_terms: PaymentTerms,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupplierDetails {
+    pub name: PartyName,
+    pub org_nr: Option<OrgNr>,
+    pub vat_number: Option<VatNumber>,
+    pub address: Address,
+    pub email: Option<Email>,
+    pub bankgiro: Option<Bankgiro>,
+    pub plusgiro: Option<Plusgiro>,
+    pub iban: Option<Iban>,
+    pub bic: Option<Bic>,
+}
+
+fn optional<T>(
+    raw: &str,
+    parse: impl FnOnce(&str) -> Result<T, DomainError>,
+) -> Result<Option<T>, DomainError> {
+    if raw.trim().is_empty() {
+        Ok(None)
+    } else {
+        parse(raw).map(Some)
+    }
+}
+
+/// Org.nr or personnummer: a private customer has the latter.
+fn org_nr(raw: &str) -> Result<Option<OrgNr>, DomainError> {
+    optional(raw, |raw| {
+        OrgNr::parse(raw).map_err(|_| DomainError::InvalidOrgNr)
+    })
+}
+
+fn address(street: &str, postal_code: &str, city: &str) -> Result<Address, DomainError> {
+    Address::parse(street, postal_code, city).map_err(|_| DomainError::InvalidAddress)
+}
+
+impl CustomerDetails {
+    pub fn parse(form: &CustomerForm) -> Result<Self, DomainError> {
+        Ok(Self {
+            name: PartyName::parse(form.name)?,
+            org_nr: org_nr(form.org_nr)?,
+            vat_number: optional(form.vat_number, VatNumber::parse)?,
+            address: address(form.street, form.postal_code, form.city)?,
+            email: optional(form.email, Email::parse)?,
+            payment_terms: PaymentTerms::new(form.payment_terms)?,
+        })
+    }
+}
+
+impl SupplierDetails {
+    pub fn parse(form: &SupplierForm) -> Result<Self, DomainError> {
+        Ok(Self {
+            name: PartyName::parse(form.name)?,
+            org_nr: org_nr(form.org_nr)?,
+            vat_number: optional(form.vat_number, VatNumber::parse)?,
+            address: address(form.street, form.postal_code, form.city)?,
+            email: optional(form.email, Email::parse)?,
+            bankgiro: optional(form.bankgiro, Bankgiro::parse)?,
+            plusgiro: optional(form.plusgiro, Plusgiro::parse)?,
+            iban: optional(form.iban, Iban::parse)?,
+            bic: optional(form.bic, Bic::parse)?,
+        })
+    }
+}
+
+/// What the register logic needs to know about one register's details.
+pub trait PartyDetails: Clone + PartialEq {
+    const NOT_FOUND: DomainError;
+}
+
+impl PartyDetails for CustomerDetails {
+    const NOT_FOUND: DomainError = DomainError::CustomerNotFound;
+}
+
+impl PartyDetails for SupplierDetails {
+    const NOT_FOUND: DomainError = DomainError::SupplierNotFound;
+}
+
+/// A change to a register. Stored as a [`CustomerEvent`] or a
+/// [`SupplierEvent`], so the log names the register.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Change<D> {
+    Added {
+        number: u32,
+        details: D,
+    },
+    /// The full new set of details, not a diff.
+    Updated {
+        number: u32,
+        details: D,
+    },
+    Deactivated {
+        number: u32,
+    },
+    Reactivated {
+        number: u32,
+    },
+}
+
+impl<D> Change<D> {
+    pub fn number(&self) -> u32 {
+        match self {
+            Change::Added { number, .. }
+            | Change::Updated { number, .. }
+            | Change::Deactivated { number }
+            | Change::Reactivated { number } => *number,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum CustomerEvent {
+    CustomerAdded {
+        number: u32,
+        details: CustomerDetails,
+    },
+    CustomerUpdated {
+        number: u32,
+        details: CustomerDetails,
+    },
+    CustomerDeactivated {
+        number: u32,
+    },
+    CustomerReactivated {
+        number: u32,
+    },
+}
+
+impl From<Change<CustomerDetails>> for CustomerEvent {
+    fn from(change: Change<CustomerDetails>) -> Self {
+        match change {
+            Change::Added { number, details } => Self::CustomerAdded { number, details },
+            Change::Updated { number, details } => Self::CustomerUpdated { number, details },
+            Change::Deactivated { number } => Self::CustomerDeactivated { number },
+            Change::Reactivated { number } => Self::CustomerReactivated { number },
+        }
+    }
+}
+
+impl From<CustomerEvent> for Change<CustomerDetails> {
+    fn from(event: CustomerEvent) -> Self {
+        match event {
+            CustomerEvent::CustomerAdded { number, details } => Self::Added { number, details },
+            CustomerEvent::CustomerUpdated { number, details } => Self::Updated { number, details },
+            CustomerEvent::CustomerDeactivated { number } => Self::Deactivated { number },
+            CustomerEvent::CustomerReactivated { number } => Self::Reactivated { number },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum SupplierEvent {
+    SupplierAdded {
+        number: u32,
+        details: SupplierDetails,
+    },
+    SupplierUpdated {
+        number: u32,
+        details: SupplierDetails,
+    },
+    SupplierDeactivated {
+        number: u32,
+    },
+    SupplierReactivated {
+        number: u32,
+    },
+}
+
+impl From<Change<SupplierDetails>> for SupplierEvent {
+    fn from(change: Change<SupplierDetails>) -> Self {
+        match change {
+            Change::Added { number, details } => Self::SupplierAdded { number, details },
+            Change::Updated { number, details } => Self::SupplierUpdated { number, details },
+            Change::Deactivated { number } => Self::SupplierDeactivated { number },
+            Change::Reactivated { number } => Self::SupplierReactivated { number },
+        }
+    }
+}
+
+impl From<SupplierEvent> for Change<SupplierDetails> {
+    fn from(event: SupplierEvent) -> Self {
+        match event {
+            SupplierEvent::SupplierAdded { number, details } => Self::Added { number, details },
+            SupplierEvent::SupplierUpdated { number, details } => Self::Updated { number, details },
+            SupplierEvent::SupplierDeactivated { number } => Self::Deactivated { number },
+            SupplierEvent::SupplierReactivated { number } => Self::Reactivated { number },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Party<D> {
+    pub number: u32,
+    pub details: D,
+    pub active: bool,
+}
+
+/// One company's customers or suppliers. Never removed, only deactivated.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Register<D> {
+    parties: BTreeMap<u32, Party<D>>,
+}
+
+impl<D> Default for Register<D> {
+    fn default() -> Self {
+        Self {
+            parties: BTreeMap::new(),
+        }
+    }
+}
+
+impl<D> Register<D> {
+    pub fn from_changes(changes: impl IntoIterator<Item = Change<D>>) -> Self {
+        let mut register = Self::default();
+        changes.into_iter().for_each(|c| register.apply(c));
+        register
+    }
+
+    pub fn apply(&mut self, change: Change<D>) {
+        match change {
+            Change::Added { number, details } => {
+                self.parties.insert(
+                    number,
+                    Party {
+                        number,
+                        details,
+                        active: true,
+                    },
+                );
+            }
+            Change::Updated { number, details } => {
+                if let Some(party) = self.parties.get_mut(&number) {
+                    party.details = details;
+                }
+            }
+            Change::Deactivated { number } => self.set_active(number, false),
+            Change::Reactivated { number } => self.set_active(number, true),
+        }
+    }
+
+    fn set_active(&mut self, number: u32, active: bool) {
+        if let Some(party) = self.parties.get_mut(&number) {
+            party.active = active;
+        }
+    }
+
+    pub fn get(&self, number: u32) -> Option<&Party<D>> {
+        self.parties.get(&number)
+    }
+
+    /// By number.
+    pub fn parties(&self) -> impl Iterator<Item = &Party<D>> {
+        self.parties.values()
+    }
+}
+
+/// The next number: one more than the highest, so 1..=n without gaps.
+pub fn add<D: PartyDetails>(
+    register: &Register<D>,
+    details: D,
+) -> Result<Vec<Change<D>>, DomainError> {
+    let number = register.parties.keys().next_back().map_or(1, |n| n + 1);
+    Ok(vec![Change::Added { number, details }])
+}
+
+/// The same details yield no events.
+pub fn update<D: PartyDetails>(
+    register: &Register<D>,
+    number: u32,
+    details: D,
+) -> Result<Vec<Change<D>>, DomainError> {
+    let party = register.get(number).ok_or(D::NOT_FOUND)?;
+    if party.details == details {
+        return Ok(vec![]);
+    }
+    Ok(vec![Change::Updated { number, details }])
+}
+
+/// Idempotent: a party already in the wanted state yields no events.
+pub fn set_active<D: PartyDetails>(
+    register: &Register<D>,
+    number: u32,
+    active: bool,
+) -> Result<Vec<Change<D>>, DomainError> {
+    let party = register.get(number).ok_or(D::NOT_FOUND)?;
+    Ok(match (party.active, active) {
+        (true, false) => vec![Change::Deactivated { number }],
+        (false, true) => vec![Change::Reactivated { number }],
+        _ => vec![],
+    })
 }

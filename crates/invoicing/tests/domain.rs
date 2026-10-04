@@ -145,3 +145,250 @@ fn values_are_normalised_and_non_ascii_never_panics() {
         Err(DomainError::InvalidBankgiro)
     );
 }
+
+fn customer_form(name: &str) -> CustomerForm<'_> {
+    CustomerForm {
+        name,
+        org_nr: "556016-0680",
+        vat_number: "",
+        street: "Storgatan 1",
+        postal_code: "111 22",
+        city: "Stockholm",
+        email: "",
+        payment_terms: 30,
+    }
+}
+
+fn customer(name: &str) -> CustomerDetails {
+    CustomerDetails::parse(&customer_form(name)).unwrap()
+}
+
+fn supplier_form(name: &str) -> SupplierForm<'_> {
+    SupplierForm {
+        name,
+        org_nr: "",
+        vat_number: "",
+        street: "",
+        postal_code: "",
+        city: "",
+        email: "",
+        bankgiro: "",
+        plusgiro: "",
+        iban: "",
+        bic: "",
+    }
+}
+
+#[test]
+fn customer_details_parse_every_field() {
+    let details = CustomerDetails::parse(&CustomerForm {
+        email: "Ekonomi@Kund.se",
+        vat_number: "SE556016068001",
+        ..customer_form(" Kund AB ")
+    })
+    .unwrap();
+    assert_eq!(details.name.as_str(), "Kund AB");
+    assert_eq!(details.org_nr.unwrap().as_str(), "5560160680");
+    assert_eq!(details.vat_number.unwrap().as_str(), "SE556016068001");
+    assert_eq!(details.address.city.as_deref(), Some("Stockholm"));
+    assert_eq!(details.email.unwrap().as_str(), "ekonomi@kund.se");
+    assert_eq!(details.payment_terms.get(), 30);
+}
+
+#[test]
+fn blank_optional_fields_are_none() {
+    let details = CustomerDetails::parse(&CustomerForm {
+        org_nr: "  ",
+        vat_number: " ",
+        street: " ",
+        postal_code: "",
+        city: "",
+        email: "  ",
+        ..customer_form("Privatperson")
+    })
+    .unwrap();
+    assert_eq!(details.org_nr, None);
+    assert_eq!(details.vat_number, None);
+    assert_eq!(details.address.street, None);
+    assert_eq!(details.email, None);
+
+    let supplier = SupplierDetails::parse(&SupplierForm {
+        bankgiro: " ",
+        ..supplier_form("Leverantör AB")
+    })
+    .unwrap();
+    assert_eq!((supplier.bankgiro, supplier.iban), (None, None));
+}
+
+#[test]
+fn each_bad_field_gives_its_own_error() {
+    let bad = |form: CustomerForm| CustomerDetails::parse(&form).unwrap_err();
+    let long = "å".repeat(201);
+    assert_eq!(bad(customer_form("")), DomainError::InvalidName);
+    for (form, error) in [
+        (
+            CustomerForm {
+                org_nr: "556016-0681",
+                ..customer_form("K")
+            },
+            DomainError::InvalidOrgNr,
+        ),
+        (
+            CustomerForm {
+                vat_number: "SE1",
+                ..customer_form("K")
+            },
+            DomainError::InvalidVatNumber,
+        ),
+        (
+            CustomerForm {
+                city: &long,
+                ..customer_form("K")
+            },
+            DomainError::InvalidAddress,
+        ),
+        (
+            CustomerForm {
+                email: "kund",
+                ..customer_form("K")
+            },
+            DomainError::InvalidEmail,
+        ),
+        (
+            CustomerForm {
+                payment_terms: 366,
+                ..customer_form("K")
+            },
+            DomainError::InvalidPaymentTerms,
+        ),
+    ] {
+        assert_eq!(bad(form), error);
+    }
+
+    let supplier = |form: SupplierForm| SupplierDetails::parse(&form).unwrap_err();
+    for (form, error) in [
+        (
+            SupplierForm {
+                bankgiro: "1",
+                ..supplier_form("L")
+            },
+            DomainError::InvalidBankgiro,
+        ),
+        (
+            SupplierForm {
+                plusgiro: "1",
+                ..supplier_form("L")
+            },
+            DomainError::InvalidPlusgiro,
+        ),
+        (
+            SupplierForm {
+                iban: "SE1",
+                ..supplier_form("L")
+            },
+            DomainError::InvalidIban,
+        ),
+        (
+            SupplierForm {
+                bic: "X",
+                ..supplier_form("L")
+            },
+            DomainError::InvalidBic,
+        ),
+    ] {
+        assert_eq!(supplier(form), error);
+    }
+}
+
+#[test]
+fn numbers_run_1_to_n() {
+    let mut register = Register::default();
+    for expected in 1..=3 {
+        let changes = add(&register, customer("Kund")).unwrap();
+        assert_eq!(changes[0].number(), expected);
+        changes.into_iter().for_each(|c| register.apply(c));
+    }
+    assert_eq!(
+        register.parties().map(|p| p.number).collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+}
+
+#[test]
+fn an_update_replaces_every_detail_and_the_same_details_are_a_no_op() {
+    let register = Register::from_changes([Change::Added {
+        number: 1,
+        details: customer("Gamla AB"),
+    }]);
+    assert_eq!(
+        update(&register, 1, customer("Nya AB")).unwrap(),
+        [Change::Updated {
+            number: 1,
+            details: customer("Nya AB")
+        }]
+    );
+    assert_eq!(update(&register, 1, customer("Gamla AB")).unwrap(), []);
+}
+
+#[test]
+fn deactivating_and_reactivating_are_idempotent() {
+    let mut register = Register::from_changes([Change::Added {
+        number: 1,
+        details: customer("K"),
+    }]);
+    assert_eq!(set_active(&register, 1, true).unwrap(), []);
+    let off = set_active(&register, 1, false).unwrap();
+    assert_eq!(off, [Change::Deactivated { number: 1 }]);
+    off.into_iter().for_each(|c| register.apply(c));
+    assert!(!register.get(1).unwrap().active);
+    assert_eq!(set_active(&register, 1, false).unwrap(), []);
+    assert_eq!(
+        set_active(&register, 1, true).unwrap(),
+        [Change::Reactivated { number: 1 }]
+    );
+}
+
+#[test]
+fn unknown_numbers_are_not_found_per_register() {
+    let customers: Register<CustomerDetails> = Register::default();
+    assert_eq!(
+        update(&customers, 7, customer("K")),
+        Err(DomainError::CustomerNotFound)
+    );
+    assert_eq!(
+        set_active(&customers, 7, false),
+        Err(DomainError::CustomerNotFound)
+    );
+    let suppliers: Register<SupplierDetails> = Register::default();
+    assert_eq!(
+        set_active(&suppliers, 7, false),
+        Err(DomainError::SupplierNotFound)
+    );
+}
+
+#[test]
+fn stored_events_read_as_customer_and_supplier_events() {
+    let event = CustomerEvent::from(Change::Added {
+        number: 1,
+        details: customer("K"),
+    });
+    let json = serde_json::to_value(&event).unwrap();
+    assert_eq!(json["type"], "CustomerAdded");
+    assert_eq!(json["number"], 1);
+    assert_eq!(json["details"]["org_nr"], "5560160680");
+    let back: Change<CustomerDetails> = serde_json::from_value::<CustomerEvent>(json)
+        .unwrap()
+        .into();
+    assert_eq!(
+        back,
+        Change::Added {
+            number: 1,
+            details: customer("K")
+        }
+    );
+    let event = SupplierEvent::from(Change::<SupplierDetails>::Deactivated { number: 2 });
+    assert_eq!(
+        serde_json::to_value(&event).unwrap()["type"],
+        "SupplierDeactivated"
+    );
+}
