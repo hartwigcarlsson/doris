@@ -11,8 +11,8 @@ mod projections;
 mod queries;
 
 use domain::{
-    AddEmployee, BookedVoucher, DomainError, EmployeeName, Payroll, PayrollEvent,
-    PersonalIdentityNumber, SalaryAccount, UpdateEmployee,
+    AddEmployee, BookedVoucher, DomainError, EmployeeName, Payroll, PayrollEvent, PayrollRunDraft,
+    PayrollRunLine, PersonalIdentityNumber, SalaryAccount, UpdateEmployee,
 };
 use doris_company::domain::Company;
 use doris_eventstore::{Metadata, NewEvent};
@@ -21,7 +21,9 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 pub use projections::rebuild_projections;
-pub use queries::list_employees;
+pub use queries::{
+    PayrollRunLineView, PayrollRunView, get_payroll_run, list_employees, list_payroll_runs,
+};
 
 const PAYROLL_STREAM: &str = "payroll-";
 const SCHEMA_VERSION: i64 = 1;
@@ -122,6 +124,89 @@ pub async fn deactivate_employee(
 ) -> Result<()> {
     change(pool, company_id, actor, |payroll| {
         domain::deactivate_employee(payroll, employee_id)
+    })
+    .await
+}
+
+/// What a draft would lock if finalized now.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Preview {
+    pub text: String,
+    pub lines: Vec<PayrollRunLine>,
+}
+
+/// Computes a draft's lines without writing anything.
+pub async fn preview_payroll_run(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    draft: PayrollRunDraft,
+) -> Result<Preview> {
+    let mut conn = pool.acquire().await?;
+    let (_, payroll, _) = load(&mut conn, company_id, actor).await?;
+    let draft = domain::validate_draft(&payroll, draft)?;
+    let lines = domain::compute_lines(&payroll, None, &draft)?;
+    Ok(Preview {
+        text: draft.text,
+        lines,
+    })
+}
+
+pub async fn create_payroll_run(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    draft: PayrollRunDraft,
+) -> Result<Uuid> {
+    let payroll_run_id = Uuid::new_v4();
+    change(pool, company_id, actor, |payroll| {
+        Ok(vec![domain::create_payroll_run(
+            payroll,
+            payroll_run_id,
+            draft,
+        )?])
+    })
+    .await?;
+    Ok(payroll_run_id)
+}
+
+pub async fn update_payroll_run(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    payroll_run_id: Uuid,
+    draft: PayrollRunDraft,
+) -> Result<()> {
+    change(pool, company_id, actor, |payroll| {
+        Ok(vec![domain::update_payroll_run(
+            payroll,
+            payroll_run_id,
+            draft,
+        )?])
+    })
+    .await
+}
+
+pub async fn finalize_payroll_run(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    payroll_run_id: Uuid,
+) -> Result<()> {
+    change(pool, company_id, actor, |payroll| {
+        Ok(vec![domain::finalize_payroll_run(payroll, payroll_run_id)?])
+    })
+    .await
+}
+
+pub async fn reopen_payroll_run(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    payroll_run_id: Uuid,
+) -> Result<()> {
+    change(pool, company_id, actor, |payroll| {
+        Ok(vec![domain::reopen_payroll_run(payroll, payroll_run_id)?])
     })
     .await
 }

@@ -2,7 +2,7 @@
 //! transaction as the append; rebuildable from the event log.
 
 use crate::PAYROLL_STREAM;
-use crate::domain::PayrollEvent;
+use crate::domain::{DraftLine, PayrollEvent, PayrollRunLine};
 use doris_eventstore::RecordedEvent;
 use sqlx::SqliteConnection;
 
@@ -57,13 +57,172 @@ pub(crate) async fn apply(conn: &mut SqliteConnection, event: &RecordedEvent) ->
                 .execute(&mut *conn)
                 .await?;
         }
-        // Projected by Task 6 of the plan, which replaces this arm.
-        PayrollEvent::PayrollRunCreated { .. }
-        | PayrollEvent::PayrollRunUpdated { .. }
-        | PayrollEvent::PayrollRunFinalized { .. }
-        | PayrollEvent::PayrollRunReopened { .. }
-        | PayrollEvent::PayrollRunBooked { .. } => {}
+        PayrollEvent::PayrollRunCreated {
+            payroll_run_id,
+            draft,
+        } => {
+            let run = payroll_run_id.to_string();
+            sqlx::query(
+                "INSERT INTO payroll_runs (company_id, payroll_run_id, pay_date, text, finalized,
+                     updated_at, updated_by)
+                 VALUES (?, ?, ?, ?, 0, ?, ?)",
+            )
+            .bind(company_id)
+            .bind(&run)
+            .bind(draft.pay_date.to_string())
+            .bind(&draft.text)
+            .bind(&event.recorded_at)
+            .bind(actor(event))
+            .execute(&mut *conn)
+            .await?;
+            insert_draft_lines(conn, company_id, &run, &draft.lines).await?;
+        }
+        PayrollEvent::PayrollRunUpdated {
+            payroll_run_id,
+            draft,
+        } => {
+            let run = payroll_run_id.to_string();
+            sqlx::query(
+                "UPDATE payroll_runs SET pay_date = ?, text = ?, updated_at = ?, updated_by = ?
+                 WHERE company_id = ? AND payroll_run_id = ?",
+            )
+            .bind(draft.pay_date.to_string())
+            .bind(&draft.text)
+            .bind(&event.recorded_at)
+            .bind(actor(event))
+            .bind(company_id)
+            .bind(&run)
+            .execute(&mut *conn)
+            .await?;
+            delete_lines(conn, company_id, &run).await?;
+            insert_draft_lines(conn, company_id, &run, &draft.lines).await?;
+        }
+        PayrollEvent::PayrollRunFinalized {
+            payroll_run_id,
+            lines,
+        } => {
+            let run = payroll_run_id.to_string();
+            set_finalized(conn, company_id, &run, true, event).await?;
+            delete_lines(conn, company_id, &run).await?;
+            for line in &lines {
+                insert_locked_line(conn, company_id, &run, line).await?;
+            }
+        }
+        PayrollEvent::PayrollRunReopened { payroll_run_id } => {
+            let run = payroll_run_id.to_string();
+            set_finalized(conn, company_id, &run, false, event).await?;
+            sqlx::query(
+                "UPDATE payroll_run_lines
+                 SET salary_account = NULL, fee_rate = NULL, fee = NULL, net = NULL
+                 WHERE company_id = ? AND payroll_run_id = ?",
+            )
+            .bind(company_id)
+            .bind(&run)
+            .execute(&mut *conn)
+            .await?;
+        }
+        PayrollEvent::PayrollRunBooked {
+            payroll_run_id,
+            voucher,
+        } => {
+            sqlx::query(
+                "INSERT INTO payroll_run_bookings (company_id, payroll_run_id, fiscal_year_start,
+                     voucher_number)
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(company_id)
+            .bind(payroll_run_id.to_string())
+            .bind(voucher.fiscal_year_start.to_string())
+            .bind(voucher.number)
+            .execute(&mut *conn)
+            .await?;
+        }
     }
+    Ok(())
+}
+
+fn actor(event: &RecordedEvent) -> &str {
+    event.metadata.actor.as_deref().unwrap_or_default()
+}
+
+async fn set_finalized(
+    conn: &mut SqliteConnection,
+    company_id: &str,
+    run: &str,
+    finalized: bool,
+    event: &RecordedEvent,
+) -> crate::Result<()> {
+    sqlx::query(
+        "UPDATE payroll_runs SET finalized = ?, updated_at = ?, updated_by = ?
+         WHERE company_id = ? AND payroll_run_id = ?",
+    )
+    .bind(finalized)
+    .bind(&event.recorded_at)
+    .bind(actor(event))
+    .bind(company_id)
+    .bind(run)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn delete_lines(
+    conn: &mut SqliteConnection,
+    company_id: &str,
+    run: &str,
+) -> crate::Result<()> {
+    sqlx::query("DELETE FROM payroll_run_lines WHERE company_id = ? AND payroll_run_id = ?")
+        .bind(company_id)
+        .bind(run)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+async fn insert_draft_lines(
+    conn: &mut SqliteConnection,
+    company_id: &str,
+    run: &str,
+    lines: &[DraftLine],
+) -> crate::Result<()> {
+    for line in lines {
+        sqlx::query(
+            "INSERT INTO payroll_run_lines (company_id, payroll_run_id, employee_id, gross, tax)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(company_id)
+        .bind(run)
+        .bind(line.employee_id.to_string())
+        .bind(line.gross)
+        .bind(line.tax)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn insert_locked_line(
+    conn: &mut SqliteConnection,
+    company_id: &str,
+    run: &str,
+    line: &PayrollRunLine,
+) -> crate::Result<()> {
+    sqlx::query(
+        "INSERT INTO payroll_run_lines (company_id, payroll_run_id, employee_id, gross, tax,
+             salary_account, fee_rate, fee, net)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(company_id)
+    .bind(run)
+    .bind(line.employee_id.to_string())
+    .bind(line.gross)
+    .bind(line.tax)
+    .bind(line.salary_account.get())
+    .bind(line.fee_rate)
+    .bind(line.fee)
+    .bind(line.net)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
