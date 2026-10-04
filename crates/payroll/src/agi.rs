@@ -173,23 +173,21 @@ fn booked_amounts(payroll: &Payroll, period: Period) -> BTreeMap<Uuid, (i64, i64
     amounts
 }
 
-/// Every employee's specification number from the submissions so far.
-fn specification_numbers(payroll: &Payroll) -> HashMap<Uuid, u64> {
-    let mut numbers = HashMap::new();
-    for line in payroll.agi_submissions.values().flat_map(|s| &s.lines) {
-        numbers
-            .entry(line.employee_id)
-            .or_insert(line.specification_number);
-    }
-    numbers
-}
-
 /// The individuppgifter for `period`: one per employee paid by a booked
 /// run, amounts summed and then rounded down to whole kronor. Employees
 /// never submitted get the next numbers, in name order.
 pub fn agi_lines(payroll: &Payroll, period: Period) -> Vec<AgiLine> {
     let amounts = booked_amounts(payroll, period);
-    let mut numbers = specification_numbers(payroll);
+    // Under one krona is not an individuppgift, and takes no number.
+    let amounts: BTreeMap<_, _> = amounts
+        .into_iter()
+        .filter(|(_, (gross, tax, _))| gross / 100 > 0 || tax / 100 > 0)
+        .collect();
+    let mut numbers: HashMap<Uuid, u64> = payroll
+        .specification_numbers
+        .iter()
+        .map(|(k, v)| (*k, *v))
+        .collect();
     let next = numbers.values().max().copied().unwrap_or(0) + 1;
     let name = |id: &Uuid| {
         payroll
@@ -212,7 +210,6 @@ pub fn agi_lines(payroll: &Payroll, period: Period) -> Vec<AgiLine> {
             gross: gross / 100,
             tax: tax / 100,
         })
-        .filter(|l| l.gross > 0 || l.tax > 0)
         .collect();
     lines.sort_by_key(|l| l.specification_number);
     lines

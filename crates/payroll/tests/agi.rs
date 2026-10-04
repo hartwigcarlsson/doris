@@ -409,3 +409,64 @@ fn periods_list_booked_months_and_submissions_newest_first() {
     let periods: Vec<_> = agi_periods(&w.payroll()).iter().map(|p| p.get()).collect();
     assert_eq!(periods, [202611, 202609]);
 }
+
+#[test]
+fn a_removed_employee_keeps_her_number_for_later_months() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    let bo = w.hire("Bo Ek", "19500301-1235");
+    w.contact();
+    let first = w.booked(date(2026, 10, 25), &[(asa, 100 * KR, 0), (bo, 100 * KR, 0)]);
+    w.submit(oct());
+    w.reversed.insert(first);
+    w.booked(date(2026, 10, 30), &[(asa, 100 * KR, 0)]);
+    w.submit(oct());
+    w.booked(date(2026, 11, 25), &[(bo, 100 * KR, 0)]);
+
+    let nov = agi_month(&w.payroll(), Period::parse("202611").unwrap());
+
+    assert_eq!(
+        nov.lines
+            .iter()
+            .map(|(l, _)| l.specification_number)
+            .collect::<Vec<_>>(),
+        [1]
+    );
+}
+
+#[test]
+fn a_new_employee_never_takes_a_removed_employees_number() {
+    let mut w = World::default();
+    let asa = w.hire("Åsa Öberg", "19800101-1231");
+    let bo = w.hire("Bo Ek", "19500301-1235");
+    w.contact();
+    let first = w.booked(date(2026, 10, 25), &[(bo, 100 * KR, 0), (asa, 100 * KR, 0)]);
+    w.submit(oct());
+    w.reversed.insert(first);
+    w.booked(date(2026, 10, 30), &[(bo, 100 * KR, 0)]);
+    w.submit(oct());
+    let cy = w.hire("Cy Al", "19800102-1230");
+    w.booked(date(2026, 11, 25), &[(cy, 100 * KR, 0)]);
+
+    let nov = agi_month(&w.payroll(), Period::parse("202611").unwrap());
+
+    assert_eq!(
+        nov.lines
+            .iter()
+            .map(|(l, _)| l.specification_number)
+            .collect::<Vec<_>>(),
+        [3]
+    );
+}
+
+#[test]
+fn an_employee_paid_under_one_krona_takes_no_number() {
+    let mut w = World::default();
+    let asa = w.hire("Ada Ek", "19800101-1231");
+    let bo = w.hire("Bo Ek", "19500301-1235");
+    w.booked(date(2026, 10, 25), &[(asa, 50, 0), (bo, 100 * KR, 0)]);
+
+    let month = agi_month(&w.payroll(), oct());
+
+    assert_eq!(amounts(&month), [(1, 100, 0, AgiChange::New)]);
+}
