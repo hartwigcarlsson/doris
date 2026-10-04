@@ -6,7 +6,7 @@ use crate::active_company::Companies;
 use crate::api::{payroll_api, ppb};
 use crate::errors::describe;
 use crate::format::{amount, parse_amount, today};
-use crate::pages::payroll_runs::{RunLines, status_label};
+use crate::pages::payroll_runs::{RunLines, status_label, tax_setting_label};
 use crate::ui::{
     Button, Checkbox, ErrorAlert, Field, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL,
     TABLE_ROW, Table, TextInput, Variant,
@@ -27,6 +27,9 @@ struct Row {
     included: RwSignal<bool>,
     gross: RwSignal<String>,
     tax: RwSignal<String>,
+    /// The employee has a tax setting: a blank Skatt is computed.
+    computed: bool,
+    placeholder: StoredValue<String>,
 }
 
 /// Active employees, plus those already in `run` (who may have been
@@ -45,6 +48,13 @@ fn form_rows(employees: &[ppb::Employee], run: Option<&ppb::PayrollRun>) -> Vec<
                 included: RwSignal::new(run.is_none() || line.is_some()),
                 gross: RwSignal::new(amount(line.map_or(e.monthly_salary, |l| l.gross))),
                 tax: RwSignal::new(line.and_then(|l| l.tax).map(amount).unwrap_or_default()),
+                computed: e.tax.is_some(),
+                placeholder: StoredValue::new(
+                    e.tax
+                        .as_ref()
+                        .map(|t| tax_setting_label(Some(t)))
+                        .unwrap_or_default(),
+                ),
             })
         })
         .collect()
@@ -57,12 +67,13 @@ fn switched(previous: Option<&str>, active: &str) -> bool {
     previous.is_some_and(|p| !p.is_empty() && p != active)
 }
 
-/// The first included employee whose Skatt is blank, as the Swedish message.
-/// Blank is not 0: that would silently under-withhold.
-fn missing_tax(rows: &[(String, bool, String)]) -> Option<String> {
+/// The first included employee without a tax setting whose Skatt is
+/// blank, as the Swedish message. For an employee with a setting, blank
+/// means computed. Blank is never 0: that would silently under-withhold.
+fn missing_tax(rows: &[(String, bool, String, bool)]) -> Option<String> {
     rows.iter()
-        .find(|(_, included, tax)| *included && tax.trim().is_empty())
-        .map(|(name, _, _)| format!("Ange skatt för {name}."))
+        .find(|(_, included, tax, computed)| *included && !*computed && tax.trim().is_empty())
+        .map(|(name, _, _, _)| format!("Ange skatt för {name}."))
 }
 
 #[component]
@@ -151,7 +162,10 @@ pub fn PayrollRunPage() -> impl IntoView {
                 employee_id: r.employee_id.get_value(),
                 // Not an amount: 0 or -1, which the server refuses with its own message.
                 gross: parse_amount(&r.gross.get_untracked()).unwrap_or(0),
-                tax: Some(parse_amount(&r.tax.get_untracked()).unwrap_or(-1)),
+                tax: match r.tax.get_untracked().trim() {
+                    "" => None,
+                    typed => Some(parse_amount(typed).unwrap_or(-1)),
+                },
             })
             .collect(),
     };
@@ -165,6 +179,7 @@ pub fn PayrollRunPage() -> impl IntoView {
                     r.name.get_value(),
                     r.included.get_untracked(),
                     r.tax.get_untracked(),
+                    r.computed,
                 )
             })
             .collect();
@@ -314,7 +329,7 @@ pub fn PayrollRunPage() -> impl IntoView {
                                 <TextInput label=format!("Brutto, {}", row.name.get_value()) value=row.gross inputmode="decimal" />
                             </td>
                             <td class=TABLE_CELL>
-                                <TextInput label=format!("Skatt, {}", row.name.get_value()) value=row.tax inputmode="decimal" />
+                                <TextInput label=format!("Skatt, {}", row.name.get_value()) value=row.tax inputmode="decimal" placeholder=row.placeholder.get_value() />
                             </td>
                         </tr>
                     </For>
@@ -400,16 +415,18 @@ mod tests {
     use super::{missing_tax, switched};
 
     #[test]
-    fn blank_tax_of_an_included_employee_is_reported_by_name() {
-        let row = |n: &str, included, tax: &str| (n.to_owned(), included, tax.to_owned());
+    fn a_blank_tax_is_reported_only_for_an_employee_without_a_setting() {
+        let row = |n: &str, included, tax: &str, setting| {
+            (n.to_owned(), included, tax.to_owned(), setting)
+        };
         let rows = [
-            row("Ann", false, ""),
-            row("Bo", true, "  "),
-            row("Cy", true, ""),
+            row("Ann", false, "", false),
+            row("Bo", true, "  ", true),
+            row("Cy", true, "", false),
         ];
-        assert_eq!(missing_tax(&rows).as_deref(), Some("Ange skatt för Bo."));
+        assert_eq!(missing_tax(&rows).as_deref(), Some("Ange skatt för Cy."));
         assert_eq!(
-            missing_tax(&[row("Ann", true, "0"), row("Bo", true, "x")]),
+            missing_tax(&[row("Ann", true, "0", false), row("Bo", true, "", true)]),
             None
         );
     }
