@@ -3,9 +3,10 @@
 use crate::active_company::{ActiveCompanySelect, Companies};
 use crate::api::{api, pb};
 use crate::pages::{
-    AccountLedger, Accounts, Companies, CompanyPage, Customers, Employees, FinancialStatements,
-    FiscalYears, Home, Invitations, Login, NewCompany, NewVoucher, OpeningBalances, Passkeys,
-    PayrollRunPage, PayrollRuns, Register, Suppliers, TrialBalance, Vouchers,
+    AccountLedger, Accounts, Agi, Companies, CompanyPage, Customers, Employees,
+    FinancialStatements, FiscalYears, Home, Invitations, Login, NewCompany, NewVoucher,
+    OpeningBalances, Passkeys, PayrollRunPage, PayrollRuns, Register, Suppliers, TrialBalance,
+    Vouchers,
 };
 use crate::ui::{Button, Variant};
 use leptos::prelude::*;
@@ -83,6 +84,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/fiscal-years") view=|| view! { <SignedIn><FiscalYears /></SignedIn> } />
                         <Route path=path!("/opening-balances") view=|| view! { <SignedIn><OpeningBalances /></SignedIn> } />
                         <Route path=path!("/employees") view=|| view! { <SignedIn><Employees /></SignedIn> } />
+                        <Route path=path!("/agi") view=|| view! { <SignedIn><Agi /></SignedIn> } />
                         <Route path=path!("/payroll-runs") view=|| view! { <SignedIn><PayrollRuns /></SignedIn> } />
                         <Route path=path!("/payroll-runs/new") view=|| view! { <SignedIn><PayrollRunPage /></SignedIn> } />
                         <Route path=path!("/payroll-runs/:id") view=|| view! { <SignedIn><PayrollRunPage /></SignedIn> } />
@@ -158,6 +160,7 @@ fn Header() -> impl IntoView {
                         <A href="/accounts" attr:class="text-muted-foreground hover:text-foreground">"Kontoplan"</A>
                         <A href="/payroll-runs" attr:class="text-muted-foreground hover:text-foreground">"Lönekörningar"</A>
                         <A href="/employees" attr:class="text-muted-foreground hover:text-foreground">"Anställda"</A>
+                        <A href="/agi" attr:class="text-muted-foreground hover:text-foreground">"Arbetsgivardeklaration"</A>
                     </nav>
                 </Show>
             </div>
