@@ -16,6 +16,7 @@ use domain::{
 };
 use doris_company::domain::Company;
 use doris_eventstore::{Metadata, NewEvent};
+use jiff::civil::Date;
 use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -294,4 +295,64 @@ async fn append(
         projections::apply(conn, event).await?;
     }
     Ok(())
+}
+
+/// Books a finalized run as a voucher, on or after its pay date, in one
+/// transaction with its `PayrollRunBooked`: both, or nothing and no
+/// voucher number used up.
+pub async fn book_payroll_run(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    payroll_run_id: Uuid,
+    today: Date,
+) -> Result<BookedVoucher> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let (_, payroll, version) = load(&mut tx, company_id, actor).await?;
+    let voucher = domain::book_payroll_run(&payroll, payroll_run_id, today)?;
+    let recorded =
+        doris_ledger::record_voucher_in(&mut tx, company_id, actor, voucher, today).await?;
+    let booked = BookedVoucher {
+        fiscal_year_start: recorded.fiscal_year_start,
+        number: recorded.number,
+    };
+    let event = domain::booked(payroll_run_id, booked);
+    append(&mut tx, company_id, version, &[event], actor).await?;
+    tx.commit().await?;
+    Ok(booked)
+}
+
+/// Backa bokföring: a rättelse of the run's voucher, after which the run
+/// is Färdigställd again. The rättelse is dated `today`, but no later than
+/// the end of the voucher's fiscal year, which the ledger requires. No
+/// payroll event: the status follows from the rättelse.
+pub async fn unbook_payroll_run(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    payroll_run_id: Uuid,
+    today: Date,
+) -> Result<BookedVoucher> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let (company, payroll, _) = load(&mut tx, company_id, actor).await?;
+    let voucher = domain::unbook_payroll_run(&payroll, payroll_run_id)?;
+    let year_end = company
+        .first_fiscal_year
+        .containing(voucher.fiscal_year_start)
+        .end;
+    let correction = doris_ledger::correct_voucher_in(
+        &mut tx,
+        company_id,
+        actor,
+        voucher.fiscal_year_start,
+        voucher.number,
+        today.min(year_end),
+        today,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(BookedVoucher {
+        fiscal_year_start: correction.fiscal_year_start,
+        number: correction.number,
+    })
 }

@@ -2,9 +2,10 @@ use doris_company::NewCompany;
 use doris_company::domain::{AccountingMethod, LegalForm};
 use doris_payroll::domain::DomainError;
 use doris_payroll::{
-    Error, NewEmployee, add_employee, create_payroll_run, deactivate_employee,
+    Error, NewEmployee, add_employee, book_payroll_run, create_payroll_run, deactivate_employee,
     finalize_payroll_run, get_payroll_run, list_employees, list_payroll_runs, preview_payroll_run,
-    rebuild_projections, reopen_payroll_run, update_employee, update_payroll_run,
+    rebuild_projections, reopen_payroll_run, unbook_payroll_run, update_employee,
+    update_payroll_run,
 };
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -394,4 +395,276 @@ async fn a_missing_run_or_a_stranger_finds_nothing() {
         preview_payroll_run(&pool, id, eve, draft("2026-10-25", &[(asa_id, 100, 0)])).await,
         Err(Error::NotFound)
     ));
+}
+
+use doris_ledger::domain::DomainError as LedgerError;
+
+/// Åsa and a finalized run paying her 35 000 kr on `pay_date`.
+async fn finalized_run(pool: &SqlitePool, id: Uuid, anna: Uuid, pay_date: &str) -> Uuid {
+    let asa_id = add_employee(pool, id, anna, asa()).await.unwrap();
+    let run = create_payroll_run(
+        pool,
+        id,
+        anna,
+        draft(pay_date, &[(asa_id, 35_000 * KR, 8_000 * KR)]),
+    )
+    .await
+    .unwrap();
+    finalize_payroll_run(pool, id, anna, run).await.unwrap();
+    run
+}
+
+fn ledger_refusal(err: Error) -> LedgerError {
+    match err {
+        Error::Ledger(doris_ledger::Error::Domain(e)) => e,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_run_books_on_its_pay_date_and_not_before() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let run = finalized_run(&pool, id, anna, "2025-10-25").await;
+
+    let early = book_payroll_run(&pool, id, anna, run, d("2025-10-24"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        early,
+        Error::Domain(DomainError::PayrollRunNotDue)
+    ));
+    assert!(events_of(&pool, "ledger-").await.is_empty());
+
+    let voucher = book_payroll_run(&pool, id, anna, run, d("2025-10-25"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        (voucher.fiscal_year_start, voucher.number),
+        (d("2025-01-01"), 1)
+    );
+    assert_eq!(events_of(&pool, "ledger-").await, ["VoucherRecorded"]);
+    assert_eq!(
+        events_of(&pool, "payroll-").await.last().unwrap(),
+        "PayrollRunBooked"
+    );
+    let vouchers = doris_ledger::list_vouchers(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+    let lines: Vec<_> = vouchers[0]
+        .lines
+        .iter()
+        .map(|l| (l.account.get(), l.debit, l.credit))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            (7210, 35_000 * KR, 0),
+            (2710, 0, 8_000 * KR),
+            (1930, 0, 27_000 * KR),
+            (7510, 1_099_700, 0),
+            (2731, 0, 1_099_700),
+        ]
+    );
+    assert_eq!(
+        (vouchers[0].date, vouchers[0].text.as_str()),
+        (d("2025-10-25"), "Lön oktober 2025")
+    );
+    let view = get_payroll_run(&pool, id, anna, run).await.unwrap();
+    assert_eq!(view.status, PayrollRunStatus::Booked(voucher));
+    assert!(matches!(
+        reopen_payroll_run(&pool, id, anna, run).await,
+        Err(Error::Domain(DomainError::PayrollRunBooked))
+    ));
+}
+
+#[tokio::test]
+async fn a_refused_booking_writes_nothing_and_the_run_stays_finalized() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let run = finalized_run(&pool, id, anna, "2025-10-25").await;
+    let today = d("2025-10-25");
+    let payroll_events = events_of(&pool, "payroll-").await;
+
+    doris_ledger::set_account_active(&pool, id, anna, 7210, false)
+        .await
+        .unwrap();
+    let refused = book_payroll_run(&pool, id, anna, run, today)
+        .await
+        .unwrap_err();
+    assert_eq!(ledger_refusal(refused), LedgerError::AccountInactive);
+    assert_eq!(events_of(&pool, "payroll-").await, payroll_events);
+    assert!(events_of(&pool, "ledger-").await.is_empty());
+    let view = get_payroll_run(&pool, id, anna, run).await.unwrap();
+    assert_eq!(view.status, PayrollRunStatus::Finalized);
+
+    doris_ledger::set_account_active(&pool, id, anna, 7210, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        book_payroll_run(&pool, id, anna, run, today)
+            .await
+            .unwrap()
+            .number,
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_closed_year_refuses_the_booking() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let run = finalized_run(&pool, id, anna, "2025-12-25").await;
+    let today = d("2026-01-10");
+    doris_ledger::close_fiscal_year(&pool, id, anna, d("2025-01-01"), today)
+        .await
+        .unwrap();
+    let ledger_events = events_of(&pool, "ledger-").await;
+
+    let refused = book_payroll_run(&pool, id, anna, run, today)
+        .await
+        .unwrap_err();
+
+    assert_eq!(ledger_refusal(refused), LedgerError::FiscalYearClosed);
+    assert_eq!(events_of(&pool, "ledger-").await, ledger_events);
+}
+
+#[tokio::test]
+async fn backa_bokforing_reverses_the_voucher_and_the_run_can_change_and_book_again() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let run = finalized_run(&pool, id, anna, "2025-10-25").await;
+    let today = d("2025-10-27");
+    let first = book_payroll_run(&pool, id, anna, run, today).await.unwrap();
+
+    let correction = unbook_payroll_run(&pool, id, anna, run, today)
+        .await
+        .unwrap();
+
+    assert_eq!(correction.number, 2);
+    let vouchers = doris_ledger::list_vouchers(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+    assert_eq!(vouchers[1].corrects, Some(first.number));
+    assert_eq!(vouchers[1].date, today);
+    assert_eq!(
+        get_payroll_run(&pool, id, anna, run).await.unwrap().status,
+        PayrollRunStatus::Finalized
+    );
+    assert!(matches!(
+        unbook_payroll_run(&pool, id, anna, run, today).await,
+        Err(Error::Domain(DomainError::PayrollRunNotBooked))
+    ));
+
+    reopen_payroll_run(&pool, id, anna, run).await.unwrap();
+    let asa_id = get_payroll_run(&pool, id, anna, run).await.unwrap().lines[0].employee_id;
+    update_payroll_run(
+        &pool,
+        id,
+        anna,
+        run,
+        draft("2025-10-25", &[(asa_id, 36_000 * KR, 8_300 * KR)]),
+    )
+    .await
+    .unwrap();
+    finalize_payroll_run(&pool, id, anna, run).await.unwrap();
+    let again = book_payroll_run(&pool, id, anna, run, today).await.unwrap();
+    assert_eq!(again.number, 3);
+    assert_eq!(
+        get_payroll_run(&pool, id, anna, run).await.unwrap().status,
+        PayrollRunStatus::Booked(again)
+    );
+}
+
+#[tokio::test]
+async fn a_rattelse_from_the_grundbok_also_unbooks_the_run() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let run = finalized_run(&pool, id, anna, "2025-10-25").await;
+    let today = d("2025-10-27");
+    let voucher = book_payroll_run(&pool, id, anna, run, today).await.unwrap();
+
+    doris_ledger::correct_voucher(
+        &pool,
+        id,
+        anna,
+        voucher.fiscal_year_start,
+        voucher.number,
+        today,
+        today,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        get_payroll_run(&pool, id, anna, run).await.unwrap().status,
+        PayrollRunStatus::Finalized
+    );
+    reopen_payroll_run(&pool, id, anna, run).await.unwrap();
+}
+
+#[tokio::test]
+async fn unbooking_after_the_year_ended_dates_the_rattelse_on_its_last_day() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let run = finalized_run(&pool, id, anna, "2025-12-25").await;
+    book_payroll_run(&pool, id, anna, run, d("2025-12-27"))
+        .await
+        .unwrap();
+
+    unbook_payroll_run(&pool, id, anna, run, d("2026-01-10"))
+        .await
+        .unwrap();
+
+    let vouchers = doris_ledger::list_vouchers(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+    assert_eq!(vouchers[1].date, d("2025-12-31"));
+}
+
+#[tokio::test]
+async fn all_projections_rebuild_with_bookings_in_place() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let run = finalized_run(&pool, id, anna, "2025-10-25").await;
+    let today = d("2025-10-27");
+    book_payroll_run(&pool, id, anna, run, today).await.unwrap();
+    unbook_payroll_run(&pool, id, anna, run, today)
+        .await
+        .unwrap();
+    book_payroll_run(&pool, id, anna, run, today).await.unwrap();
+    let runs = "SELECT company_id || payroll_run_id || pay_date || text || finalized || updated_by
+                FROM payroll_runs ORDER BY 1";
+    let lines = "SELECT payroll_run_id || employee_id || gross || tax
+                 || COALESCE(salary_account, '-') || COALESCE(fee, '-') || COALESCE(net, '-')
+                 FROM payroll_run_lines ORDER BY 1";
+    let bookings = "SELECT payroll_run_id || fiscal_year_start || voucher_number
+                    FROM payroll_run_bookings ORDER BY rowid";
+    let before = (
+        table(&pool, runs).await,
+        table(&pool, lines).await,
+        table(&pool, bookings).await,
+    );
+    let view = get_payroll_run(&pool, id, anna, run).await.unwrap();
+
+    // The ledger's rebuild empties vouchers: no payroll key may refer to it.
+    doris_ledger::rebuild_projections(&pool).await.unwrap();
+    rebuild_projections(&pool).await.unwrap();
+
+    let after = (
+        table(&pool, runs).await,
+        table(&pool, lines).await,
+        table(&pool, bookings).await,
+    );
+    assert_eq!(after, before);
+    assert_eq!(before.2.len(), 2);
+    assert_eq!(get_payroll_run(&pool, id, anna, run).await.unwrap(), view);
 }
