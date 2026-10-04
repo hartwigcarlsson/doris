@@ -32,10 +32,11 @@ pub enum DomainError {
     SupplierNotFound,
 }
 
-/// Spaces and hyphens removed, letters upper case: how numbers are pasted.
+/// Whitespace (also non-breaking spaces from PDFs) and hyphens removed,
+/// letters upper case: how numbers are pasted.
 fn compact(raw: &str) -> String {
     raw.chars()
-        .filter(|c| !matches!(c, ' ' | '-'))
+        .filter(|c| !c.is_whitespace() && *c != '-')
         .collect::<String>()
         .to_ascii_uppercase()
 }

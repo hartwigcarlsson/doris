@@ -392,3 +392,10 @@ fn stored_events_read_as_customer_and_supplier_events() {
         "SupplierDeactivated"
     );
 }
+
+#[test]
+fn numbers_pasted_with_non_breaking_spaces_or_tabs_are_accepted() {
+    assert!(Iban::parse("SE45\u{a0}5000\u{a0}0000\u{a0}0583\u{a0}9825\u{a0}7466").is_ok());
+    assert_eq!(Bankgiro::parse("5050\t1055").unwrap().as_str(), "50501055");
+    assert!(VatNumber::parse("SE\u{a0}556016068001").is_ok());
+}
