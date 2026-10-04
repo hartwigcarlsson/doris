@@ -271,6 +271,15 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   CDN-hosted frontend at the API; empty means same origin.
 - `src/passkey.rs` does the browser half of WebAuthn: webauthn-rs JSON in,
   `navigator.credentials.*`, JSON out.
+- `index.html` sends `GetStatus` itself (`window.dorisStatus`), so the answer
+  arrives while the wasm downloads instead of a round trip after it;
+  `api::prefetched_status` reads it, and the app asks again if it's missing.
+- Until the app starts, `#boot` in `index.html` shows "Laddar Doris…" and a
+  progress bar that `boot.js` (Trunk's `data-initializer`) moves. The Tailwind
+  CSS is inlined (`data-inline`) so it paints without another round trip.
+  Trunk hands the initializer the wasm's size from before wasm-opt; a
+  `post_build` hook in `Trunk.toml` (perl) writes the real one. Trunk names
+  the initializer `<hash>-boot.js`, which the server also caches forever.
 - Forms use `novalidate`. Validation messages come from the server's error
   codes, so they're always Swedish; browser messages follow the browser's
   language.
@@ -339,4 +348,5 @@ and the actions; its branches run the tests but don't publish an image.
 
 Requires `protoc` on PATH and the system OpenSSL (webauthn-rs links it:
 `brew install openssl@3` on macOS, `libssl-dev` on Debian/Ubuntu), plus
-`trunk` and the `wasm32-unknown-unknown` target for the frontend.
+`trunk`, `perl` (Trunk's post_build hook) and the `wasm32-unknown-unknown`
+target for the frontend.

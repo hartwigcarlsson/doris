@@ -987,6 +987,7 @@ dependencies = [
  "js-sys",
  "leptos",
  "leptos_router",
+ "prost",
  "serde_json",
  "tonic",
  "tonic-web-wasm-client",
