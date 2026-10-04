@@ -33,7 +33,7 @@ spec in `docs/superpowers/specs/` and an implementation plan in
 proto/              .proto files (package doris.<area>.v1)
 migrations/         sqlx migrations, NNNN_name.sql, shared by all crates
 crates/company      doris-company: companies, members, fiscal year and accounting method
-crates/invoicing    doris-invoicing: customers, suppliers and supplier invoices
+crates/invoicing    doris-invoicing: customers, suppliers, and customer and supplier invoices
 crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
 crates/identity     doris-identity: users, passkeys, invitations, sessions
 crates/ledger       doris-ledger: chart of accounts, vouchers, opening balances and year closing
@@ -81,7 +81,7 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   their bytes in `attachment_files`: primary data like `events`, not a
   projection, append-only by trigger and keyed by SHA-256, so a file is
   stored once. They are read only through the company's own voucher
-  (`voucher_attachments`) or the company's own supplier invoice, never by
+  (`voucher_attachments`) or the company's own customer or supplier invoice, never by
   hash alone. An underlag is never removed
   or renamed, and it may be added to a voucher in a closed year: it changes
   no amount. The type comes from the bytes, never from the client.
@@ -203,7 +203,19 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `invalid_payment_account`, `supplier_invoice_paid`,
   `supplier_invoice_not_paid` and `supplier_invoice_cancelled`; ledger
   errors keep their codes. Unpaid invoices at year end under
-  kontantmetoden are not booked yet; Räkenskapsår warns.
+  kontantmetoden are not booked yet; Räkenskapsår warns for unpaid customer
+  and supplier invoices.
+- Customer invoices (`customer-invoices-{company}` stream, `customer_invoices`
+  projection) mirror supplier invoices with 1510 as the reskontra account
+  and output VAT per rate on 2611/2621/2631 (computed, never overridden).
+  The invoice number is proposed (highest all-digit number + 1) and may be
+  changed; it is unique per company even after cancelling (full unique
+  index), so an issued number is never reused. Both directions share
+  `crates/invoicing/src/invoices.rs` (status, transitions, voucher lines,
+  correction dates) and `crates/web/src/invoice_ui.rs`. Codes:
+  `customer_invoice_not_found`, `customer_inactive`,
+  `duplicate_customer_invoice`, `customer_invoice_paid`,
+  `customer_invoice_not_paid` and `customer_invoice_cancelled`.
 - `LedgerService` also has `GetOpeningBalances`, `SetOpeningBalances`,
   `CloseFiscalYear` and `ReopenFiscalYear`. Their codes are
   `not_balance_sheet_account`, `duplicate_account`,

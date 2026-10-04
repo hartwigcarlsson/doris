@@ -62,6 +62,18 @@ pub enum DomainError {
     InvalidReason,
     #[error("invoice date is in the future")]
     InvoiceDateInFuture,
+    #[error("customer is inactive")]
+    CustomerInactive,
+    #[error("no such customer invoice")]
+    CustomerInvoiceNotFound,
+    #[error("this invoice number is already used")]
+    DuplicateCustomerInvoice,
+    #[error("customer invoice is paid")]
+    CustomerInvoicePaid,
+    #[error("customer invoice is not paid")]
+    CustomerInvoiceNotPaid,
+    #[error("customer invoice is cancelled")]
+    CustomerInvoiceCancelled,
 }
 
 /// Whitespace (also non-breaking spaces from PDFs) and hyphens removed,
