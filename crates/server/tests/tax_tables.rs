@@ -68,3 +68,16 @@ async fn nothing_listening_is_refused_quickly() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn a_server_that_never_ends_is_refused() {
+    let fake = fake_skatteverket(tax_rows(2026)).await;
+    fake.repeating.store(true, Ordering::SeqCst);
+    let fetched = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        TaxTables::new(&fake.url).fetch(2026),
+    )
+    .await
+    .expect("fetch ends");
+    assert!(fetched.is_err());
+}

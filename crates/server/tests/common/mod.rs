@@ -254,17 +254,31 @@ pub struct FakeSkatteverket {
     pub broken: Arc<AtomicBool>,
     /// Promise every row but stop sending after the first page.
     pub truncated: Arc<AtomicBool>,
+    /// Ignore `_offset`, repeat the first page and claim a million rows.
+    pub repeating: Arc<AtomicBool>,
 }
 
 pub async fn fake_skatteverket(rows: Vec<Value>) -> FakeSkatteverket {
     let requests = Arc::new(AtomicUsize::new(0));
     let broken = Arc::new(AtomicBool::new(false));
     let truncated = Arc::new(AtomicBool::new(false));
-    let (count, fail, cut) = (requests.clone(), broken.clone(), truncated.clone());
+    let repeating = Arc::new(AtomicBool::new(false));
+    let (count, fail, cut, rep) = (
+        requests.clone(),
+        broken.clone(),
+        truncated.clone(),
+        repeating.clone(),
+    );
     let app = axum::Router::new().route(
         "/rowstore",
         get(move |Query(q): Query<HashMap<String, String>>| {
-            let (rows, count, fail, cut) = (rows.clone(), count.clone(), fail.clone(), cut.clone());
+            let (rows, count, fail, cut, rep) = (
+                rows.clone(),
+                count.clone(),
+                fail.clone(),
+                cut.clone(),
+                rep.clone(),
+            );
             async move {
                 count.fetch_add(1, Ordering::SeqCst);
                 if fail.load(Ordering::SeqCst) {
@@ -273,6 +287,8 @@ pub async fn fake_skatteverket(rows: Vec<Value>) -> FakeSkatteverket {
                 let year = q.get("år").cloned().unwrap_or_default();
                 let limit: usize = q.get("_limit").and_then(|v| v.parse().ok()).unwrap_or(100);
                 let offset: usize = q.get("_offset").and_then(|v| v.parse().ok()).unwrap_or(0);
+                let repeat = rep.load(Ordering::SeqCst);
+                let offset = if repeat { 0 } else { offset };
                 let matching: Vec<&Value> =
                     rows.iter().filter(|r| r["år"] == year.as_str()).collect();
                 let page: Vec<&Value> = if cut.load(Ordering::SeqCst) && offset > 0 {
@@ -281,7 +297,7 @@ pub async fn fake_skatteverket(rows: Vec<Value>) -> FakeSkatteverket {
                     matching.iter().skip(offset).take(limit).copied().collect()
                 };
                 axum::Json(json!({
-                    "resultCount": matching.len(),
+                    "resultCount": if repeat { 1_000_000 } else { matching.len() },
                     "offset": offset,
                     "limit": limit,
                     "results": page,
@@ -295,6 +311,7 @@ pub async fn fake_skatteverket(rows: Vec<Value>) -> FakeSkatteverket {
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     FakeSkatteverket {
         url,
+        repeating,
         requests,
         broken,
         truncated,

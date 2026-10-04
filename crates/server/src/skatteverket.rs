@@ -11,6 +11,8 @@ use std::time::Duration;
 pub const TAX_TABLES_URL: &str =
     "https://skatteverket.entryscape.net/rowstore/dataset/88320397-5c32-4c16-ae79-d36d95b17b95";
 const PAGE: usize = 500;
+/// A year is about 8 000 rows; anything far beyond that is not the dataset.
+const MAX_ROWS: usize = 20_000;
 
 pub struct TaxTables {
     http: reqwest::Client,
@@ -42,6 +44,12 @@ impl TaxTables {
         let mut rows = Vec::new();
         let expected = loop {
             let page = self.page(year, rows.len()).await?;
+            if page.result_count > MAX_ROWS || rows.len() + page.results.len() > page.result_count {
+                return Err(format!(
+                    "{year}: implausible answer ({} rows)",
+                    page.result_count
+                ));
+            }
             for row in &page.results {
                 rows.push(parse_row(year, row)?);
             }
@@ -56,7 +64,15 @@ impl TaxTables {
     }
 
     async fn page(&self, year: i16, offset: usize) -> Result<Page, String> {
-        let failed = |e: reqwest::Error| format!("{year}: {}", e.without_url());
+        let failed = |e: reqwest::Error| {
+            let mut chain = String::new();
+            let mut cause = std::error::Error::source(&e);
+            while let Some(c) = cause {
+                chain.push_str(&format!(": {c}"));
+                cause = c.source();
+            }
+            format!("{year}: {}{chain}", e.without_url())
+        };
         let url = reqwest::Url::parse_with_params(
             &self.url,
             [
