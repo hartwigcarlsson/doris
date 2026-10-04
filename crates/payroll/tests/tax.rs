@@ -241,3 +241,31 @@ fn settings_and_bases_serialize_with_a_kind_tag() {
     );
     assert_eq!(TaxBasis::default(), TaxBasis::Manual);
 }
+
+#[test]
+fn table_tax_never_exceeds_gross() {
+    let mut rows = year_2026();
+    for r in rows
+        .iter_mut()
+        .filter(|r| r.table == 33 && r.kind == RowKind::Amount && r.from == 2001)
+    {
+        r.columns = [9999; 6];
+    }
+    let table = TaxTable::validate(2026, rows).unwrap();
+    // 2 050 kr income: the row says 9 999 kr, so the whole gross is taken.
+    let (tax, _) = preliminary_tax(t33(1), 2026, Some(&table), 2050 * KR).unwrap();
+    assert_eq!(tax, 2050 * KR);
+}
+
+#[test]
+fn a_negative_amount_or_an_impossible_percentage_is_refused() {
+    let mut negative = year_2026();
+    negative[5].columns[2] = -1;
+    assert!(TaxTable::validate(2026, negative).is_err());
+    let mut over = year_2026();
+    over.iter_mut()
+        .find(|r| r.kind == RowKind::Percent)
+        .unwrap()
+        .columns[0] = 101;
+    assert!(TaxTable::validate(2026, over).is_err());
+}

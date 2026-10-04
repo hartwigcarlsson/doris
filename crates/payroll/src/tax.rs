@@ -89,6 +89,16 @@ impl TaxTable {
         if let Some(r) = rows.iter().find(|r| !TABLES.contains(&r.table)) {
             return fail(format!("unknown table {}", r.table));
         }
+        let bad_column = |r: &TaxTableRow| {
+            let limit = match r.kind {
+                RowKind::Amount => i64::MAX,
+                RowKind::Percent => 100,
+            };
+            r.columns.iter().any(|c| !(0..=limit).contains(c))
+        };
+        if rows.iter().any(bad_column) {
+            return fail("a column value out of range".to_owned());
+        }
         for table in TABLES {
             let bands = |kind: RowKind| {
                 let mut b: Vec<_> = rows
@@ -192,7 +202,7 @@ pub fn preliminary_tax(
                 income * percent / 100
             };
             Ok((
-                kronor * 100,
+                (kronor * 100).min(gross),
                 TaxBasis::Table {
                     year,
                     table: number,

@@ -57,6 +57,9 @@ impl TaxTables {
                 break page.result_count;
             }
         };
+        if rows.is_empty() {
+            return Err(format!("{year}: no rows (not published?)"));
+        }
         if rows.len() != expected {
             return Err(format!("{year}: got {} of {expected} rows", rows.len()));
         }

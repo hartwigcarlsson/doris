@@ -3,7 +3,7 @@
 
 use crate::active_company::Companies;
 use crate::api::{payroll_api, ppb};
-use crate::errors::describe;
+use crate::errors::{describe, describe_code};
 use crate::format::{amount, parse_amount};
 use crate::pages::payroll_runs::tax_setting_label;
 use crate::ui::{
@@ -30,6 +30,11 @@ pub const TAX_COLUMNS: [(u32, &str); 6] = [
     (5, "5 – Annan pensionsgrundande ersättning"),
     (6, "6 – Pension (under 66 år)"),
 ];
+
+/// The error code for a Skatt choice that can't be saved: "table" needs a table.
+pub fn tax_fields_error(kind: &str, table: &str) -> Option<&'static str> {
+    (kind == "table" && table.trim().is_empty()).then_some("invalid_tax_table")
+}
 
 /// The Skatt fields as a setting: "table", "percent" or "none". A field that
 /// isn't a number becomes a value the server refuses with its own message.
@@ -137,8 +142,13 @@ pub fn Employees() -> impl IntoView {
 
     let save = move |ev: SubmitEvent| {
         ev.prevent_default();
-        busy.set(true);
         error.set(None);
+        if let Some(code) = tax_fields_error(&tax_kind.get_untracked(), &tax_table.get_untracked())
+        {
+            error.set(Some(describe_code(code)));
+            return;
+        }
+        busy.set(true);
         // The company whose employees are on screen, not whatever is active now.
         let company_id = employees.with_untracked(|(id, _)| id.clone());
         // Not an amount: 0, which the server refuses with its own message.
@@ -359,8 +369,16 @@ fn EmployeeRow(
 
 #[cfg(test)]
 mod tests {
-    use super::tax_input;
+    use super::{tax_fields_error, tax_input};
     use crate::api::ppb::{TableTax, tax_setting::Kind};
+
+    #[test]
+    fn a_table_setting_without_a_table_is_caught_before_saving() {
+        assert_eq!(tax_fields_error("table", " "), Some("invalid_tax_table"));
+        assert_eq!(tax_fields_error("table", "33"), None);
+        assert_eq!(tax_fields_error("percent", ""), None);
+        assert_eq!(tax_fields_error("none", ""), None);
+    }
 
     #[test]
     fn the_tax_fields_become_a_setting_or_none() {

@@ -27,7 +27,8 @@ async fn a_year_is_fetched_page_by_page_and_checked() {
 #[tokio::test]
 async fn a_year_not_published_is_refused() {
     let fake = fake_skatteverket(tax_rows(2026)).await;
-    assert!(TaxTables::new(&fake.url).fetch(2027).await.is_err());
+    let err = TaxTables::new(&fake.url).fetch(2027).await.unwrap_err();
+    assert!(err.contains("no rows"), "{err}");
 }
 
 #[tokio::test]

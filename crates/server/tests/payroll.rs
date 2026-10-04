@@ -598,3 +598,48 @@ async fn tax_settings_are_checked_and_a_blank_tax_needs_one() {
         .remove(0);
     assert_eq!(line.tax, Some(10_500 * KR));
 }
+
+#[tokio::test]
+async fn finalizing_a_blank_tax_run_fetches_the_year_and_locks_the_computed_tax() {
+    let fake = fake_skatteverket(tax_rows(2026)).await;
+    let server = TestServer::start_with_tax_tables(&fake.url).await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.payroll();
+    let asa = hire_with(&mut api, &anna, &id, "19800101-1231", table_33()).await;
+    let run = api
+        .create_payroll_run(authed(
+            pb::CreatePayrollRunRequest {
+                company_id: id.clone(),
+                draft: computed("2026-01-25", &asa),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .payroll_run_id;
+    assert_eq!(fake.requests.load(Ordering::SeqCst), 0);
+
+    api.finalize_payroll_run(authed(run_ref(&id, &run), &anna))
+        .await
+        .unwrap();
+
+    assert!(fake.requests.load(Ordering::SeqCst) > 0);
+    let shown = api
+        .get_payroll_run(authed(run_ref(&id, &run), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(shown.status(), pb::PayrollRunStatus::Finalized);
+    let line = &shown.lines[0];
+    assert_eq!(line.tax, Some(7_134 * KR));
+    assert_eq!(
+        line.tax_basis.and_then(|b| b.kind),
+        Some(pb::tax_basis::Kind::Table(pb::TableBasis {
+            year: 2026,
+            table: 33,
+            column: 1
+        }))
+    );
+}
