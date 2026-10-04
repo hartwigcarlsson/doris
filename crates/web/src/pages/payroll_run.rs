@@ -50,6 +50,13 @@ fn form_rows(employees: &[ppb::Employee], run: Option<&ppb::PayrollRun>) -> Vec<
         .collect()
 }
 
+/// Whether `active` replaces another real company. The first company
+/// arrives after `previous` was empty (companies load asynchronously), which
+/// is a load, not a switch.
+fn switched(previous: Option<&str>, active: &str) -> bool {
+    previous.is_some_and(|p| !p.is_empty() && p != active)
+}
+
 #[component]
 pub fn PayrollRunPage() -> impl IntoView {
     let companies = expect_context::<Companies>();
@@ -117,7 +124,7 @@ pub fn PayrollRunPage() -> impl IntoView {
     Effect::new(move |previous: Option<String>| {
         let active = companies.active.get();
         // A run belongs to one company: on a switch, back to the list.
-        if previous.is_some_and(|p| p != active) {
+        if switched(previous.as_deref(), &active) {
             go("/payroll-runs".to_owned());
         } else {
             load();
@@ -327,5 +334,18 @@ pub fn PayrollRunPage() -> impl IntoView {
                 _ => form().into_any(),
             }}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::switched;
+
+    #[test]
+    fn the_first_company_arriving_is_not_a_switch() {
+        assert!(!switched(None, "a"));
+        assert!(!switched(Some(""), "a"));
+        assert!(!switched(Some("a"), "a"));
+        assert!(switched(Some("a"), "b"));
     }
 }
