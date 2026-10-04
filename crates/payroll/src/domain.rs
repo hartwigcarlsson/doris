@@ -48,6 +48,15 @@ pub enum DomainError {
     PayrollRunNotDue,
     #[error("the fees changed since the payroll run was finalized")]
     PayrollRunOutdated,
+    #[error("tax table must be 29-42 and column 1-6")]
+    InvalidTaxTable,
+    #[error("tax percentage must be 0-100")]
+    InvalidTaxPercent,
+    #[error("the line needs a tax or the employee a tax setting")]
+    TaxRequired,
+    /// The year's table isn't stored yet; the server fetches it.
+    #[error("no tax table for {0}")]
+    TaxTableMissing(i16),
 }
 
 /// A personnummer or samordningsnummer, as twelve digits.

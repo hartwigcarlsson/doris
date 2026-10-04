@@ -9,6 +9,7 @@
 pub mod domain;
 mod projections;
 mod queries;
+pub mod tax;
 
 use domain::{
     AddEmployee, BookedVoucher, DomainError, EmployeeName, Payroll, PayrollEvent, PayrollRunDraft,
