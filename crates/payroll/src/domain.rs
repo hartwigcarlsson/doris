@@ -59,6 +59,16 @@ pub enum DomainError {
     /// The year's table isn't stored yet; the server fetches it.
     #[error("no tax table for {0}")]
     TaxTableMissing(i16),
+    #[error("a period is ÅÅÅÅMM")]
+    InvalidPeriod,
+    #[error("the AGI contact needs a name, a phone number and a valid e-mail address")]
+    InvalidAgiContact,
+    #[error("no AGI contact person")]
+    AgiContactMissing,
+    #[error("no booked payroll that month")]
+    AgiPeriodEmpty,
+    #[error("the month is submitted and unchanged")]
+    AgiUnchanged,
 }
 
 /// A personnummer or samordningsnummer, as twelve digits.
@@ -159,15 +169,32 @@ const YOUTH_UNTIL: Date = date(2027, 9, 30);
 /// rate under the cap) and the fee in öre, half an öre rounded up.
 ///
 /// Skatteverket, "Arbetsgivaravgifter" (2026).
-// ponytail: the rules live in code from 2026; a changed rate needs a new
-// release. A table of rates by date pays off only if they change more
-// often than Doris is released.
 pub fn employer_fee(
     birth_year: i16,
     pay_date: Date,
     gross: i64,
     earlier_gross_same_month: i64,
 ) -> (u32, i64) {
+    let [(rate, under_cap), (full, over_cap)] =
+        fee_bases(birth_year, pay_date, gross, earlier_gross_same_month);
+    let fee = (under_cap * i64::from(rate) + over_cap * i64::from(full) + 5_000) / 10_000;
+    (rate, fee)
+}
+
+/// How `gross` (öre) paid on `pay_date` to someone born in `birth_year`
+/// splits over fee rates, after `earlier_gross_same_month`: the rate for
+/// the whole (or, with the youth reduction, the part under the cap) and
+/// that part, then the full rate and the rest. Shared by `employer_fee` and
+/// the AGI sum, so both follow the same age rules.
+// ponytail: the rules live in code from 2026; a changed rate needs a new
+// release. A table of rates by date pays off only if they change more
+// often than Doris is released.
+pub fn fee_bases(
+    birth_year: i16,
+    pay_date: Date,
+    gross: i64,
+    earlier_gross_same_month: i64,
+) -> [(u32, i64); 2] {
     let year = pay_date.year();
     let (rate, under_cap) = if birth_year <= 1937 {
         (0, gross)
@@ -181,9 +208,7 @@ pub fn employer_fee(
     } else {
         (FULL_RATE, gross)
     };
-    let over_cap = gross - under_cap;
-    let fee = (under_cap * i64::from(rate) + over_cap * i64::from(FULL_RATE) + 5_000) / 10_000;
-    (rate, fee)
+    [(rate, under_cap), (FULL_RATE, gross - under_cap)]
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

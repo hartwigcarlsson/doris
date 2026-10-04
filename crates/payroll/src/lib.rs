@@ -6,6 +6,7 @@
 //! the corrected vouchers, load the company's payroll, decide, append,
 //! project.
 
+pub mod agi;
 pub mod domain;
 mod projections;
 mod queries;

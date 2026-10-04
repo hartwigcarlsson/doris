@@ -955,3 +955,28 @@ fn events_from_before_tax_settings_read_as_manual() {
     .unwrap();
     assert_eq!(draft.tax, Some(800_000));
 }
+
+#[test]
+fn a_salary_splits_into_fee_bases() {
+    let oct = date(2026, 10, 25);
+    assert_eq!(
+        fee_bases(1980, oct, 35_000 * KR, 0),
+        [(FULL_RATE, 35_000 * KR), (FULL_RATE, 0)]
+    );
+    assert_eq!(
+        fee_bases(1950, oct, 20_000 * KR, 0),
+        [(OLD_AGE_RATE, 20_000 * KR), (FULL_RATE, 0)]
+    );
+    assert_eq!(
+        fee_bases(1937, oct, 20_000 * KR, 0),
+        [(0, 20_000 * KR), (FULL_RATE, 0)]
+    );
+    assert_eq!(
+        fee_bases(2005, oct, 30_000 * KR, 0),
+        [(YOUTH_RATE, 25_000 * KR), (FULL_RATE, 5_000 * KR)]
+    );
+    assert_eq!(
+        fee_bases(2005, oct, 20_000 * KR, 20_000 * KR),
+        [(YOUTH_RATE, 5_000 * KR), (FULL_RATE, 15_000 * KR)]
+    );
+}
