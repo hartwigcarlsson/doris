@@ -88,6 +88,24 @@ async fn trunk_hashed_wasm_and_short_hashes_are_recognized() {
 }
 
 #[tokio::test]
+async fn a_trunk_initializer_with_its_hash_in_front_is_cached_forever() {
+    let server = TestServer::start().await;
+
+    let initializer = http(
+        Method::GET,
+        &format!("{}/0123456789abcdef-boot.js", server.base),
+        &[],
+    )
+    .await;
+
+    assert_eq!(initializer.status(), 200);
+    assert_eq!(
+        initializer.headers()[CACHE_CONTROL],
+        "public, max-age=31536000, immutable"
+    );
+}
+
+#[tokio::test]
 async fn etag_supports_conditional_requests() {
     let server = TestServer::start().await;
 

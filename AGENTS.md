@@ -271,6 +271,16 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   CDN-hosted frontend at the API; empty means same origin.
 - `src/passkey.rs` does the browser half of WebAuthn: webauthn-rs JSON in,
   `navigator.credentials.*`, JSON out.
+- `index.html` sends `GetStatus` itself (`window.dorisStatus`), so the answer
+  arrives while the wasm downloads instead of a round trip after it;
+  `api::prefetched_status` reads it, and the app asks again if it's missing.
+- Until the app starts, `#boot` in `index.html` shows "Laddar Doris…" and a
+  progress bar that `boot.js` (Trunk's `data-initializer`) moves. The Tailwind
+  CSS is inlined (`data-inline`) so it paints without another round trip,
+  and `#boot` uses the system font so Inter doesn't compete with the wasm.
+  Trunk hands the initializer the wasm's size from before wasm-opt; a
+  `post_build` hook in `Trunk.toml` (perl) writes the real one. Trunk names
+  the initializer `<hash>-boot.js`, which the server also caches forever.
 - Forms use `novalidate`. Validation messages come from the server's error
   codes, so they're always Swedish; browser messages follow the browser's
   language.
@@ -295,14 +305,12 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   include it. Also lint the wasm build:
   `cargo clippy -p doris-web --target wasm32-unknown-unknown -- -D warnings`.
 - Keep the wasm small. `make dist` builds it with the `wasm-release` profile
-  (opt-level "z", LTO, `panic = "abort"`), and fails if the gzipped wasm
-  grows past `WASM_BUDGET` (500 KB). That is what crosses the wire: the server
-  sends frontend files compressed (brotli or gzip, via tower-http), and gzip
-  is the larger of the two. Check what a new dependency adds before taking it
-  on.
+  (opt-level "z", LTO, `panic = "abort"`). The server sends frontend files
+  compressed (brotli or gzip, via tower-http). Check what a new dependency
+  adds before taking it on.
 - The wasm is built with `--cfg erase_components` (set in `.cargo/config.toml`
   for `wasm32-unknown-unknown`), which type-erases Leptos views and keeps the
-  wasm under budget; an env `RUSTFLAGS` overrides it, so don't set one for wasm
+  wasm small; an env `RUSTFLAGS` overrides it, so don't set one for wasm
   builds.
 - E2E tests live in `e2e/` (Playwright). Every test spawns its own server on
   a fresh database, and pages get a Chrome DevTools virtual WebAuthn
@@ -339,4 +347,5 @@ and the actions; its branches run the tests but don't publish an image.
 
 Requires `protoc` on PATH and the system OpenSSL (webauthn-rs links it:
 `brew install openssl@3` on macOS, `libssl-dev` on Debian/Ubuntu), plus
-`trunk` and the `wasm32-unknown-unknown` target for the frontend.
+`trunk`, `perl` (Trunk's post_build hook) and the `wasm32-unknown-unknown`
+target for the frontend.
