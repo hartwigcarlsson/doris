@@ -1,4 +1,4 @@
-# Doris – Steg 8: Anställda och lönekörning
+# Doris – Steg 9: Anställda och lönekörning
 
 ## Kontext
 Doris har i dag kontoplan, verifikationer, huvudbok, bokslut och underlag, men inget stöd för löner. Det här steget inför lönehantering i sin minsta form: ett register över anställda och en månatlig lönekörning som räknar fram arbetsgivaravgift och nettolön och bokförs som en verifikation. Preliminärskatten skrivs in för hand av användaren, som hämtar beloppet från Skatteverkets skattetabell.
