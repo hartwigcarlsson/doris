@@ -882,6 +882,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "doris-invoicing"
+version = "0.1.0"
+dependencies = [
+ "doris-company",
+ "doris-eventstore",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "doris-ledger"
 version = "0.1.0"
 dependencies = [
@@ -934,6 +949,7 @@ dependencies = [
  "doris-company",
  "doris-eventstore",
  "doris-identity",
+ "doris-invoicing",
  "doris-ledger",
  "doris-payroll",
  "doris-proto",

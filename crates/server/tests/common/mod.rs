@@ -7,10 +7,11 @@ use doris_identity::Auth;
 use doris_proto::auth::v1 as pb;
 use doris_proto::auth::v1::auth_service_client::AuthServiceClient;
 use doris_proto::company::v1::company_service_client::CompanyServiceClient;
+use doris_proto::invoicing::v1::invoicing_service_client::InvoicingServiceClient;
 use doris_proto::ledger::v1::ledger_service_client::LedgerServiceClient;
 use doris_proto::payroll::v1::payroll_service_client::PayrollServiceClient;
 use doris_server::bolagsverket::Bolagsverket;
-use doris_server::{AuthApi, CompanyApi, LedgerApi, PayrollApi, SESSION_COOKIE};
+use doris_server::{AuthApi, CompanyApi, InvoicingApi, LedgerApi, PayrollApi, SESSION_COOKIE};
 use http::HeaderValue;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -29,6 +30,7 @@ pub type Grpc = AuthServiceClient<Transport>;
 pub type Companies = CompanyServiceClient<Transport>;
 pub type Ledger = LedgerServiceClient<Transport>;
 pub type Payroll = PayrollServiceClient<Transport>;
+pub type Invoicing = InvoicingServiceClient<Transport>;
 pub type Device = WebauthnAuthenticator<SoftPasskey>;
 
 #[derive(RustEmbed)]
@@ -69,6 +71,7 @@ impl TestServer {
             CompanyApi::new(pool.clone(), bolagsverket),
             LedgerApi::new(pool.clone()),
             PayrollApi::new(pool.clone()),
+            InvoicingApi::new(pool.clone()),
             cors_origins,
             serve_frontend,
         );
@@ -99,6 +102,10 @@ impl TestServer {
         // Room for a 10 MiB underlag coming back from GetAttachment.
         LedgerServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
             .max_decoding_message_size(11 << 20)
+    }
+
+    pub fn invoicing(&self) -> Invoicing {
+        InvoicingServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
     }
 
     pub fn companies(&self) -> Companies {

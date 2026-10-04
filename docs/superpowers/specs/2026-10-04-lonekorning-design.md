@@ -1,4 +1,4 @@
-# Doris – Steg 9: Anställda och lönekörning
+# Doris – Steg 10: Anställda och lönekörning
 
 ## Kontext
 Doris har i dag kontoplan, verifikationer, huvudbok, bokslut och underlag, men inget stöd för löner. Det här steget inför lönehantering i sin minsta form: ett register över anställda och en månatlig lönekörning som räknar fram arbetsgivaravgift och nettolön och bokförs som en verifikation. Preliminärskatten skrivs in för hand av användaren, som hämtar beloppet från Skatteverkets skattetabell.
@@ -154,7 +154,7 @@ Källa: Skatteverket, "Arbetsgivaravgifter" (2026).
 
 ## Lagring och transaktioner
 
-### Migration `migrations/0009_payroll.sql`
+### Migration `migrations/0010_payroll.sql`
 ```sql
 -- Projections of the payroll-{company_id} streams. Rebuildable from events.
 CREATE TABLE employees (
