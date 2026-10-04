@@ -17,3 +17,9 @@ pub mod ledger {
         tonic::include_proto!("doris.ledger.v1");
     }
 }
+
+pub mod invoicing {
+    pub mod v1 {
+        tonic::include_proto!("doris.invoicing.v1");
+    }
+}

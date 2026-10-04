@@ -4,6 +4,7 @@ pub mod assets;
 pub mod bolagsverket;
 mod company;
 mod grpc;
+mod invoicing;
 mod ledger;
 
 use axum::Router;
@@ -12,6 +13,7 @@ use axum::middleware::Next;
 use axum::routing::get;
 use doris_proto::auth::v1::auth_service_server::AuthServiceServer;
 use doris_proto::company::v1::company_service_server::CompanyServiceServer;
+use doris_proto::invoicing::v1::invoicing_service_server::InvoicingServiceServer;
 use doris_proto::ledger::v1::ledger_service_server::LedgerServiceServer;
 use http::header::CONTENT_TYPE;
 use http::{HeaderName, HeaderValue, Method, StatusCode};
@@ -25,6 +27,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 pub use company::CompanyApi;
 pub use grpc::{AuthApi, SESSION_COOKIE};
+pub use invoicing::InvoicingApi;
 pub use ledger::LedgerApi;
 
 /// Builds the app. `E` is the embedded frontend (see [`assets::WebDist`]).
@@ -33,6 +36,7 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
     api: AuthApi,
     companies: CompanyApi,
     ledger: LedgerApi,
+    invoicing: InvoicingApi,
     cors_origins: Vec<HeaderValue>,
     serve_frontend: bool,
 ) -> Router {
@@ -44,6 +48,7 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
                 .max_decoding_message_size(ledger::MAX_REQUEST)
                 .max_encoding_message_size(ledger::MAX_RESPONSE),
         )
+        .add_service(InvoicingServiceServer::new(invoicing))
         .into_axum_router()
         .layer(axum::middleware::from_fn_with_state(pool, session_gate))
         .layer(GrpcWebLayer::new())

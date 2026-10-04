@@ -33,6 +33,7 @@ spec in `docs/superpowers/specs/` and an implementation plan in
 proto/              .proto files (package doris.<area>.v1)
 migrations/         sqlx migrations, NNNN_name.sql, shared by all crates
 crates/company      doris-company: companies, members, fiscal year and accounting method
+crates/invoicing    doris-invoicing: customers and suppliers (fakturor later)
 crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
 crates/identity     doris-identity: users, passkeys, invitations, sessions
 crates/ledger       doris-ledger: chart of accounts, vouchers, opening balances and year closing
@@ -121,7 +122,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 
 ## API
 - The contract lives in `proto/doris/auth/v1/auth.proto`,
-  `proto/doris/company/v1/company.proto` and `proto/doris/ledger/v1/ledger.proto`. `doris-proto` generates
+  `proto/doris/company/v1/company.proto`, `proto/doris/ledger/v1/ledger.proto` and
+  `proto/doris/invoicing/v1/invoicing.proto`. `doris-proto` generates
   the client; its `server` feature adds the server stubs. The client builds for
   wasm32 because no transport is generated.
 - gRPC-Web over HTTP/1.1 (`tonic_web::GrpcWebLayer`) shares one port with the
@@ -133,7 +135,18 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   personal data. The mapping is in `crates/server/src/grpc.rs` (`status`,
   `domain_code`). Company codes are mapped in `crates/server/src/company.rs`
   (`status`, `domain_status`). Ledger codes are mapped in
-  `crates/server/src/ledger.rs` (`status`, `domain_status`).
+  `crates/server/src/ledger.rs` (`status`, `domain_status`). Invoicing codes
+  are mapped in `crates/server/src/invoicing.rs` (`status`, `domain_status`).
+- `InvoicingService` keeps a customer and a supplier register per
+  company (`customers-{company}` and `suppliers-{company}` streams; the
+  `customers`/`suppliers` projections hold the details as JSON).
+  Numbers run 1..=n per company and register, decided in the write
+  transaction. A party is never removed, only deactivated. Codes:
+  `invalid_name`, `invalid_vat_number`, `invalid_payment_terms`,
+  `invalid_bankgiro`, `invalid_plusgiro`, `invalid_iban`, `invalid_bic`,
+  `customer_not_found` and `supplier_not_found` (plus `invalid_org_nr`,
+  `invalid_address` and `invalid_email`). The VAT number's format is
+  checked, never looked up in VIES.
 - `LedgerService` also has `GetOpeningBalances`, `SetOpeningBalances`,
   `CloseFiscalYear` and `ReopenFiscalYear`. Their codes are
   `not_balance_sheet_account`, `duplicate_account`,
