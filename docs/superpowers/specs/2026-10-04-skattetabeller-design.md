@@ -95,7 +95,9 @@ CREATE TABLE tax_tables (
 ALTER TABLE employees ADD COLUMN tax_table  INTEGER;  -- with tax_column
 ALTER TABLE employees ADD COLUMN tax_column INTEGER;
 ALTER TABLE employees ADD COLUMN tax_percent INTEGER;
-ALTER TABLE payroll_run_lines ADD COLUMN tax_basis TEXT; -- JSON TaxBasis, NULL while open
+-- payroll_run_lines.tax becomes nullable (NULL: computed) and gains
+-- tax_basis (JSON TaxBasis, NULL while open). SQLite can't drop NOT NULL,
+-- so the projection table is recreated and its rows copied.
 ```
 - `employees` får sina skattekolumner från `EmployeeTaxChanged`, och en ny inställning nollställer den andra varianten.
 - `payroll_run_lines.tax_basis` sätts av `PayrollRunFinalized` och nollställs av `PayrollRunReopened`.
@@ -150,7 +152,8 @@ message TableBasis { uint32 year = 1; uint32 table = 2; uint32 column = 3; }
 // Employee:            TaxSetting tax = 7;          (unset: no setting)
 // AddEmployeeRequest:  TaxSetting tax = 6;          (optional)
 // PayrollRunLineInput: optional int64 tax = 3;      (unset: computed)
-// PayrollRunLine:      TaxBasis tax_basis = 9;      (once finalized, and in a preview)
+// PayrollRunLine:      optional int64 tax = 4;      (unset: open line, computed)
+//                      TaxBasis tax_basis = 9;      (once finalized, and in a preview)
 
 rpc SetEmployeeTax(SetEmployeeTaxRequest) returns (SetEmployeeTaxResponse);
 message SetEmployeeTaxRequest { string company_id = 1; string employee_id = 2; TaxSetting tax = 3; }
