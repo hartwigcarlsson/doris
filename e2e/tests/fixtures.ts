@@ -159,6 +159,9 @@ export async function addCompany(
   await page.getByLabel(method).check();
   await page.getByRole("button", { name: "Spara företag" }).click();
   await expect(page.getByRole("heading", { name })).toBeVisible();
+  // The company page's address ends with the new company's id.
+  await page.waitForURL(/\/companies\/[0-9a-f-]{36}$/);
+  return new URL(page.url()).pathname.split("/").pop()!;
 }
 
 export async function addSupplier(page: Page, app: string, name: string) {
@@ -216,4 +219,32 @@ export async function goTo(page: Page, link: string) {
   if (menu === undefined) throw new Error(`no header link called ${link}`);
   const scope = menu ? await openMenu(page, menu) : page.getByRole("banner");
   await scope.getByRole("link", { name: link, exact: true }).click();
+}
+
+// Protobuf by hand, for the one request the tests send many of.
+const varint = (n: number): number[] => (n < 0x80 ? [n] : [(n & 0x7f) | 0x80, ...varint(Math.floor(n / 128))]);
+const bytes = (field: number, body: number[]) => [(field << 3) | 2, ...varint(body.length), ...body];
+const text = (field: number, s: string) => bytes(field, [...Buffer.from(s, "utf8")]);
+const uint = (field: number, n: number) => [field << 3, ...varint(n)];
+
+/** Records `count` vouchers (1930 against 3001, 1 kr more each) over
+ * gRPC-Web with the page's session: far quicker than the form. */
+export async function bookMany(page: Page, app: string, companyId: string, count: number, date: string) {
+  for (let i = 1; i <= count; i++) {
+    const ore = i * 100;
+    const message = [
+      ...text(1, companyId),
+      ...text(2, date),
+      ...text(3, `Serie ${i}`),
+      ...bytes(4, [...uint(1, 1930), ...uint(2, ore)]),
+      ...bytes(4, [...uint(1, 3001), ...uint(3, ore)]),
+    ];
+    const frame = Buffer.from([0, ...[24, 16, 8, 0].map((s) => (message.length >>> s) & 0xff), ...message]);
+    const response = await page.request.post(`${app}/doris.ledger.v1.LedgerService/RecordVoucher`, {
+      headers: { "content-type": "application/grpc-web+proto", "x-grpc-web": "1" },
+      data: frame,
+    });
+    const status = response.headers()["grpc-status"] ?? (await response.body()).toString("latin1").match(/grpc-status: ?(\d+)/)?.[1];
+    if (status !== undefined && status !== "0") throw new Error(`RecordVoucher ${i} failed: grpc-status ${status}`);
+  }
 }

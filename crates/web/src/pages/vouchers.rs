@@ -7,10 +7,11 @@ use crate::errors::{describe, describe_code};
 use crate::fiscal_year::is_closed;
 use crate::format::{amount, today};
 use crate::ui::{
-    Badge, Button, ErrorAlert, FileInput, Icon, IconName, LinkButton, PageHeader, SELECT_OPTION,
-    Select, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
-    TextInput, Variant,
+    Badge, Button, Checkbox, ErrorAlert, FileInput, INPUT, Icon, IconName, LinkButton, PageHeader,
+    SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table,
+    TableCard, TextInput, Variant,
 };
+use crate::voucher_search::{Filter, PAGE, shown, visible};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -46,7 +47,10 @@ pub fn Vouchers() -> impl IntoView {
                 })
                 .await;
             // Company or year changed meanwhile: this answer is stale.
-            if company_id != companies.active.get_untracked() || start != year.get_untracked() {
+            // `try_`: the page may be gone, and its signals with it.
+            if company_id != companies.active.get_untracked()
+                || year.try_get_untracked().as_deref() != Some(start.as_str())
+            {
                 return;
             }
             match result {
@@ -107,6 +111,31 @@ pub fn Vouchers() -> impl IntoView {
     });
     let changed = Callback::new(move |()| load());
 
+    let query = RwSignal::new(String::new());
+    let missing = RwSignal::new(false);
+    let corrections = RwSignal::new(false);
+    let limit = RwSignal::new(PAGE);
+    let filter = Memo::new(move |_| Filter {
+        query: query.get(),
+        missing_attachment: missing.get(),
+        corrections: corrections.get(),
+    });
+    // A new question, year or company starts from the top.
+    Effect::new(move |_| {
+        filter.track();
+        year.track();
+        limit.set(PAGE);
+    });
+    // (company, fiscal year, vouchers) as loaded; the list shows the
+    // matching ones, highest number first.
+    let matching = Memo::new(move |_| {
+        let (company_id, fiscal_year, mut list) = vouchers.get();
+        let filter = filter.get();
+        names.with(|accounts| list.retain(|v| visible(v, accounts, &filter)));
+        list.sort_by_key(|v| std::cmp::Reverse(v.number));
+        (company_id, fiscal_year, list)
+    });
+
     view! {
         <div class="grid gap-6">
             <PageHeader title="Verifikationer">
@@ -127,7 +156,20 @@ pub fn Vouchers() -> impl IntoView {
                 <LinkButton href="/vouchers/new" icon=IconName::Plus>"Ny verifikation"</LinkButton>
             </PageHeader>
             <ErrorAlert message=error />
-            <TableCard>
+            <TableCard toolbar=move || view! {
+                <div class="relative max-w-xs flex-[1_1_15rem]">
+                    <Icon name=IconName::Search class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                        type="search"
+                        aria-label="Sök bland verifikationer"
+                        placeholder="Sök nummer, text, konto eller belopp"
+                        class=format!("{INPUT} pl-7")
+                        bind:value=query
+                    />
+                </div>
+                <Checkbox label="Saknar underlag" id="missing_attachment" checked=missing />
+                <Checkbox label="Rättelser" id="corrections" checked=corrections />
+            }>
             <Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
@@ -143,8 +185,9 @@ pub fn Vouchers() -> impl IntoView {
                 <tbody class=TABLE_BODY>
                     <For
                         each=move || {
-                            let (company_id, fiscal_year, list) = vouchers.get();
+                            let (company_id, fiscal_year, list) = matching.get();
                             list.into_iter()
+                                .take(limit.get())
                                 .map(|v| (company_id.clone(), fiscal_year.clone(), v))
                                 .collect::<Vec<_>>()
                         }
@@ -157,6 +200,27 @@ pub fn Vouchers() -> impl IntoView {
                     </For>
                 </tbody>
             </Table>
+            {move || {
+                // The year is set once its vouchers are in: nothing to say before.
+                let loaded = vouchers.with(|(_, fiscal_year, _)| fiscal_year.is_some());
+                let in_year = vouchers.with(|(_, _, list)| list.len());
+                let total = matching.with(|(_, _, list)| list.len());
+                let showing = shown(total, limit.get());
+                loaded.then(|| view! {
+                    <div class="flex flex-wrap items-center justify-between gap-4 px-2 pt-2 pb-1">
+                        {if in_year == 0 {
+                            view! { <p class="text-muted-foreground">"Inga verifikationer under räkenskapsåret."</p> }.into_any()
+                        } else if total == 0 {
+                            view! { <p class="text-muted-foreground">"Inga verifikationer matchar."</p> }.into_any()
+                        } else {
+                            view! { <p role="status" class="text-muted-foreground">{format!("Visar {showing} av {total}")}</p> }.into_any()
+                        }}
+                        {(showing < total).then(|| view! {
+                            <Button variant=Variant::Outline kind="button" on:click=move |_| limit.update(|l| *l += PAGE)>"Visa fler"</Button>
+                        })}
+                    </div>
+                })
+            }}
             </TableCard>
         </div>
     }

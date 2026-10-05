@@ -12,7 +12,7 @@ const BUTTON_OUTLINE: &str = "border-border hover:bg-muted hover:text-foreground
 const BADGE: &str = "inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-[0.625rem] font-medium whitespace-nowrap";
 /// A form card's width in the preset: 352px.
 pub const NARROW: &str = "w-full max-w-[22rem]";
-const INPUT: &str = "h-7 w-full min-w-0 rounded-md border border-input bg-input/20 px-2 py-0.5 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 read-only:cursor-default read-only:border-dashed read-only:focus-visible:border-input read-only:bg-muted read-only:text-muted-foreground md:text-xs/relaxed dark:bg-input/30";
+pub const INPUT: &str = "h-7 w-full min-w-0 rounded-md border border-input bg-input/20 px-2 py-0.5 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 read-only:cursor-default read-only:border-dashed read-only:focus-visible:border-input read-only:bg-muted read-only:text-muted-foreground md:text-xs/relaxed dark:bg-input/30";
 const INPUT_FILE: &str = "file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-xs/relaxed file:font-medium file:text-foreground";
 const LABEL: &str = "flex items-center gap-2 text-xs/relaxed leading-none font-medium select-none";
 /// shadcn NativeSelectOption: keeps the dropdown readable in dark mode.
@@ -215,11 +215,16 @@ pub fn Panel(#[prop(optional)] class: &'static str, children: Children) -> impl 
     }
 }
 
-/// A card around a `Table`.
+/// A card around a `Table`, with an optional row above it for a search
+/// field and filters.
 #[component]
-pub fn TableCard(children: Children) -> impl IntoView {
+pub fn TableCard(
+    #[prop(optional, into)] toolbar: Option<ViewFn>,
+    children: Children,
+) -> impl IntoView {
     view! {
         <section class="overflow-hidden rounded-lg bg-card px-2 py-2 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10">
+            {toolbar.map(|toolbar| view! { <div class="flex flex-wrap items-center gap-4 px-2 pt-2 pb-1">{toolbar.run()}</div> })}
             {children()}
         </section>
     }
@@ -420,6 +425,7 @@ pub enum IconName {
     Landmark,
     CircleAlert,
     Clock,
+    Search,
     Plus,
     ChevronDown,
     ChevronRight,
@@ -428,7 +434,7 @@ pub enum IconName {
 
 impl IconName {
     #[cfg(test)]
-    const ALL: [IconName; 21] = [
+    const ALL: [IconName; 22] = [
         IconName::ReceiptText,
         IconName::Scale,
         IconName::ChartColumn,
@@ -446,6 +452,7 @@ impl IconName {
         IconName::Landmark,
         IconName::CircleAlert,
         IconName::Clock,
+        IconName::Search,
         IconName::Plus,
         IconName::ChevronDown,
         IconName::ChevronRight,
@@ -505,6 +512,9 @@ impl IconName {
             }
             IconName::Clock => {
                 r#"<circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path>"#
+            }
+            IconName::Search => {
+                r#"<path d="m21 21-4.34-4.34"></path><circle cx="11" cy="11" r="8"></circle>"#
             }
             IconName::Plus => r#"<path d="M5 12h14"></path><path d="M12 5v14"></path>"#,
             IconName::ChevronDown => r#"<path d="m6 9 6 6 6-6"></path>"#,

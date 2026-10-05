@@ -1,9 +1,6 @@
 //! Which vouchers the list shows for what is typed and ticked. Pure: the
 //! page already holds the year's vouchers and the chart of accounts.
 
-// Used by Verifikationer from the next commits on.
-#![allow(dead_code)]
-
 use crate::api::lpb;
 use crate::format::parse_amount;
 
