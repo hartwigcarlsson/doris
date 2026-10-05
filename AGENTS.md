@@ -333,7 +333,7 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `npx shadcn init -t vite -b radix -p b1Gdz9bFY` in a scratch directory and
   copying the classes.
 - `src/nav.rs` holds the header: one row with Doris, the company picker,
-  the main menu (Översikt, Bokföring, Inköp, Kunder, Lön) and the account
+  the main menu (Översikt, Bokföring, Inköp, Försäljning, Lön) and the account
   menu. Menus are native `<details name="doris-nav">`, so the browser keeps
   one open; one listener closes them on Escape, on a click outside and on
   a click on a link. `section_of` decides which menu a path belongs to: add

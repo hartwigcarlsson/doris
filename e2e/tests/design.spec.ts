@@ -39,14 +39,14 @@ test("the header is one row with grouped menus", async ({ page, app }) => {
   expect(height).toBeGreaterThanOrEqual(48);
   expect(height).toBeLessThanOrEqual(49);
   await expect(banner.getByRole("link", { name: "Översikt" })).toBeVisible();
-  await expect(banner.getByRole("link", { name: "Kunder" })).toBeVisible();
   await expect(banner.getByRole("link", { name: "Verifikationer" })).toBeHidden();
 
   expect(await linksIn(await openMenu(page, "Bokföring"))).toEqual(["Verifikationer", "Saldobalans", "Rapporter", "Kontoplan", "Räkenskapsår"]);
   expect(await linksIn(await openMenu(page, "Inköp"))).toEqual(["Leverantörsfakturor", "Leverantörer"]);
   // Opening one menu closed the one before it.
   await expect(banner.getByRole("link", { name: "Verifikationer" })).toBeHidden();
-  expect(await linksIn(await openMenu(page, "Lön"))).toEqual(["Lönekörningar", "Anställda"]);
+  expect(await linksIn(await openMenu(page, "Försäljning"))).toEqual(["Kundfakturor", "Kunder"]);
+  expect(await linksIn(await openMenu(page, "Lön"))).toEqual(["Lönekörningar", "Anställda", "Arbetsgivardeklaration"]);
   const account = await openMenu(page, "Konto");
   expect(await linksIn(account)).toEqual(["Företag", "Passkeys", "Inbjudningar"]);
   await expect(account.getByRole("button", { name: "Logga ut" })).toBeVisible();
@@ -105,7 +105,7 @@ test("nothing spills out of the header, with a menu open or not", async ({ page,
     await page.setViewportSize({ width, height: 800 });
     const picker = await page.getByLabel("Aktivt företag").boundingBox();
     expect(picker!.width, `picker at ${width}px`).toBeGreaterThanOrEqual(150);
-    for (const menu of [null, "Bokföring", "Inköp", "Lön", "Konto"] as const) {
+    for (const menu of [null, "Bokföring", "Inköp", "Försäljning", "Lön", "Konto"] as const) {
       if (menu) await openMenu(page, menu);
       const wider = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
       expect(wider, `page scrolls sideways at ${width}px with ${menu ?? "no menu"} open`).toBe(false);
@@ -228,6 +228,7 @@ test("every signed-in view has one h1 and no page scrolls sideways", async ({ pa
   await addCompany(page, app, "5560160680", "Exempel AB");
   const paths = [
     "/", "/companies", "/companies/new", "/accounts", "/vouchers", "/vouchers/new", "/customers", "/suppliers",
+    "/customer-invoices", "/customer-invoices/new", "/agi",
     "/supplier-invoices", "/supplier-invoices/new", "/trial-balance", "/trial-balance/1930", "/financial-statements",
     "/fiscal-years", "/opening-balances", "/employees", "/payroll-runs", "/payroll-runs/new", "/settings/passkeys",
     "/admin/invitations",

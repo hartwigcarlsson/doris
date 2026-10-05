@@ -16,11 +16,11 @@ use wasm_bindgen::JsCast;
 pub enum Section {
     Bookkeeping,
     Purchases,
-    Customers,
+    Sales,
     Payroll,
 }
 
-const SECTIONS: [(&str, Section); 11] = [
+const SECTIONS: [(&str, Section); 13] = [
     ("/vouchers", Section::Bookkeeping),
     ("/trial-balance", Section::Bookkeeping),
     ("/financial-statements", Section::Bookkeeping),
@@ -29,7 +29,9 @@ const SECTIONS: [(&str, Section); 11] = [
     ("/opening-balances", Section::Bookkeeping),
     ("/supplier-invoices", Section::Purchases),
     ("/suppliers", Section::Purchases),
-    ("/customers", Section::Customers),
+    ("/customers", Section::Sales),
+    ("/customer-invoices", Section::Sales),
+    ("/agi", Section::Payroll),
     ("/payroll-runs", Section::Payroll),
     ("/employees", Section::Payroll),
 ];
@@ -197,10 +199,14 @@ pub fn Header() -> impl IntoView {
                                 <NavItem href="/supplier-invoices" icon=IconName::FileText label="Leverantörsfakturor" />
                                 <NavItem href="/suppliers" icon=IconName::Building2 label="Leverantörer" />
                             </NavMenu>
-                            <A href="/customers" attr:class=TOP>"Kunder"</A>
+                            <NavMenu label="Försäljning" current=in_section(Section::Sales)>
+                                <NavItem href="/customer-invoices" icon=IconName::FileText label="Kundfakturor" />
+                                <NavItem href="/customers" icon=IconName::Contact label="Kunder" />
+                            </NavMenu>
                             <NavMenu label="Lön" current=in_section(Section::Payroll)>
                                 <NavItem href="/payroll-runs" icon=IconName::Banknote label="Lönekörningar" />
                                 <NavItem href="/employees" icon=IconName::Users label="Anställda" />
+                                <NavItem href="/agi" icon=IconName::Landmark label="Arbetsgivardeklaration" />
                             </NavMenu>
                         </nav>
                     </Show>
@@ -256,7 +262,10 @@ mod tests {
             ("/supplier-invoices", Some(Purchases)),
             ("/supplier-invoices/new", Some(Purchases)),
             ("/suppliers", Some(Purchases)),
-            ("/customers", Some(Customers)),
+            ("/customers", Some(Sales)),
+            ("/customer-invoices", Some(Sales)),
+            ("/customer-invoices/new", Some(Sales)),
+            ("/agi", Some(Payroll)),
             ("/payroll-runs", Some(Payroll)),
             ("/payroll-runs/abc", Some(Payroll)),
             ("/employees", Some(Payroll)),

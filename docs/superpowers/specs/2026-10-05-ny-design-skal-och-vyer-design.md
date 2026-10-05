@@ -38,8 +38,10 @@ En rad, `min-h-12`, i den här ordningen:
 | Översikt | länk till `/` |
 | Bokföring ▾ | Verifikationer `/vouchers` (receipt-text), Saldobalans `/trial-balance` (scale), Rapporter `/financial-statements` (chart-column), Kontoplan `/accounts` (list-tree), Räkenskapsår `/fiscal-years` (calendar-range) |
 | Inköp ▾ | Leverantörsfakturor `/supplier-invoices` (file-text), Leverantörer `/suppliers` (building-2) |
-| Kunder | länk till `/customers` |
-| Lön ▾ | Lönekörningar `/payroll-runs` (banknote), Anställda `/employees` (users) |
+| Försäljning ▾ | Kundfakturor `/customer-invoices` (file-text), Kunder `/customers` (contact) |
+| Lön ▾ | Lönekörningar `/payroll-runs` (banknote), Anställda `/employees` (users), Arbetsgivardeklaration `/agi` (landmark) |
+
+Försäljning och Arbetsgivardeklaration kom till när grenen rebasades på main, som då hade fått kundfakturor och AGI. Innan dess var Kunder en egen länk i menyraden.
 
 4. **Användarmenyn** längst till höger (`ml-auto`): en rund markering med initialerna ur visningsnamnet, namnet och en pil. Innehåll: Företag `/companies` (building), Passkeys `/settings/passkeys` (key-round), Inbjudningar `/admin/invitations` (mail-plus, bara för administratörer), en avdelare och Logga ut (log-out).
 

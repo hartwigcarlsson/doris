@@ -174,11 +174,12 @@ export async function addCustomer(page: Page, app: string, name: string, terms =
   await expect(page.getByRole("row", { name: new RegExp(`^1 ${name}`) })).toBeVisible();
 }
 
-export type Menu = "Bokföring" | "Inköp" | "Lön" | "Konto";
+export type Menu = "Bokföring" | "Inköp" | "Försäljning" | "Lön" | "Konto";
 
 const MENU_OF: Record<string, Menu | null> = {
   Översikt: null,
-  Kunder: null,
+  Kundfakturor: "Försäljning",
+  Kunder: "Försäljning",
   Verifikationer: "Bokföring",
   Saldobalans: "Bokföring",
   Rapporter: "Bokföring",
@@ -188,6 +189,7 @@ const MENU_OF: Record<string, Menu | null> = {
   Leverantörer: "Inköp",
   Lönekörningar: "Lön",
   Anställda: "Lön",
+  Arbetsgivardeklaration: "Lön",
   Företag: "Konto",
   Passkeys: "Konto",
   Inbjudningar: "Konto",

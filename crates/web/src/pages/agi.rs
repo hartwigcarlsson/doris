@@ -9,8 +9,8 @@ use crate::attachments::save_as;
 use crate::errors::describe;
 use crate::format::amount;
 use crate::ui::{
-    Button, Card, ErrorAlert, Field, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
-    TABLE_HEADER_CELL, TABLE_ROW, Table, Variant,
+    Button, Card, ErrorAlert, Field, PageHeader, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL,
+    TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, Variant,
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
@@ -150,8 +150,8 @@ pub fn Agi() -> impl IntoView {
     };
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <h1 class="text-sm font-medium">"Arbetsgivardeklaration"</h1>
+        <div class="grid gap-6">
+            <PageHeader title="Arbetsgivardeklaration" />
             <ErrorAlert message=error />
             <Card title="Kontaktperson" description="Den som Skatteverket kan kontakta om arbetsgivardeklarationen.">
                 <form class="grid grid-cols-3 items-end gap-4" novalidate on:submit=save_contact>
@@ -163,7 +163,7 @@ pub fn Agi() -> impl IntoView {
                     </div>
                 </form>
             </Card>
-            <Table>
+            <TableCard><Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
                         <th class=TABLE_HEADER_CELL>"Period"</th>
@@ -185,7 +185,7 @@ pub fn Agi() -> impl IntoView {
                         <MonthRow company_id=company_id summary=summary has_contact=has_contact changed=changed error=error />
                     </For>
                 </tbody>
-            </Table>
+            </Table></TableCard>
         </div>
     }
 }

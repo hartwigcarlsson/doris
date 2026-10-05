@@ -1,4 +1,4 @@
-import { addCompany, expect, register, test } from "./fixtures";
+import { addCompany, expect, goTo, register, test } from "./fixtures";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -12,9 +12,8 @@ const periodLabel = `${MONTHS[now.getMonth()]} ${now.getFullYear()}`;
 test("a month is declared, downloaded and corrected", async ({ page, app }, testInfo) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
-  const banner = (name: string) => page.getByRole("banner").getByRole("link", { name });
 
-  await banner("Anställda").click();
+  await goTo(page, "Anställda");
   await page.getByLabel("Namn").fill("Åsa Öberg");
   await page.getByLabel("Personnummer").fill("19800101-1231");
   await page.getByLabel("Månadslön (kr)").fill("35000");
@@ -22,7 +21,7 @@ test("a month is declared, downloaded and corrected", async ({ page, app }, test
   await page.getByRole("button", { name: "Lägg till anställd" }).click();
   await expect(page.getByRole("row", { name: /^Åsa Öberg/ })).toBeVisible();
 
-  await banner("Lönekörningar").click();
+  await goTo(page, "Lönekörningar");
   await page.getByRole("link", { name: "Ny lönekörning" }).click();
   await expect(page.getByLabel("Brutto, Åsa Öberg")).toHaveValue(/35\s000,00/);
   await page.getByLabel("Utbetalningsdag").fill(today);
@@ -32,7 +31,7 @@ test("a month is declared, downloaded and corrected", async ({ page, app }, test
   await expect(page.getByRole("link", { name: "Ver 1" })).toBeVisible();
   const runUrl = page.url();
 
-  await banner("Arbetsgivardeklaration").click();
+  await goTo(page, "Arbetsgivardeklaration");
   const row = page.getByRole("row", { name: new RegExp(`^${periodLabel}`) });
   await expect(row).toContainText("Ej deklarerad");
   await expect(row).toContainText(/10\s997,00/);
@@ -63,7 +62,7 @@ test("a month is declared, downloaded and corrected", async ({ page, app }, test
   await page.getByRole("button", { name: "Bekräfta backning" }).click();
   await expect(page.getByText("Att bokföra")).toBeVisible();
 
-  await banner("Arbetsgivardeklaration").click();
+  await goTo(page, "Arbetsgivardeklaration");
   const changed = page.getByRole("row", { name: new RegExp(`^${periodLabel}`) });
   await expect(changed).toContainText("Ändrad");
   await changed.getByRole("button", { name: periodLabel }).click();
