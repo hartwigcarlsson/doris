@@ -7,7 +7,7 @@ use crate::errors::{describe, describe_code};
 use crate::fiscal_year::is_closed;
 use crate::format::{amount, today};
 use crate::ui::{
-    Button, ErrorAlert, FileInput, PaperclipIcon, SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL,
+    Button, ErrorAlert, FileInput, Icon, IconName, SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL,
     TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TextInput, Variant,
 };
 use leptos::prelude::*;
@@ -327,7 +327,7 @@ fn VoucherRow(
                     (count > 0)
                         .then(|| view! {
                             <span class="inline-flex items-center gap-1 text-muted-foreground">
-                                <PaperclipIcon />
+                                <Icon name=IconName::Paperclip />
                                 {count}
                                 <span class="sr-only">" underlag"</span>
                             </span>
