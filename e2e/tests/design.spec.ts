@@ -184,3 +184,16 @@ test("the purchase and customer views follow the design", async ({ page, app }) 
   await add.click();
   await expectDesign(page, "Ny leverantörsfaktura");
 });
+
+test("the payroll views follow the design", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await goTo(page, "Anställda");
+  await expectDesign(page, "Anställda");
+  await goTo(page, "Lönekörningar");
+  await expectDesign(page, "Lönekörningar");
+  const add = page.getByRole("main").getByRole("link", { name: "Ny lönekörning" });
+  expect((await add.boundingBox())!.height).toBe(28);
+  await add.click();
+  await expectDesign(page, /lönekörning/i);
+});
