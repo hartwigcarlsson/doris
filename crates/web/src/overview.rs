@@ -1,9 +1,6 @@
 //! The overview's figures, worked out from what the existing RPCs return.
 //! Pure: the page passes in the messages and today's date.
 
-// Used by the overview page from the next commits on.
-#![allow(dead_code)]
-
 use crate::api::{ipb, lpb, ppb};
 use crate::format::{amount, day_number, plus_days};
 

@@ -8,8 +8,8 @@ use crate::errors::describe;
 use crate::fiscal_year::{FiscalYearSelect, keep_year_in_url};
 use crate::format::{accounting_method_label, amount, legal_form_label, today};
 use crate::overview::{
-    KeyFigures, Todo, TodoInput, default_year, key_figures, progress, todo_list,
-    unpaid_supplier_invoices, whole_kronor,
+    KeyFigures, Todo, TodoInput, bar_height, by_month, default_year, key_figures, month_label,
+    progress, scale, todo_list, unpaid_supplier_invoices, whole_kronor,
 };
 use crate::ui::{
     Badge, BadgeVariant, Card, Icon, IconName, LinkButton, PageHeader, Panel, TABLE_AMOUNT_CELL,
@@ -303,6 +303,7 @@ fn Overview() -> impl IntoView {
                 <FiscalYearCard years=years chosen=chosen vouchers=vouchers />
             </div>
             <div class="flex flex-wrap gap-4">
+                <MonthChart chosen=chosen vouchers=vouchers />
                 <UnpaidCard invoices=supplier_invoices />
             </div>
             <LatestVouchers vouchers=vouchers />
@@ -388,7 +389,7 @@ fn FiscalYearCard(
                                             aria-valuenow=p.percent.to_string()
                                             class="h-1.5 overflow-hidden rounded-full bg-muted"
                                         >
-                                            <div class="h-full bg-primary" style=format!("width: {}%", p.percent)></div>
+                                            <div class="h-full bg-chart-1" style=format!("width: {}%", p.percent)></div>
                                         </div>
                                         <div class="flex justify-between gap-2 text-muted-foreground">
                                             <span>{format!("Dag {} av {}", p.day, p.days)}</span>
@@ -581,5 +582,94 @@ fn LatestVouchers(vouchers: Loaded<Vec<lpb::Voucher>>) -> impl IntoView {
                     .into_any()
             })}
         </OverviewCard>
+    }
+}
+
+/// The chart's plot height in pixels.
+const PLOT: u32 = 160;
+
+/// Income and costs per month, as two bars a month.
+#[component]
+fn MonthChart(
+    chosen: Signal<Option<lpb::FiscalYear>>,
+    vouchers: Loaded<Vec<lpb::Voucher>>,
+) -> impl IntoView {
+    // The axis counts thousands of kronor, or kronor while the largest
+    // month is under 2 000 kr and the half-way line would read "0".
+    let top = Signal::derive(move || match (chosen.get(), vouchers.get()) {
+        (Some(y), Some(Ok(list))) => scale(&by_month(&y.start, &y.end, &list)),
+        _ => 0,
+    });
+    let thousands = move || top.get() == 0 || top.get() >= 200_000;
+    view! {
+        <Panel class="min-w-0 flex-[2_1_480px]">
+            <div class="grid gap-3">
+                <div class="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <h2 class="text-sm font-medium">"Intäkter och kostnader per månad"</h2>
+                        <p class="text-muted-foreground">{move || if thousands() { "Tusental kronor" } else { "Kronor" }}</p>
+                    </div>
+                    <ul class="flex gap-4">
+                        <li class="flex items-center gap-1.5"><span data-legend class="size-2 rounded-xs bg-chart-1"></span>"Intäkter"</li>
+                        <li class="flex items-center gap-1.5"><span data-legend class="size-2 rounded-xs bg-chart-2"></span>"Kostnader"</li>
+                    </ul>
+                </div>
+                {pending(move || vouchers.get(), move |list: Vec<lpb::Voucher>| {
+                    let Some(fiscal_year) = chosen.get() else {
+                        return ().into_any();
+                    };
+                    let months = by_month(&fiscal_year.start, &fiscal_year.end, &list);
+                    let top = scale(&months);
+                    let unit = if thousands() { 100_000 } else { 100 };
+                    let this_month = today().get(..7).unwrap_or_default().to_owned();
+                    // Gridlines at half and full scale.
+                    let label = move |ore: i64| (ore / unit).to_string();
+                    let columns = format!("grid-template-columns: repeat({}, minmax(0, 1fr))", months.len().max(1));
+                    view! {
+                        <figure
+                            role="img"
+                            aria-label=format!("Intäkter och kostnader per månad, {} – {}", fiscal_year.start, fiscal_year.end)
+                            class="grid gap-1.5"
+                        >
+                            <div class="flex gap-2">
+                                <div class="relative w-8 text-right text-muted-foreground tabular-nums" style=format!("height: {PLOT}px")>
+                                    <span class="absolute right-0 bottom-0 translate-y-1/2 leading-none">"0"</span>
+                                    {(top > 0).then(|| view! {
+                                        <span class="absolute right-0 bottom-1/2 translate-y-1/2 leading-none">{label(top / 2)}</span>
+                                        <span class="absolute top-0 right-0 -translate-y-1/2 leading-none">{label(top)}</span>
+                                    })}
+                                </div>
+                                <div class="relative min-w-0 flex-1 border-b" style=format!("height: {PLOT}px")>
+                                    <div class="absolute inset-x-0 top-0 border-t"></div>
+                                    <div class="absolute inset-x-0 top-1/2 border-t"></div>
+                                    <div class="absolute inset-0 grid items-end" style=columns.clone()>
+                                        {months
+                                            .iter()
+                                            .map(|m| view! {
+                                                <div data-month=m.month.clone() class="flex items-end justify-center gap-0.5">
+                                                    <div class="w-3 max-w-[40%] rounded-t-sm bg-chart-1" style=format!("height: {}px", bar_height(m.income, top, PLOT))></div>
+                                                    <div class="w-3 max-w-[40%] rounded-t-sm bg-chart-2" style=format!("height: {}px", bar_height(m.costs, top, PLOT))></div>
+                                                </div>
+                                            })
+                                            .collect_view()}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ml-10 grid text-center text-muted-foreground" style=columns>
+                                {months
+                                    .iter()
+                                    .map(|m| {
+                                        let current = m.month == this_month;
+                                        view! { <span class=if current { "font-medium text-foreground" } else { "" }>{month_label(&m.month)}</span> }
+                                    })
+                                    .collect_view()}
+                            </div>
+                        </figure>
+                        <A href="/financial-statements" attr:class="font-medium underline-offset-4 hover:underline">"Visa resultaträkningen"</A>
+                    }
+                        .into_any()
+                })}
+            </div>
+        </Panel>
     }
 }

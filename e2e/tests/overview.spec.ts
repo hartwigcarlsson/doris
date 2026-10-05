@@ -123,3 +123,41 @@ test("an overdue supplier invoice is on the to-do list and leads to the invoices
   await todo.getByRole("link", { name: "Visa fakturorna" }).click();
   await expect(page).toHaveURL(/\/supplier-invoices$/);
 });
+
+test("the chart draws a bar for a month with income and none for an empty one", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await book(page, app, `${year}-01-15`, "1000");
+  await page.goto(app);
+  const chart = figure(page, "Intäkter och kostnader per månad");
+  await expect(chart.getByRole("img")).toHaveAttribute("aria-label", /Intäkter och kostnader per månad/);
+  await expect(chart.getByText("Intäkter", { exact: true })).toBeVisible();
+  await expect(chart.getByText("Kostnader", { exact: true })).toBeVisible();
+  const heights = await chart.locator("[data-month]").evaluateAll((months) =>
+    months.map((m) => [m.getAttribute("data-month"), ...[...m.children].map((bar) => Math.round(bar.getBoundingClientRect().height))]),
+  );
+  expect(heights).toHaveLength(12);
+  expect(heights[0]).toEqual([`${year}-01`, 160, 0]);
+  expect(heights[1]).toEqual([`${year}-02`, 0, 0]);
+  // The two series are told apart by lightness, in both schemes.
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    const [income, costs] = await chart.locator("[data-legend]").evaluateAll((els) => els.map((el) => getComputedStyle(el).backgroundColor));
+    expect(income, scheme).not.toBe(costs);
+    expect(income, scheme).not.toBe("rgba(0, 0, 0, 0)");
+  }
+});
+
+test("the overview fits a phone in both colour schemes", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await book(page, app, `${year}-01-15`, "1000");
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto(app);
+    await expect(figure(page, "Senaste verifikationer").getByRole("row")).toHaveCount(2);
+    const wider = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+    expect(wider, scheme).toBe(false);
+  }
+});
