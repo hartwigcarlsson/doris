@@ -418,6 +418,8 @@ pub enum IconName {
     LogOut,
     Contact,
     Landmark,
+    CircleAlert,
+    Clock,
     Plus,
     ChevronDown,
     ChevronRight,
@@ -426,7 +428,7 @@ pub enum IconName {
 
 impl IconName {
     #[cfg(test)]
-    const ALL: [IconName; 19] = [
+    const ALL: [IconName; 21] = [
         IconName::ReceiptText,
         IconName::Scale,
         IconName::ChartColumn,
@@ -442,6 +444,8 @@ impl IconName {
         IconName::LogOut,
         IconName::Contact,
         IconName::Landmark,
+        IconName::CircleAlert,
+        IconName::Clock,
         IconName::Plus,
         IconName::ChevronDown,
         IconName::ChevronRight,
@@ -495,6 +499,12 @@ impl IconName {
             }
             IconName::Landmark => {
                 r#"<path d="M10 18v-7"></path><path d="M11.119 2.205a2 2 0 0 1 1.762 0l7.84 3.846A.5.5 0 0 1 20.5 7h-17a.5.5 0 0 1-.22-.949z"></path><path d="M14 18v-7"></path><path d="M18 18v-7"></path><path d="M3 22h18"></path><path d="M6 18v-7"></path>"#
+            }
+            IconName::CircleAlert => {
+                r#"<circle cx="12" cy="12" r="10"></circle><line x1="12" x2="12" y1="8" y2="12"></line><line x1="12" x2="12.01" y1="16" y2="16"></line>"#
+            }
+            IconName::Clock => {
+                r#"<circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path>"#
             }
             IconName::Plus => r#"<path d="M5 12h14"></path><path d="M12 5v14"></path>"#,
             IconName::ChevronDown => r#"<path d="m6 9 6 6 6-6"></path>"#,

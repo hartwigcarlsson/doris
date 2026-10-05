@@ -42,6 +42,9 @@ test("a booked sale shows in the key figures", async ({ page, app }) => {
   await expect(figure(page, "Intäkter")).toContainText(/1\s250\skr/);
   await expect(figure(page, "Resultat hittills i år")).toContainText(/1\s250\skr/);
   await expect(figure(page, "Kassa och bank")).toContainText(/1\s250\skr/);
+  const latest = figure(page, "Senaste verifikationer");
+  await expect(latest.getByRole("row", { name: /^1 .* Försäljning 1\s250,00$/ })).toBeVisible();
+  await expect(figure(page, "Räkenskapsåret")).toContainText(/Verifikationer\s*1/);
   await expect(figure(page, "Kostnader").locator("p").first()).toHaveText(/^0\skr$/);
 });
 
@@ -77,4 +80,46 @@ test("without a company the start page says so", async ({ page, app }) => {
   await expect(main.getByRole("heading", { level: 1, name: "Översikt" })).toBeVisible();
   await expect(main.getByText("Du har inga företag än.")).toBeVisible();
   await expect(main.getByRole("link", { name: "Lägg till företag" })).toBeVisible();
+});
+
+const iso = (daysFromToday: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromToday);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+test("nothing to do says so", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.goto(app);
+  await expect(figure(page, "Att göra")).toContainText("Inget att göra just nu.");
+  await expect(figure(page, "Senaste verifikationer")).toContainText("Inga verifikationer än.");
+  await expect(figure(page, "Obetalda leverantörsfakturor")).toContainText("Inga obetalda leverantörsfakturor.");
+});
+
+test("an overdue supplier invoice is on the to-do list and leads to the invoices", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  // Last year too, so that the invoice date is in a year whenever this runs.
+  await addCompany(page, app, "5560160680", "Exempel AB", `${year - 1}-01-01`);
+  await addSupplier(page, app, "Kontorshuset AB");
+  await page.goto(`${app}/supplier-invoices/new`);
+  await page.getByLabel("Leverantör").selectOption({ label: "1 Kontorshuset AB" });
+  await page.getByLabel("Fakturanummer").fill("20413");
+  await page.getByLabel("Fakturadatum").fill(iso(-40));
+  await page.getByLabel("Förfallodatum").fill(iso(-10));
+  await page.getByLabel("Konto, rad 1").fill("5010");
+  await page.getByLabel("Belopp exkl. moms, rad 1").fill("10000");
+  await page.getByLabel("Underlag").setInputFiles([{ name: "faktura.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n%%EOF\n") }]);
+  await page.getByRole("button", { name: "Registrera" }).click();
+  await expect(page.getByRole("heading", { name: "Leverantörsfakturor" })).toBeVisible();
+
+  await page.goto(app);
+  const todo = figure(page, "Att göra");
+  await expect(todo).toContainText("1 leverantörsfaktura har förfallit");
+  await expect(todo).toContainText(/12\s500,00 kr · äldst Kontorshuset AB/);
+  const unpaid = figure(page, "Obetalda leverantörsfakturor");
+  await expect(unpaid).toContainText("Kontorshuset AB");
+  await expect(unpaid.getByText("Förfallen", { exact: true })).toBeVisible();
+  await todo.getByRole("link", { name: "Visa fakturorna" }).click();
+  await expect(page).toHaveURL(/\/supplier-invoices$/);
 });

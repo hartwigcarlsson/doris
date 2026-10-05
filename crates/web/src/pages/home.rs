@@ -3,12 +3,18 @@
 //! `crate::overview`; this file loads and draws.
 
 use crate::active_company::Companies;
-use crate::api::{company_api, cpb, ledger_api, lpb};
+use crate::api::{company_api, cpb, invoicing_api, ipb, ledger_api, lpb, payroll_api, ppb};
 use crate::errors::describe;
 use crate::fiscal_year::{FiscalYearSelect, keep_year_in_url};
-use crate::format::{accounting_method_label, legal_form_label, today};
-use crate::overview::{KeyFigures, default_year, key_figures, progress, whole_kronor};
-use crate::ui::{Badge, BadgeVariant, Card, IconName, LinkButton, PageHeader, Panel, Variant};
+use crate::format::{accounting_method_label, amount, legal_form_label, today};
+use crate::overview::{
+    KeyFigures, Todo, TodoInput, default_year, key_figures, progress, todo_list,
+    unpaid_supplier_invoices, whole_kronor,
+};
+use crate::ui::{
+    Badge, BadgeVariant, Card, Icon, IconName, LinkButton, PageHeader, Panel, TABLE_AMOUNT_CELL,
+    TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, Variant,
+};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
@@ -94,6 +100,11 @@ fn Overview() -> impl IntoView {
     let year = RwSignal::new(String::new());
     let balance: Loaded<Vec<lpb::TrialBalanceRow>> = RwSignal::new(None);
     let vouchers: Loaded<Vec<lpb::Voucher>> = RwSignal::new(None);
+    // What "Att göra" reads; none of it depends on the year.
+    let supplier_invoices: Loaded<Vec<ipb::SupplierInvoice>> = RwSignal::new(None);
+    let customer_invoices: Loaded<Vec<ipb::CustomerInvoice>> = RwSignal::new(None);
+    let payroll_runs: Loaded<Vec<ppb::PayrollRun>> = RwSignal::new(None);
+    let agi_months: Loaded<Vec<ppb::AgiMonthSummary>> = RwSignal::new(None);
     keep_year_in_url("/".into(), year);
 
     // Per company: who it is and which years it has.
@@ -104,6 +115,10 @@ fn Overview() -> impl IntoView {
         years.set(None);
         year_list.set(Vec::new());
         year.set(String::new());
+        supplier_invoices.set(None);
+        customer_invoices.set(None);
+        payroll_runs.set(None);
+        agi_months.set(None);
         if company_id.is_empty() {
             return;
         }
@@ -135,6 +150,48 @@ fn Overview() -> impl IntoView {
                 }
                 Err(status) => years.set(Some(Err(describe(&status)))),
             }
+            let suppliers = invoicing_api()
+                .list_supplier_invoices(ipb::ListSupplierInvoicesRequest {
+                    company_id: company_id.clone(),
+                })
+                .await;
+            let customers = invoicing_api()
+                .list_customer_invoices(ipb::ListCustomerInvoicesRequest {
+                    company_id: company_id.clone(),
+                })
+                .await;
+            let runs = payroll_api()
+                .list_payroll_runs(ppb::ListPayrollRunsRequest {
+                    company_id: company_id.clone(),
+                })
+                .await;
+            let months = payroll_api()
+                .list_agi_months(ppb::ListAgiMonthsRequest {
+                    company_id: company_id.clone(),
+                })
+                .await;
+            if company_id != companies.active.get_untracked() {
+                return;
+            }
+            supplier_invoices.set(Some(
+                suppliers
+                    .map(|r| r.into_inner().invoices)
+                    .map_err(|s| describe(&s)),
+            ));
+            customer_invoices.set(Some(
+                customers
+                    .map(|r| r.into_inner().invoices)
+                    .map_err(|s| describe(&s)),
+            ));
+            payroll_runs.set(Some(
+                runs.map(|r| r.into_inner().payroll_runs)
+                    .map_err(|s| describe(&s)),
+            ));
+            agi_months.set(Some(
+                months
+                    .map(|r| r.into_inner().months)
+                    .map_err(|s| describe(&s)),
+            ));
         });
     });
 
@@ -203,6 +260,29 @@ fn Overview() -> impl IntoView {
         year_list.with(|ys| ys.iter().find(|y| y.start == year.get()).cloned())
     });
 
+    // "Att göra" needs all four lists: loading until the last one is in,
+    // and the first error if any call failed.
+    let todos = Signal::derive(move || {
+        let (s, c, r, m) = (
+            supplier_invoices.get()?,
+            customer_invoices.get()?,
+            payroll_runs.get()?,
+            agi_months.get()?,
+        );
+        Some((|| {
+            let (s, c, r, m) = (s?, c?, r?, m?);
+            Ok::<_, String>(todo_list(
+                &TodoInput {
+                    supplier_invoices: &s,
+                    customer_invoices: &c,
+                    payroll_runs: &r,
+                    agi_months: &m,
+                },
+                &today(),
+            ))
+        })())
+    });
+
     view! {
         <div class="grid gap-6">
             <PageHeader title=title description=description>
@@ -219,8 +299,13 @@ fn Overview() -> impl IntoView {
                 <KeyFigure title="Kassa och bank" note="Konto 1900–1999" balance=balance pick=|f| f.cash />
             </div>
             <div class="flex flex-wrap gap-4">
+                <TodoCard todos=todos />
                 <FiscalYearCard years=years chosen=chosen vouchers=vouchers />
             </div>
+            <div class="flex flex-wrap gap-4">
+                <UnpaidCard invoices=supplier_invoices />
+            </div>
+            <LatestVouchers vouchers=vouchers />
         </div>
     }
 }
@@ -353,6 +438,148 @@ fn FiscalYearCard(
                         .into_any()
                 },
             )}
+        </OverviewCard>
+    }
+}
+
+/// What needs doing, most pressing first.
+#[component]
+fn TodoCard(todos: Signal<Option<Result<Vec<Todo>, String>>>) -> impl IntoView {
+    view! {
+        <Panel class="min-w-0 flex-[2_1_480px] px-0 pb-1">
+            <div class="grid gap-3">
+                <div class="flex items-center gap-2 px-4">
+                    <h2 class="text-sm font-medium">"Att göra"</h2>
+                    {move || todos.get().and_then(Result::ok).filter(|l| !l.is_empty()).map(|l| view! { <Badge>{l.len()}</Badge> })}
+                </div>
+                {pending(move || todos.get(), |list: Vec<Todo>| {
+                    if list.is_empty() {
+                        return view! { <p class="px-4 pb-3 text-muted-foreground">"Inget att göra just nu."</p> }.into_any();
+                    }
+                    view! {
+                        <ul>
+                            {list
+                                .into_iter()
+                                .map(|item| {
+                                    let (round, icon) = if item.urgent {
+                                        ("bg-destructive/10 text-destructive dark:bg-destructive/20", IconName::CircleAlert)
+                                    } else {
+                                        ("bg-muted", IconName::Clock)
+                                    };
+                                    view! {
+                                        <li class="flex flex-wrap items-center gap-3 border-t px-4 py-3">
+                                            <span class=format!("flex size-7 shrink-0 items-center justify-center rounded-full {round}")>
+                                                <Icon name=icon />
+                                            </span>
+                                            <div class="min-w-0 flex-[1_1_240px]">
+                                                <p class="font-medium">{item.title}</p>
+                                                <p class="text-muted-foreground">{item.detail}</p>
+                                            </div>
+                                            <LinkButton href=item.href variant=Variant::Outline>{item.action}</LinkButton>
+                                        </li>
+                                    }
+                                })
+                                .collect_view()}
+                        </ul>
+                    }
+                        .into_any()
+                })}
+            </div>
+        </Panel>
+    }
+}
+
+/// The unpaid supplier invoices: how many, how much, and the next four.
+#[component]
+fn UnpaidCard(invoices: Loaded<Vec<ipb::SupplierInvoice>>) -> impl IntoView {
+    view! {
+        <OverviewCard title="Obetalda leverantörsfakturor" class="min-w-0 flex-[1_1_280px]">
+            {pending(move || invoices.get(), |list: Vec<ipb::SupplierInvoice>| {
+                let unpaid = unpaid_supplier_invoices(&list);
+                if unpaid.is_empty() {
+                    return view! { <p class="text-muted-foreground">"Inga obetalda leverantörsfakturor."</p> }.into_any();
+                }
+                let today = today();
+                let total: i64 = unpaid.iter().map(|i| i.total).sum();
+                let summary = format!(
+                    "{} {}, {} kr",
+                    unpaid.len(),
+                    if unpaid.len() == 1 { "faktura" } else { "fakturor" },
+                    amount(total)
+                );
+                view! {
+                    <p class="text-muted-foreground">{summary}</p>
+                    <ul>
+                        {unpaid
+                            .into_iter()
+                            .take(4)
+                            .map(|invoice| {
+                                let late = invoice.due_date < today;
+                                view! {
+                                    <li class="flex items-center justify-between gap-3 border-t py-2">
+                                        <div class="min-w-0">
+                                            <p class="truncate font-medium">{invoice.supplier_name.clone()}</p>
+                                            <p class="flex items-center gap-1.5 text-muted-foreground">
+                                                {format!("{} {}", if late { "Förföll" } else { "Förfaller" }, invoice.due_date)}
+                                                {late.then(|| view! { <Badge variant=BadgeVariant::Destructive>"Förfallen"</Badge> })}
+                                            </p>
+                                        </div>
+                                        <p class="whitespace-nowrap tabular-nums">{amount(invoice.total)}</p>
+                                    </li>
+                                }
+                            })
+                            .collect_view()}
+                    </ul>
+                    <A href="/supplier-invoices" attr:class="font-medium underline-offset-4 hover:underline">"Alla leverantörsfakturor"</A>
+                }
+                    .into_any()
+            })}
+        </OverviewCard>
+    }
+}
+
+/// The five vouchers with the highest numbers.
+#[component]
+fn LatestVouchers(vouchers: Loaded<Vec<lpb::Voucher>>) -> impl IntoView {
+    view! {
+        <OverviewCard title="Senaste verifikationer">
+            {pending(move || vouchers.get(), |mut list: Vec<lpb::Voucher>| {
+                if list.is_empty() {
+                    return view! { <p class="text-muted-foreground">"Inga verifikationer än."</p> }.into_any();
+                }
+                list.sort_by_key(|v| std::cmp::Reverse(v.number));
+                view! {
+                    <Table>
+                        <thead class=TABLE_HEAD>
+                            <tr class=TABLE_ROW>
+                                <th class=TABLE_HEADER_CELL>"Nr"</th>
+                                <th class=TABLE_HEADER_CELL>"Datum"</th>
+                                <th class=TABLE_HEADER_CELL>"Text"</th>
+                                <th class=format!("{TABLE_HEADER_CELL} text-right")>"Belopp"</th>
+                            </tr>
+                        </thead>
+                        <tbody class=TABLE_BODY>
+                            {list
+                                .into_iter()
+                                .take(5)
+                                .map(|v| {
+                                    let total: i64 = v.lines.iter().map(|l| l.debit).sum();
+                                    view! {
+                                        <tr class=TABLE_ROW>
+                                            <td class=format!("{TABLE_CELL} tabular-nums")>{v.number}</td>
+                                            <td class=format!("{TABLE_CELL} tabular-nums")>{v.date}</td>
+                                            <td class=TABLE_CELL>{v.text}</td>
+                                            <td class=TABLE_AMOUNT_CELL>{amount(total)}</td>
+                                        </tr>
+                                    }
+                                })
+                                .collect_view()}
+                        </tbody>
+                    </Table>
+                    <A href="/vouchers" attr:class="font-medium underline-offset-4 hover:underline">"Alla verifikationer"</A>
+                }
+                    .into_any()
+            })}
         </OverviewCard>
     }
 }
