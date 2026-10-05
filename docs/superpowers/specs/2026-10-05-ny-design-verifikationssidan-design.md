@@ -11,7 +11,8 @@ Sök, filter och "Visa fler" görs i webbklienten: sidan hämtar redan hela åre
 | Sök och filter | I webbklienten, i rena funktioner i en ny modul `crates/web/src/voucher_search.rs`. |
 | Ordning | Senaste först (högst nummer överst). |
 | "Visa fler" | 50 rader åt gången. |
-| Behandlingshistorik | `Voucher` i protot får `recorded_at` och `recorded_by_name`; servern läser dem ur `vouchers` och `users`. |
+| Behandlingshistorik | `Voucher` i protot får `recorded_at` och `recorded_by_name`. Ledgern lämnar tidpunkten och användarens id ur sin egen projektion; servern frågar identitetsmodulen efter visningsnamnet. |
+| Modulgränser | Ingen modul läser en annan moduls tabeller. Ledgern rör inte `users`. |
 | Persondata | Bara visningsnamnet skickas, aldrig e-postadressen. Inget av det loggas. |
 | Adressfältet | Sök och filter läggs inte i adressen; räkenskapsåret ligger kvar som i dag. |
 
@@ -27,20 +28,11 @@ Sök, filter och "Visa fler" görs i webbklienten: sidan hämtar redan hela åre
 ```
 
 ### Läsningen
-`crates/ledger/src/domain.rs`: `Voucher` får `pub recorded: Option<Recorded>`, där `Recorded { at: String, by: String }`. Domänens eget tillstånd (det som `evolve` bygger) sätter `None`; uppgiften hör till projektionen.
+`crates/ledger/src/domain.rs`: `Voucher` får `pub recorded: Option<Recorded>`, där `Recorded { at: String, by: Option<Uuid> }`. Domänens eget tillstånd (det som `evolve` bygger) sätter `None`; uppgiften hör till projektionen.
 
-`crates/ledger/src/queries.rs`, `list_vouchers`: huvudfrågan läser också `recorded_at` och visningsnamnet:
+`crates/ledger/src/queries.rs`, `list_vouchers`: huvudfrågan läser också `recorded_at` och `recorded_by` ur `vouchers`. Ledgern läser bara sina egna tabeller; `by` är användarens id, eller `None` om händelsen saknar aktör.
 
-```sql
-SELECT v.number, v.date, v.text, v.corrects, v.corrected_by, v.recorded_at,
-       COALESCE(u.display_name, '')
-FROM vouchers v LEFT JOIN users u ON u.user_id = v.recorded_by
-WHERE v.company_id = ? AND v.fiscal_year_start = ? ORDER BY v.number
-```
-
-`LEFT JOIN` och `COALESCE`, så att en verifikation alltid listas även om användaren saknas i `users`; namnet är då tomt och klienten visar bara tidpunkten. `users` är identitetens projektion, i samma databas; ledger läser den, som `doris_company::get_company` redan läser medlemskap. Ingen främmande nyckel läggs till.
-
-`crates/server/src/ledger.rs`, `voucher_message`: fyller de två fälten ur `recorded`, tomma strängar när den är `None`.
+`crates/server/src/ledger.rs`, `list_vouchers`: samlar de olika id:na i svaret och frågar identitetsmodulen (`doris_identity::get_user`) en gång per person, på samma sätt som `ListMembers` redan gör. `voucher_message` fyller de två fälten; en användare som identiteten inte känner får tomt namn, och klienten visar då bara tidpunkten.
 
 Åtkomsten är oförändrad: `list_vouchers` kontrollerar medlemskap först, och namnet som visas är en medlems (eller tidigare medlems) visningsnamn, som medlemmarna redan ser på företagssidan.
 
@@ -91,13 +83,11 @@ TDD: varje del börjar med ett fallande test.
 ### Ledger (`crates/ledger/tests`)
 | Test | Kontrollerar |
 |---|---|
-| `list_vouchers` ger vem och när | Efter en bokföring är `recorded.at` händelsens tidpunkt och `recorded.by` användarens visningsnamn |
-| Två medlemmar | En verifikation som en annan medlem bokfört visar den medlemmens namn |
-| Användaren saknas | En `recorded_by` utan rad i `users` ger tomt namn, och verifikationen listas ändå |
+| `list_vouchers` ger vem och när | Efter en bokföring är `recorded.at` händelsens tidpunkt och `recorded.by` användarens id, för var och en av två medlemmar |
 | Ombyggnad | Projektionen ombyggd ur `read_all` ger samma `recorded` (det befintliga ombyggnadstestet utökas) |
 
 ### Server (`crates/server/tests`)
-`ListVouchers` över gRPC-Web ger `recorded_at` och `recorded_by_name`; e-postadressen finns inte i svaret.
+`ListVouchers` över gRPC-Web ger `recorded_at` och `recorded_by_name`; med två medlemmar med olika namn får varje verifikation rätt namn, och e-postadressen finns inte i svaret.
 
 ### Enhet (`voucher_search.rs`, `format.rs`)
 | Funktion | Fall |

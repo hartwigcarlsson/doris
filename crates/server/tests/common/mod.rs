@@ -148,13 +148,41 @@ impl TestServer {
             .await
     }
 
+    /// Like `invite`, for a test that tells people apart by name.
+    pub async fn invite_as(&self, admin: &str, email: &str, name: &str) -> String {
+        let invite = self
+            .grpc()
+            .create_invitation(authed(
+                pb::CreateInvitationRequest {
+                    email: email.into(),
+                },
+                admin,
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        self.sign_up_as(&mut device(), email, name, Some(&invite.token))
+            .await
+    }
+
     /// Registers through the API and returns the session cookie's token.
     pub async fn sign_up(&self, device: &mut Device, email: &str, token: Option<&str>) -> String {
+        self.sign_up_as(device, email, "Anna", token).await
+    }
+
+    /// Registers as `name` and returns the session cookie's token.
+    pub async fn sign_up_as(
+        &self,
+        device: &mut Device,
+        email: &str,
+        name: &str,
+        token: Option<&str>,
+    ) -> String {
         let mut grpc = self.grpc();
         let begin = grpc
             .begin_registration(pb::BeginRegistrationRequest {
                 email: email.into(),
-                display_name: "Anna".into(),
+                display_name: name.into(),
                 invitation_token: token.map(Into::into),
                 passkey_name: "Laptop".into(),
             })

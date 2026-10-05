@@ -4,6 +4,7 @@ use doris_company::domain::{FiscalYear, LegalForm};
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DomainError {
@@ -423,8 +424,9 @@ pub enum LedgerEvent {
 pub struct Recorded {
     /// RFC 3339, UTC: the event's `recorded_at`.
     pub at: String,
-    /// The recorder's display name; empty if the user is unknown.
-    pub by: String,
+    /// The user who recorded it; `None` if the event names no actor.
+    /// What they are called is for identity to say.
+    pub by: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

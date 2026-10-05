@@ -57,6 +57,10 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   write transaction, for example with UNIQUE constraints on projections.
 - Domain logic is pure: `decide(state, cmd) -> Result<Vec<Event>>` and
   `evolve(state, event)`. Test it given/when/then, without a database.
+- A module reads only its own tables. What another module owns is asked
+  for through that module's functions (the server puts the answers
+  together, as for member names and who recorded a voucher), never with
+  SQL against its projections.
 - Operational data is **not** events and may be purged. That covers sessions
   and WebAuthn ceremony state.
 - Voucher numbers run 1..=n per company and fiscal year without gaps (BFL
@@ -230,8 +234,10 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `duplicate_attachment` and `attachment_not_found`. File names are never
   logged.
 - `ListVouchers` also says when each voucher was recorded and by whom
-  (`recorded_at`, `recorded_by_name`: the display name, read from `users`;
-  empty if the user is unknown). Never the email.
+  (`recorded_at`, `recorded_by_name`). The ledger returns the recorder's
+  user id from its own projection; the server asks identity
+  (`doris_identity::get_user`) for the display name, once per person. An
+  unknown user has an empty name. Never the email.
 - `LedgerService` also has `GetFinancialStatements`: the resultaträkning
   and balansräkning for one fiscal year under ÅRL headings (K2's
   abbreviated forms), with the year before as comparison. The mapping from

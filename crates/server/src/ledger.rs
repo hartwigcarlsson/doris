@@ -10,6 +10,8 @@ use doris_proto::ledger::v1 as pb;
 use doris_proto::ledger::v1::ledger_service_server::LedgerService;
 use jiff::civil::Date;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
@@ -223,9 +225,23 @@ impl LedgerService for LedgerApi {
         let fiscal_year_start = date(&request.get_ref().fiscal_year_start)?;
         let vouchers = doris_ledger::list_vouchers(&self.pool, company, user, fiscal_year_start)
             .await
-            .map_err(status)?
+            .map_err(status)?;
+        // The ledger knows who recorded each voucher; identity knows what
+        // they are called. One lookup per person, not per voucher.
+        let mut names = HashMap::<Uuid, String>::new();
+        for id in vouchers.iter().filter_map(|v| v.recorded.as_ref()?.by) {
+            if let Entry::Vacant(entry) = names.entry(id) {
+                let name = doris_identity::get_user(&self.pool, id)
+                    .await
+                    .map_err(crate::grpc::status)?
+                    .map(|user| user.display_name.as_str().to_owned())
+                    .unwrap_or_default();
+                entry.insert(name);
+            }
+        }
+        let vouchers = vouchers
             .into_iter()
-            .map(voucher_message)
+            .map(|v| voucher_message(v, &names))
             .collect();
         Ok(Response::new(pb::ListVouchersResponse { vouchers }))
     }
@@ -405,8 +421,16 @@ pub(crate) fn attachment_message(a: &Attachment) -> pb::Attachment {
     }
 }
 
-fn voucher_message(v: Voucher) -> pb::Voucher {
-    let (recorded_at, recorded_by_name) = v.recorded.map(|r| (r.at, r.by)).unwrap_or_default();
+/// `names`: the display name of everyone who recorded one of the vouchers.
+/// Someone identity does not know has an empty name.
+fn voucher_message(v: Voucher, names: &HashMap<Uuid, String>) -> pb::Voucher {
+    let (recorded_at, recorded_by_name) = v
+        .recorded
+        .map(|r| {
+            let name = r.by.and_then(|id| names.get(&id).cloned());
+            (r.at, name.unwrap_or_default())
+        })
+        .unwrap_or_default();
     pb::Voucher {
         number: v.number,
         date: v.date.to_string(),

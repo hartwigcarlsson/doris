@@ -94,12 +94,9 @@ pub async fn list_vouchers(
     // One read transaction: heads and lines from the same snapshot (WAL).
     let mut tx = pool.begin().await?;
     let heads: Vec<Head> = sqlx::query_as(
-        // LEFT JOIN: a voucher is listed whether or not its recorder is
-        // still (or ever was) in `users`.
-        "SELECT v.number, v.date, v.text, v.corrects, v.corrected_by, v.recorded_at,
-                COALESCE(u.display_name, '')
-         FROM vouchers v LEFT JOIN users u ON u.user_id = v.recorded_by
-         WHERE v.company_id = ? AND v.fiscal_year_start = ? ORDER BY v.number",
+        "SELECT number, date, text, corrects, corrected_by, recorded_at, recorded_by
+         FROM vouchers
+         WHERE company_id = ? AND fiscal_year_start = ? ORDER BY number",
     )
     .bind(&company_id)
     .bind(&fiscal_year_start)
@@ -133,7 +130,11 @@ pub async fn list_vouchers(
                 corrects,
                 corrected_by,
                 attachments: Vec::new(),
-                recorded: Some(Recorded { at, by }),
+                // An event without an actor leaves the column empty.
+                recorded: Some(Recorded {
+                    at,
+                    by: by.parse().ok(),
+                }),
             },
         )
         .collect();
