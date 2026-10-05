@@ -88,3 +88,24 @@ test("the fiscal years follow the active company", async ({ page, app }) => {
   await expect(lastYear).toHaveCount(0);
   await expect(page.getByRole("row", { name: new RegExp(`^${nextStart}`) })).toContainText("Öppet");
 });
+
+// The rows are filled in when the balances arrive. Typing before that used
+// to be overwritten, so the form waits for them.
+test("opening balances typed while the page loads are kept", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB", lastStart);
+  await page.route("**/GetOpeningBalances", async (route) => {
+    await new Promise((r) => setTimeout(r, 1000));
+    await route.continue();
+  });
+  await page.goto(`${app}/opening-balances`);
+  await expect(page.getByRole("heading", { name: `Ingående balanser ${lastStart}` })).toBeVisible();
+  await page.getByLabel("Konto, rad 1").fill("1930");
+  await page.getByLabel("Debet, rad 1").fill("10000");
+  await page.getByLabel("Konto, rad 2").fill("2081");
+  await page.getByLabel("Kredit, rad 2").fill("10000");
+  await expect(page.getByRole("button", { name: "Spara" })).toBeEnabled();
+  await expect(page.getByLabel("Konto, rad 1")).toHaveValue("1930");
+  await page.getByRole("button", { name: "Spara" }).click();
+  await expect(page.getByRole("status")).toHaveText("Ingående balanser sparade");
+});

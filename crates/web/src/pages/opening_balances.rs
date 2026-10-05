@@ -110,6 +110,9 @@ pub fn OpeningBalances() -> impl IntoView {
             <Show
                 when=move || first().is_some_and(|y| y.closed)
                 fallback=move || view! {
+                    // The rows are replaced when the balances arrive, so the
+                    // form waits for them: nothing typed is overwritten.
+                    <Show when=move || current.with(Option::is_some)>
                     <form class="grid gap-4" novalidate on:submit=submit>
                         <datalist id="balance_accounts">
                             {move || {
@@ -126,6 +129,7 @@ pub fn OpeningBalances() -> impl IntoView {
                             <Button disabled=Signal::derive(move || busy.get() || current.with(Option::is_none))>"Spara"</Button>
                         </div>
                     </form>
+                    </Show>
                 }
             >
                 <p class="text-xs/relaxed text-muted-foreground">
