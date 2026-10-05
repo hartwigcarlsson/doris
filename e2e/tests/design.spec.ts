@@ -1,4 +1,4 @@
-import { addCompany, expect, goTo, openMenu, register, test } from "./fixtures";
+import { addCompany, addSupplier, expect, goTo, openMenu, register, test } from "./fixtures";
 
 // Spacing measured from the shadcn preset b1Gdz9bFY reference (mira): cards
 // ~336px wide, 16px between fields, 8px from label to input, 16px from the
@@ -166,4 +166,21 @@ test("the bookkeeping views follow the design", async ({ page, app }) => {
   await expectDesign(page, /Ingående balanser/);
   await page.goto(`${app}/trial-balance/1930`);
   await expectDesign(page, /^1930/);
+});
+
+test("the purchase and customer views follow the design", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await addSupplier(page, app, "Kontorshuset AB");
+  await expectDesign(page, "Leverantörer");
+  const active = page.getByRole("row", { name: /Kontorshuset AB/ }).getByText("Aktiv", { exact: true });
+  expect(await active.evaluate((el) => getComputedStyle(el).borderRadius)).not.toBe("0px");
+  await goTo(page, "Kunder");
+  await expectDesign(page, "Kunder");
+  await goTo(page, "Leverantörsfakturor");
+  await expectDesign(page, "Leverantörsfakturor");
+  const add = page.getByRole("main").getByRole("link", { name: "Ny leverantörsfaktura" });
+  expect((await add.boundingBox())!.height).toBe(28);
+  await add.click();
+  await expectDesign(page, "Ny leverantörsfaktura");
 });

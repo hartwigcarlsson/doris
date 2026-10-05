@@ -6,10 +6,10 @@ use crate::api::{invoicing_api, ipb};
 use crate::attachments::{open_in, size_label};
 use crate::errors::{describe, describe_code};
 use crate::format::{amount, today};
-use crate::invoice_ui::{PayForm, ReasonForm, status_label};
+use crate::invoice_ui::{PayForm, ReasonForm, status_badge, status_label};
 use crate::ui::{
-    Button, Checkbox, ErrorAlert, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW,
-    Table, Variant,
+    Badge, Button, Checkbox, ErrorAlert, IconName, LinkButton, PageHeader, TABLE_BODY, TABLE_CELL,
+    TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, Variant,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -53,16 +53,13 @@ pub fn SupplierInvoices() -> impl IntoView {
     let changed = Callback::new(move |()| load());
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <div class="flex items-center justify-between">
-                <h1 class="text-sm font-medium">"Leverantörsfakturor"</h1>
-                <A href="/supplier-invoices/new" attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline">
-                    "Ny leverantörsfaktura"
-                </A>
-            </div>
+        <div class="grid gap-6">
+            <PageHeader title="Leverantörsfakturor">
+                <LinkButton href="/supplier-invoices/new" icon=IconName::Plus>"Ny leverantörsfaktura"</LinkButton>
+            </PageHeader>
             <ErrorAlert message=error />
             <Checkbox label="Visa betalda och makulerade" id="show_all_invoices" checked=show_all />
-            <Table>
+            <TableCard><Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
                         <th class=TABLE_HEADER_CELL>"Nr"</th>
@@ -90,7 +87,7 @@ pub fn SupplierInvoices() -> impl IntoView {
                         <InvoiceRow company_id=company_id invoice=invoice changed=changed error=error />
                     </For>
                 </tbody>
-            </Table>
+            </Table></TableCard>
         </div>
     }
 }
@@ -214,7 +211,7 @@ fn InvoiceRow(
             <td class=TABLE_CELL>{i.invoice_date.clone()}</td>
             <td class=TABLE_CELL>{i.due_date.clone()}</td>
             <td class=format!("{TABLE_CELL} text-right tabular-nums")>{amount(i.total)}</td>
-            <td class=if label == "Förfallen" { format!("{TABLE_CELL} text-destructive") } else { TABLE_CELL.to_owned() }>{label}</td>
+            <td class=TABLE_CELL><Badge variant=status_badge(label)>{label}</Badge></td>
             <td class=format!("{TABLE_CELL} text-right")>
                 <Button variant=Variant::Ghost kind="button" on:click=move |_| toggle(Panel::Details)>"Detaljer"</Button>
                 {unpaid.then(|| view! {
