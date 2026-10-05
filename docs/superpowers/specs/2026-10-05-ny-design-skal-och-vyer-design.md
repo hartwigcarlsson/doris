@@ -62,7 +62,7 @@ En komponent, `NavMenu`, i en ny fil `crates/web/src/nav.rs` som också tar öve
 ## Sidlayout
 - `main`: `mx-auto w-full max-w-6xl px-4 py-10`. `has-[[data-wide]]` och alla `data-wide` tas bort.
 - Varje vy är ett `grid gap-6` med en `PageHeader` först.
-- Inloggning och registrering lägger sitt kort i `mx-auto w-full max-w-sm`.
+- Inloggning och registrering lägger sitt kort i `mx-auto w-full max-w-[22rem]`.
 
 ## Komponenter i `ui.rs`
 Klasslistorna kopieras från presetets genererade komponenter, som för de befintliga.
@@ -73,15 +73,15 @@ Klasslistorna kopieras från presetets genererade komponenter, som för de befin
 | `Badge` | shadcn badge: `h-5 rounded-full px-2 text-[0.625rem] font-medium`. Varianter `Secondary` (standard), `Outline` och `Destructive` (`bg-destructive/10 text-destructive`). |
 | `Variant::Outline` | Ny knappvariant: `border-border hover:bg-muted dark:bg-input/30`. |
 | `LinkButton` | En `<A>` med knappens klasser, för "Ny …"-åtgärder. Tar `variant` och valfri `icon`. |
-| `Card` | Befintlig. Rubriken blir `<h2>`, eftersom sidans `<h1>` nu ligger i `PageHeader`. Ny prop `narrow` som sätter `max-w-sm`. |
-| `TableCard` | Ett kort (`rounded-lg bg-card ring-1 ring-foreground/10`) runt `Table`, med valfri rad ovanför tabellen för filter. |
+| `Card` | Befintlig. Rubriken blir `<h2>`, eftersom sidans `<h1>` nu ligger i `PageHeader`. Ny prop `narrow` som sätter `max-w-[22rem]` (352 px, presetets formulärbredd). |
+| `TableCard` | Ett kort (`rounded-lg bg-card ring-1 ring-foreground/10`) runt `Table`. En filterrad ovanför tabellen läggs till i del 3, när den först behövs. |
 | Ikoner | En `Icon`-komponent med ett enum för de Lucide-ikoner appen använder (de tretton i menyn, plus `Plus`, `ChevronDown`, `ChevronRight`, `Paperclip`). `PaperclipIcon` ersätts av den. Banorna hämtas ur lucide-static 1.52.0. |
 
 ## Vyerna
 Ingen vy får ny funktion; all text som finns i dag behålls om inget annat sägs.
 
 ### Listor
-`PageHeader` med rubrik och "Ny …"/"Lägg till …" som primär `LinkButton` med plus, där sidan har en sådan länk i dag. Val av räkenskapsår och andra filter ligger till höger i `PageHeader` eller i `TableCard`s filterrad. Tabellen ligger i `TableCard`.
+`PageHeader` med rubrik och "Ny …"/"Lägg till …" som primär `LinkButton` med plus, där sidan har en sådan länk i dag. Val av räkenskapsår och andra filter ligger till höger i `PageHeader`. Tabellen ligger i `TableCard`.
 
 | Vy | Särskilt |
 |---|---|
