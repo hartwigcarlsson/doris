@@ -339,6 +339,17 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   their links or buttons, a keydown listener on Escape (focus goes back to
   the menu's button), and an effect when the path changes. `section_of`
   decides which menu a path belongs to: add a line there for every new page.
+- The start page (`src/pages/home.rs`) is the overview for the active
+  company and a chosen räkenskapsår (kept in `?fy=`; by default the year
+  that contains today). It adds no RPC: it sends `GetCompany`,
+  `ListFiscalYears`, `GetTrialBalance`, `ListVouchers`,
+  `ListSupplierInvoices`, `ListCustomerInvoices`, `ListPayrollRuns` and
+  `ListAgiMonths`, and `src/overview.rs` works everything out in pure
+  functions: key figures (income 3000–3999, costs 4000–8989, cash
+  1900–1999), income and costs per month, the year's progress and the
+  "Att göra" rules. A card whose call failed shows the error; the others
+  still show. The monthly sums read every voucher of the year: when that
+  gets heavy, add a `GetMonthlyTotals` to the ledger.
 - A view is a `grid gap-6` that starts with `PageHeader` (the page's one
   `<h1>`, actions to the right). Tables sit in `TableCard`, statuses are
   `Badge`s and "Ny …" actions are `LinkButton`s. A one-column form is a
@@ -367,6 +378,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 The UI follows shadcn preset `b1Gdz9bFY`: style mira, base color stone, theme
 amber, font Inter (self-hosted), small radius, lucide icons (inlined SVG, see
 `IconName`). The page and the header are `max-w-6xl`.
+`--chart-1` (amber) and `--chart-2` (stone) colour the overview's chart and
+progress bar.
 Design tokens live in `crates/web/style/input.css`. Build only the components
 you need.
 
