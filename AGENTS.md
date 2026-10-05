@@ -229,6 +229,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `invalid_attachment_name`, `empty_attachment`, `attachment_too_large`,
   `duplicate_attachment` and `attachment_not_found`. File names are never
   logged.
+- `ListVouchers` also says when each voucher was recorded and by whom
+  (`recorded_at`, `recorded_by_name`: the display name, read from `users`;
+  empty if the user is unknown). Never the email.
 - `LedgerService` also has `GetFinancialStatements`: the resultaträkning
   and balansräkning for one fiscal year under ÅRL headings (K2's
   abbreviated forms), with the year before as comparison. The mapping from
@@ -353,6 +356,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   error. After an `await`, read the page's own signals with `try_get…`:
   the user may have left, and a disposed signal panics on `get`. The monthly sums read every voucher of the year: when that
   gets heavy, add a `GetMonthlyTotals` to the ledger.
+- Verifikationer lists the year's vouchers newest first, fifty at a time.
+  The search field and the "Saknar underlag"/"Rättelser" boxes filter in
+  the browser (`src/voucher_search.rs`): every word must match the number
+  (exactly), an account on the voucher (by prefix), a whole amount, or part
+  of the text or of an account's name.
 - A view is a `grid gap-6` that starts with `PageHeader` (the page's one
   `<h1>`, actions to the right). Tables sit in `TableCard`, statuses are
   `Badge`s and "Ny …" actions are `LinkButton`s. A one-column form is a
