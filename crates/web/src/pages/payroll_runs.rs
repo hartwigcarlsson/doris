@@ -24,9 +24,9 @@ pub fn status_label(status: ppb::PayrollRunStatus, pay_date: &str, today: &str) 
 }
 
 /// How a run's status is drawn: a booked run is done and recedes.
-pub fn status_badge(label: &str) -> BadgeVariant {
-    match label {
-        "Bokförd" => BadgeVariant::Outline,
+pub fn status_badge(status: ppb::PayrollRunStatus) -> BadgeVariant {
+    match status {
+        ppb::PayrollRunStatus::Booked => BadgeVariant::Outline,
         _ => BadgeVariant::Secondary,
     }
 }
@@ -112,6 +112,7 @@ pub fn PayrollRuns() -> impl IntoView {
                             let locked = run.status() != ppb::PayrollRunStatus::Open;
                             let (gross, tax, fee, net) = (sum(|l| l.gross), sum(|l| l.tax.unwrap_or(0)), sum(|l| l.fee), sum(|l| l.net));
                             let label = status_label(run.status(), &run.pay_date, &today);
+                            let badge = status_badge(run.status());
                             let shown = move |ore: i64| if locked { amount(ore) } else { "–".to_owned() };
                             view! {
                                 <tr class=TABLE_ROW>
@@ -123,7 +124,7 @@ pub fn PayrollRuns() -> impl IntoView {
                                     <td class=TABLE_AMOUNT_CELL>{shown(tax)}</td>
                                     <td class=TABLE_AMOUNT_CELL>{shown(fee)}</td>
                                     <td class=TABLE_AMOUNT_CELL>{shown(net)}</td>
-                                    <td class=TABLE_CELL>{(!label.is_empty()).then(|| view! { <Badge variant=status_badge(label)>{label}</Badge> })}</td>
+                                    <td class=TABLE_CELL>{(!label.is_empty()).then(|| view! { <Badge variant=badge>{label}</Badge> })}</td>
                                     <td class=TABLE_CELL>{run.voucher.as_ref().map(|v| v.number.to_string())}</td>
                                 </tr>
                             }
@@ -261,9 +262,8 @@ mod tests {
 
     #[test]
     fn a_booked_run_recedes_and_an_open_one_does_not() {
-        assert!(status_badge("Öppen") == BadgeVariant::Secondary);
-        assert!(status_badge("Färdigställd") == BadgeVariant::Secondary);
-        assert!(status_badge("Att bokföra") == BadgeVariant::Secondary);
-        assert!(status_badge("Bokförd") == BadgeVariant::Outline);
+        assert!(status_badge(Open) == BadgeVariant::Secondary);
+        assert!(status_badge(Finalized) == BadgeVariant::Secondary);
+        assert!(status_badge(Booked) == BadgeVariant::Outline);
     }
 }

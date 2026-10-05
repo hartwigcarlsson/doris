@@ -7,7 +7,7 @@ use crate::attachments::check_sizes;
 use crate::errors::{describe, describe_code};
 use crate::format::{amount, parse_amount, plus_days, today};
 use crate::invoice_ui::{InvoiceLineRows, LineRow, PickedFiles, preview_vat};
-use crate::ui::{Button, ErrorAlert, Field, PageHeader, SELECT_OPTION, Select};
+use crate::ui::{Button, ErrorAlert, Field, PageHeader, Panel, SELECT_OPTION, Select};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -160,7 +160,7 @@ pub fn NewSupplierInvoice() -> impl IntoView {
     view! {
         <div class="grid gap-6">
         <PageHeader title="Ny leverantörsfaktura" />
-        <section class="overflow-x-auto rounded-lg bg-card p-4 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10">
+        <Panel>
             <form class="grid gap-4" novalidate on:submit=submit>
                 <ErrorAlert message=error />
                 <div class="grid grid-cols-2 gap-4">
@@ -205,7 +205,7 @@ pub fn NewSupplierInvoice() -> impl IntoView {
                 <PickedFiles id="invoice_files" files=files reading=reading error=error company=form_company />
                 <Button disabled=Signal::derive(move || busy.get() || reading.get() > 0)>"Registrera"</Button>
             </form>
-        </section>
+        </Panel>
         </div>
     }
 }

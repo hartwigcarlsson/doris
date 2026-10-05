@@ -143,13 +143,25 @@ pub fn Header() -> impl IntoView {
         let target = event
             .target()
             .and_then(|t| t.dyn_into::<web_sys::Element>().ok());
-        let on_link = target
-            .as_ref()
-            .is_some_and(|el| el.closest("details a").ok().flatten().is_some());
+        let on_link = target.as_ref().is_some_and(|el| {
+            el.closest("details a, details li button")
+                .ok()
+                .flatten()
+                .is_some()
+        });
         close_menus(if on_link { None } else { target.as_ref() });
     });
     let on_key = window_event_listener(ev::keydown, |event| {
         if event.key() == "Escape" {
+            // Focus may be on a link that is about to be hidden: give it
+            // back to the open menu's own button first.
+            let open =
+                document().query_selector(&format!("details[name='{MENU_NAME}'][open] > summary"));
+            if let Ok(Some(summary)) = open
+                && let Ok(summary) = summary.dyn_into::<web_sys::HtmlElement>()
+            {
+                let _ = summary.focus();
+            }
             close_menus(None);
         }
     });

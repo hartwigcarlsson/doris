@@ -133,6 +133,9 @@ pub fn Card(
     /// The preset's form width, left-aligned.
     #[prop(optional)]
     narrow: bool,
+    /// The title is the page's `<h1>`: for pages without a `PageHeader`.
+    #[prop(optional)]
+    page_title: bool,
     children: Children,
 ) -> impl IntoView {
     let class = if narrow {
@@ -143,7 +146,11 @@ pub fn Card(
     view! {
         <section class=class>
             <header class="grid gap-1 px-4">
-                <h2 class="text-sm font-medium">{title}</h2>
+                {if page_title {
+                    view! { <h1 class="text-sm font-medium">{title}</h1> }.into_any()
+                } else {
+                    view! { <h2 class="text-sm font-medium">{title}</h2> }.into_any()
+                }}
                 {(!description.is_empty())
                     .then(|| view! { <p class="text-xs/relaxed text-muted-foreground">{description}</p> })}
             </header>
@@ -195,6 +202,16 @@ pub fn PageHeader(
             </div>
             {children.map(|actions| view! { <div class="flex flex-wrap items-center gap-2">{actions()}</div> })}
         </div>
+    }
+}
+
+/// A plain card for a wide form or a list. `class` adds to it, e.g. a width.
+#[component]
+pub fn Panel(#[prop(optional)] class: &'static str, children: Children) -> impl IntoView {
+    view! {
+        <section class=format!("overflow-x-auto rounded-lg bg-card p-4 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10 {class}")>
+            {children()}
+        </section>
     }
 }
 

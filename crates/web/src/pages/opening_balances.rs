@@ -8,7 +8,7 @@ use crate::errors::describe;
 use crate::fiscal_year::use_fiscal_years;
 use crate::format::amount;
 use crate::ui::{
-    Button, ErrorAlert, PageHeader, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
+    Button, ErrorAlert, PageHeader, Panel, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
     TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
 };
 use crate::voucher_lines::{LineRows, Lines};
@@ -25,6 +25,8 @@ pub fn OpeningBalances() -> impl IntoView {
     let accounts = RwSignal::new(Vec::<lpb::Account>::new());
     // What the server holds; None until it has answered.
     let current = RwSignal::new(None::<Vec<lpb::VoucherLine>>);
+    // The balances were asked for and answered, with the lines or an error.
+    let loaded = RwSignal::new(false);
     let lines = Lines::new();
     let busy = RwSignal::new(false);
     // The company this form was filled for; a save only ever goes there.
@@ -36,6 +38,7 @@ pub fn OpeningBalances() -> impl IntoView {
         let company_id = companies.active.get();
         accounts.set(Vec::new());
         current.set(None);
+        loaded.set(false);
         saved.set(None);
         lines.clear();
         form_company.set_value(company_id.clone());
@@ -69,6 +72,7 @@ pub fn OpeningBalances() -> impl IntoView {
                 }
                 Err(status) => error.set(Some(describe(&status))),
             }
+            loaded.set(true);
         });
     });
 
@@ -111,8 +115,10 @@ pub fn OpeningBalances() -> impl IntoView {
                 when=move || first().is_some_and(|y| y.closed)
                 fallback=move || view! {
                     // The rows are replaced when the balances arrive, so the
-                    // form waits for them: nothing typed is overwritten.
-                    <Show when=move || current.with(Option::is_some)>
+                    // form waits for the answer: nothing typed is overwritten.
+                    // After an error it shows, but Spara stays off.
+                    <Show when=move || loaded.get()>
+                    <Panel>
                     <form class="grid gap-4" novalidate on:submit=submit>
                         <datalist id="balance_accounts">
                             {move || {
@@ -129,6 +135,7 @@ pub fn OpeningBalances() -> impl IntoView {
                             <Button disabled=Signal::derive(move || busy.get() || current.with(Option::is_none))>"Spara"</Button>
                         </div>
                     </form>
+                    </Panel>
                     </Show>
                 }
             >

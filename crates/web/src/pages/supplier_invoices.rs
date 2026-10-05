@@ -112,6 +112,7 @@ fn InvoiceRow(
     let company_id = StoredValue::new(company_id);
     let number = invoice.number;
     let label = status_label(&invoice.status, &invoice.due_date, &today());
+    let badge = status_badge(&invoice.status, &invoice.due_date, &today());
     let (unpaid, paid) = (invoice.status == "unpaid", invoice.status == "paid");
     let invoice = StoredValue::new(invoice);
     let panel = RwSignal::new(Panel::Closed);
@@ -211,7 +212,7 @@ fn InvoiceRow(
             <td class=TABLE_CELL>{i.invoice_date.clone()}</td>
             <td class=TABLE_CELL>{i.due_date.clone()}</td>
             <td class=format!("{TABLE_CELL} text-right tabular-nums")>{amount(i.total)}</td>
-            <td class=TABLE_CELL><Badge variant=status_badge(label)>{label}</Badge></td>
+            <td class=TABLE_CELL><Badge variant=badge>{label}</Badge></td>
             <td class=format!("{TABLE_CELL} text-right")>
                 <Button variant=Variant::Ghost kind="button" on:click=move |_| toggle(Panel::Details)>"Detaljer"</Button>
                 {unpaid.then(|| view! {

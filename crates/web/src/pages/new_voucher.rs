@@ -5,7 +5,7 @@ use crate::api::{ledger_api, lpb};
 use crate::attachments::{check_sizes, read_files, size_label};
 use crate::errors::{describe, describe_code};
 use crate::format::today;
-use crate::ui::{Button, ErrorAlert, Field, FileInput, PageHeader, Variant};
+use crate::ui::{Button, ErrorAlert, Field, FileInput, PageHeader, Panel, Variant};
 use crate::voucher_lines::{LineRows, Lines};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
@@ -122,7 +122,7 @@ pub fn NewVoucher() -> impl IntoView {
     view! {
         <div class="grid gap-6">
         <PageHeader title="Ny verifikation" />
-        <section class="overflow-x-auto rounded-lg bg-card p-4 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10">
+        <Panel>
             <form class="grid gap-4" novalidate on:submit=submit>
                 <ErrorAlert message=error />
                 {move || booked.get().map(|text| view! { <p role="status" class="text-xs/relaxed">{text}</p> })}
@@ -174,7 +174,7 @@ pub fn NewVoucher() -> impl IntoView {
                     "Bokför"
                 </Button>
             </form>
-        </section>
+        </Panel>
         </div>
     }
 }

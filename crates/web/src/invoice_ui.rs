@@ -22,12 +22,12 @@ pub fn status_label(status: &str, due_date: &str, today: &str) -> &'static str {
     }
 }
 
-/// How a status label is drawn: overdue stands out, settled ones recede.
-pub fn status_badge(label: &str) -> BadgeVariant {
-    match label {
-        "Förfallen" => BadgeVariant::Destructive,
-        "Obetald" => BadgeVariant::Secondary,
-        _ => BadgeVariant::Outline,
+/// How that status is drawn: overdue stands out, settled ones recede.
+pub fn status_badge(status: &str, due_date: &str, today: &str) -> BadgeVariant {
+    match status {
+        "paid" | "cancelled" => BadgeVariant::Outline,
+        _ if due_date < today => BadgeVariant::Destructive,
+        _ => BadgeVariant::Secondary,
     }
 }
 
@@ -248,10 +248,11 @@ mod tests {
 
     #[test]
     fn an_overdue_invoice_gets_the_destructive_badge() {
-        assert!(status_badge("Förfallen") == BadgeVariant::Destructive);
-        assert!(status_badge("Obetald") == BadgeVariant::Secondary);
-        assert!(status_badge("Betald") == BadgeVariant::Outline);
-        assert!(status_badge("Makulerad") == BadgeVariant::Outline);
+        let badge = |status| status_badge(status, "2026-03-31", "2026-04-01");
+        assert!(badge("unpaid") == BadgeVariant::Destructive);
+        assert!(status_badge("unpaid", "2026-03-31", "2026-03-31") == BadgeVariant::Secondary);
+        assert!(badge("paid") == BadgeVariant::Outline);
+        assert!(badge("cancelled") == BadgeVariant::Outline);
     }
 
     #[test]

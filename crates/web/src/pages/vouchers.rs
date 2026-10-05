@@ -355,9 +355,11 @@ fn VoucherRow(
             <tr class=format!("{TABLE_ROW} bg-muted/50")>
                 <td class=TABLE_CELL></td>
                 <td class=TABLE_CELL colspan="6">
+                    <div class="flex flex-wrap items-start gap-x-8 gap-y-3">
                     <table class="w-full max-w-xl text-xs">
                         <thead>
-                            <tr class="border-b text-muted-foreground">
+                            // `!`: the outer table clears the border of every last row.
+                            <tr class="border-b! text-muted-foreground">
                                 <th class="py-1 pr-2 text-left font-normal">"Konto"</th>
                                 <th class="px-2 py-1 text-right font-normal">"Debet"</th>
                                 <th class="py-1 pl-2 text-right font-normal">"Kredit"</th>
@@ -384,7 +386,7 @@ fn VoucherRow(
                             </tr>
                         </tbody>
                     </table>
-                    <div class="mt-3 grid gap-2">
+                    <div class="grid gap-2">
                         <h2 class="text-xs/relaxed font-medium">"Underlag"</h2>
                         <ul class="grid gap-1">
                             {move || {
@@ -415,6 +417,7 @@ fn VoucherRow(
                                 on_pick=add_attachments
                             />
                         </div>
+                    </div>
                     </div>
                 </td>
             </tr>

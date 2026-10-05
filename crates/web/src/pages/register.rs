@@ -77,7 +77,7 @@ pub fn Register() -> impl IntoView {
     view! {
         {move || done.get().then(|| view! { <Redirect path="/" /> })}
         <div class=format!("mx-auto {NARROW}")>
-        <Card title=title description="Du loggar in med en passkey – inget lösenord behövs.">
+        <Card title=title description="Du loggar in med en passkey – inget lösenord behövs." page_title=true>
             <Show
                 when=open
                 fallback=move || {

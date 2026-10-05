@@ -335,13 +335,16 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - `src/nav.rs` holds the header: one row with Doris, the company picker,
   the main menu (Översikt, Bokföring, Inköp, Försäljning, Lön) and the account
   menu. Menus are native `<details name="doris-nav">`, so the browser keeps
-  one open; one listener closes them on Escape, on a click outside and on
-  a click on a link. `section_of` decides which menu a path belongs to: add
-  a line there for every new page.
+  one open. A click listener closes them on a click outside or on one of
+  their links or buttons, a keydown listener on Escape (focus goes back to
+  the menu's button), and an effect when the path changes. `section_of`
+  decides which menu a path belongs to: add a line there for every new page.
 - A view is a `grid gap-6` that starts with `PageHeader` (the page's one
   `<h1>`, actions to the right). Tables sit in `TableCard`, statuses are
-  `Badge`s, "Ny …" actions are `LinkButton`s, and form cards are `narrow`
-  (352px, left-aligned). Login and registration are centered.
+  `Badge`s and "Ny …" actions are `LinkButton`s. A one-column form is a
+  `narrow` `Card` (352px, left-aligned); a form with several columns or a
+  line editor is a full-width `Card` or `Panel`. Login and registration
+  are centered, and their card's title is the page's `<h1>` (`page_title`).
 - Icons are lucide shapes inlined in `ui.rs` (`Icon`, `IconName`), copied
   from lucide-static with the closing tags written out.
 - The crate also compiles for the host, so `cargo test`/`clippy --workspace`

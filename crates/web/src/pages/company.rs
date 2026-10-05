@@ -1,7 +1,7 @@
 use crate::api::{company_api, cpb};
 use crate::errors::describe;
 use crate::format::{accounting_method_label, legal_form_label};
-use crate::ui::{Button, Card, ErrorAlert, Field, PageHeader};
+use crate::ui::{Button, Card, ErrorAlert, Field, PageHeader, Panel};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -75,7 +75,7 @@ pub fn CompanyPage() -> impl IntoView {
                             .to_owned();
                         view! {
                             <PageHeader title=c.name.clone() />
-                            <section class="grid w-full max-w-xl gap-2 rounded-lg bg-card p-4 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10">
+                            <Panel class="grid w-full max-w-xl gap-2">
                                 <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
                                     <dt class="text-muted-foreground">"Organisationsnummer"</dt>
                                     <dd>{c.org_nr.clone()}</dd>
@@ -88,7 +88,7 @@ pub fn CompanyPage() -> impl IntoView {
                                     <dt class="text-muted-foreground">"Bokföringsmetod"</dt>
                                     <dd>{accounting_method_label(c.accounting_method())}</dd>
                                 </dl>
-                            </section>
+                            </Panel>
                         }
                     })
             }}

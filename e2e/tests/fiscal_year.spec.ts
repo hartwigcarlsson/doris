@@ -109,3 +109,14 @@ test("opening balances typed while the page loads are kept", async ({ page, app 
   await page.getByRole("button", { name: "Spara" }).click();
   await expect(page.getByRole("status")).toHaveText("Ingående balanser sparade");
 });
+
+
+test("opening balances that cannot be fetched show the error and a form that cannot be saved", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB", lastStart);
+  await page.route("**/GetOpeningBalances", (route) => route.abort());
+  await page.goto(`${app}/opening-balances`);
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByLabel("Konto, rad 1")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Spara" })).toBeDisabled();
+});

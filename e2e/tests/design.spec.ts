@@ -60,8 +60,12 @@ test("a menu closes on Escape, on a click outside and when its current page is c
   const link = banner.getByRole("link", { name: "Verifikationer" });
 
   await openMenu(page, "Bokföring");
+  await page.keyboard.press("Tab");
+  await expect(link).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(link).toBeHidden();
+  // Focus goes back to the menu's button, not to a link that is now hidden.
+  await expect(banner.locator("summary", { hasText: "Bokföring" })).toBeFocused();
 
   await openMenu(page, "Bokföring");
   await page.getByRole("main").click({ position: { x: 5, y: 5 } });
@@ -167,6 +171,8 @@ test("the bookkeeping views follow the design", async ({ page, app }) => {
   expect(await status.evaluate((el) => getComputedStyle(el).borderRadius)).not.toBe("0px");
   await page.getByRole("link", { name: "Ingående balanser" }).click();
   await expectDesign(page, /Ingående balanser/);
+  // The line editor sits in a card.
+  await expect(page.getByRole("main").locator("section").getByLabel("Konto, rad 1")).toBeVisible();
   await page.goto(`${app}/trial-balance/1930`);
   await expectDesign(page, /^1930/);
 });
@@ -264,4 +270,40 @@ test("an expanded voucher shows its kontering in debit and credit columns", asyn
   expect(await cells(/^1930 /)).toEqual([expect.stringMatching(/^1930 /), "1 250,00", ""]);
   expect(await cells(/^3001 /)).toEqual([expect.stringMatching(/^3001 /), "", "1 250,00"]);
   expect(await cells(/^Summa/)).toEqual(["Summa", "1 250,00", "1 250,00"]);
+  // The column headings keep their rule inside the outer table.
+  const rule = await kontering.getByRole("row", { name: "Konto Debet Kredit" }).evaluate((el) => getComputedStyle(el).borderBottomWidth);
+  expect(rule).toBe("1px");
+  // On a wide screen the underlag sit to the right of the kontering.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const table = (await kontering.boundingBox())!;
+  const underlag = (await page.getByRole("heading", { name: "Underlag" }).boundingBox())!;
+  expect(underlag.x).toBeGreaterThanOrEqual(table.x + table.width);
+});
+
+
+test("the account menu closes as soon as Logga ut is chosen", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.route("**/Logout", async (route) => {
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  const menu = await openMenu(page, "Konto");
+  await menu.getByRole("button", { name: "Logga ut" }).click();
+  await expect(menu).toBeHidden({ timeout: 1000 });
+});
+
+test("login and registration each have one h1", async ({ page, app }) => {
+  await page.goto(`${app}/register`);
+  await expect(page.getByRole("heading", { level: 1, name: "Skapa administratörskonto" })).toBeVisible();
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await (await openMenu(page, "Konto")).getByRole("button", { name: "Logga ut" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Logga in" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+});
+
+test("a menu is found by its own name, whatever the user is called", async ({ page, app }) => {
+  await register(page, app, { email: "lon@example.se", name: "Lön Inköp" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  expect(await linksIn(await openMenu(page, "Lön"))).toEqual(["Lönekörningar", "Anställda", "Arbetsgivardeklaration"]);
+  expect(await linksIn(await openMenu(page, "Inköp"))).toEqual(["Leverantörsfakturor", "Leverantörer"]);
 });

@@ -197,7 +197,10 @@ const MENU_OF: Record<string, Menu | null> = {
 
 /** Opens one of the header's menus (if it is closed) and returns its panel. */
 export async function openMenu(page: Page, menu: Menu): Promise<Locator> {
-  const details = page.getByRole("banner").locator("details").filter({ has: page.locator("summary", { hasText: menu }) });
+  // The menu's own name is the first thing in its button; the account
+  // menu's button also holds the user's name, which could be anything.
+  const name = page.locator("summary > span:first-child", { hasText: new RegExp(`^${menu}$`) });
+  const details = page.getByRole("banner").locator("details").filter({ has: name });
   if (!(await details.evaluate((d: HTMLDetailsElement) => d.open))) await details.locator("summary").click();
   return details.getByRole("list");
 }

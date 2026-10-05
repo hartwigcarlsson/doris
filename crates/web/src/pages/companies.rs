@@ -1,6 +1,6 @@
 use crate::api::{company_api, cpb};
 use crate::errors::describe;
-use crate::ui::{ErrorAlert, IconName, LinkButton, PageHeader};
+use crate::ui::{ErrorAlert, IconName, LinkButton, PageHeader, Panel};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
@@ -25,7 +25,7 @@ pub fn Companies() -> impl IntoView {
                 <LinkButton href="/companies/new" icon=IconName::Plus>"Lägg till företag"</LinkButton>
             </PageHeader>
             <ErrorAlert message=error />
-            <section class="w-full max-w-xl rounded-lg bg-card p-4 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10">
+            <Panel class="w-full max-w-xl">
                 {move || {
                     companies
                         .get()
@@ -58,7 +58,7 @@ pub fn Companies() -> impl IntoView {
                             }
                         })
                 }}
-            </section>
+            </Panel>
         </div>
     }
 }
