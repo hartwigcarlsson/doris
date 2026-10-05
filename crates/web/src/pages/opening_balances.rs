@@ -8,8 +8,8 @@ use crate::errors::describe;
 use crate::fiscal_year::use_fiscal_years;
 use crate::format::amount;
 use crate::ui::{
-    Button, ErrorAlert, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL,
-    TABLE_ROW, Table,
+    Button, ErrorAlert, PageHeader, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
+    TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
 };
 use crate::voucher_lines::{LineRows, Lines};
 use leptos::ev::SubmitEvent;
@@ -103,10 +103,8 @@ pub fn OpeningBalances() -> impl IntoView {
     };
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <h1 class="text-sm font-medium">
-                {move || first().map(|y| format!("Ingående balanser {}", y.start)).unwrap_or_else(|| "Ingående balanser".into())}
-            </h1>
+        <div class="grid gap-6">
+            <PageHeader title=Signal::derive(move || first().map(|y| format!("Ingående balanser {}", y.start)).unwrap_or_else(|| "Ingående balanser".into())) />
             <ErrorAlert message=error />
             {move || saved.get().map(|text| view! { <p role="status" class="text-xs/relaxed">{text}</p> })}
             <Show
@@ -133,7 +131,7 @@ pub fn OpeningBalances() -> impl IntoView {
                 <p class="text-xs/relaxed text-muted-foreground">
                     "Räkenskapsåret är stängt, så de ingående balanserna kan inte ändras."
                 </p>
-                <Table>
+                <TableCard><Table>
                     <thead class=TABLE_HEAD>
                         <tr class=TABLE_ROW>
                             <th class=TABLE_HEADER_CELL>"Konto"</th>
@@ -157,7 +155,7 @@ pub fn OpeningBalances() -> impl IntoView {
                                 .collect_view()
                         }}
                     </tbody>
-                </Table>
+                </Table></TableCard>
             </Show>
         </div>
     }

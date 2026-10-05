@@ -137,3 +137,33 @@ test("Verifikationer follows the design", async ({ page, app }) => {
   await add.click();
   await expect(main.getByRole("heading", { level: 1, name: "Ny verifikation" })).toBeVisible();
 });
+
+/** A view has one h1 in main, and every table in main sits in a card. */
+async function expectDesign(page: import("@playwright/test").Page, heading: string | RegExp) {
+  const main = page.getByRole("main");
+  await expect(main.getByRole("heading", { level: 1, name: heading })).toBeVisible();
+  await expect(main.getByRole("heading", { level: 1 })).toHaveCount(1);
+  const loose = await main.evaluate((el) => [...el.querySelectorAll("table")].filter((t) => !t.closest("section")).length);
+  expect(loose, "tables outside a card").toBe(0);
+}
+
+test("the bookkeeping views follow the design", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  for (const [link, heading] of [
+    ["Saldobalans", "Saldobalans"],
+    ["Rapporter", "Resultat- och balansräkning"],
+    ["Kontoplan", "Kontoplan"],
+    ["Räkenskapsår", "Räkenskapsår"],
+  ] as const) {
+    await goTo(page, link);
+    await expectDesign(page, heading);
+  }
+  // Öppet is a badge, not bare cell text.
+  const status = page.getByRole("main").getByText("Öppet", { exact: true });
+  expect(await status.evaluate((el) => getComputedStyle(el).borderRadius)).not.toBe("0px");
+  await page.getByRole("link", { name: "Ingående balanser" }).click();
+  await expectDesign(page, /Ingående balanser/);
+  await page.goto(`${app}/trial-balance/1930`);
+  await expectDesign(page, /^1930/);
+});

@@ -8,12 +8,11 @@ use crate::errors::describe;
 use crate::fiscal_year::{closable, reopenable, use_fiscal_years};
 use crate::format::today;
 use crate::ui::{
-    Button, ErrorAlert, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table,
-    TextInput, Variant,
+    Badge, BadgeVariant, Button, ErrorAlert, LinkButton, PageHeader, TABLE_BODY, TABLE_CELL,
+    TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, TextInput, Variant,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 
 #[component]
 pub fn FiscalYears() -> impl IntoView {
@@ -64,8 +63,10 @@ pub fn FiscalYears() -> impl IntoView {
     });
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <h1 class="text-sm font-medium">"Räkenskapsår"</h1>
+        <div class="grid gap-6">
+            <PageHeader title="Räkenskapsår">
+                <LinkButton href="/opening-balances" variant=Variant::Outline>"Ingående balanser"</LinkButton>
+            </PageHeader>
             <ErrorAlert message=error />
             {move || unpaid_under_cash.get().then(|| view! {
                 <p class="text-xs/relaxed text-muted-foreground">
@@ -73,7 +74,7 @@ pub fn FiscalYears() -> impl IntoView {
                 </p>
             })}
             {move || done.get().map(|text| view! { <p role="status" class="text-xs/relaxed">{text}</p> })}
-            <Table>
+            <TableCard><Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
                         <th class=TABLE_HEADER_CELL>"Räkenskapsår"</th>
@@ -86,8 +87,7 @@ pub fn FiscalYears() -> impl IntoView {
                         <FiscalYearRow fiscal_year=fiscal_year years=years error=error done=done />
                     </For>
                 </tbody>
-            </Table>
-            <A href="/opening-balances" attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline">"Ingående balanser"</A>
+            </Table></TableCard>
         </div>
     }
 }
@@ -179,7 +179,13 @@ fn FiscalYearRow(
     view! {
         <tr class=TABLE_ROW>
             <td class=TABLE_CELL>{format!("{} – {}", fiscal_year.start, fiscal_year.end)}</td>
-            <td class=TABLE_CELL>{if fiscal_year.closed { "Stängt" } else { "Öppet" }}</td>
+            <td class=TABLE_CELL>
+                {if fiscal_year.closed {
+                    view! { <Badge variant=BadgeVariant::Outline>"Stängt"</Badge> }.into_any()
+                } else {
+                    view! { <Badge>"Öppet"</Badge> }.into_any()
+                }}
+            </td>
             <td class=format!("{TABLE_CELL} text-right")>
                 <Show when=move || can_close() && !confirming.get()>
                     <Button variant=Variant::Ghost kind="button" on:click=move |_| confirming.set(true)>"Stäng år"</Button>

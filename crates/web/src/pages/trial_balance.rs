@@ -9,8 +9,8 @@ use crate::fiscal_year::{
 };
 use crate::format::amount;
 use crate::ui::{
-    ErrorAlert, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL,
-    TABLE_ROW, Table,
+    Badge, ErrorAlert, PageHeader, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
+    TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -102,15 +102,14 @@ pub fn TrialBalance() -> impl IntoView {
     let closed = move || years.with(|ys| is_closed(ys, &year.get()));
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <h1 class="text-sm font-medium">"Saldobalans"</h1>
-            <ErrorAlert message=error />
-            <div class="flex items-end gap-4">
-                <FiscalYearSelect years=years year=year />
+        <div class="grid gap-6">
+            <PageHeader title="Saldobalans">
                 <Show when=closed>
-                    <span class="pb-2 text-xs/relaxed text-muted-foreground">"Stängt"</span>
+                    <Badge>"Stängt"</Badge>
                 </Show>
-            </div>
+                <FiscalYearSelect years=years year=year />
+            </PageHeader>
+            <ErrorAlert message=error />
             <Show when=preliminary>
                 <p class="text-xs/relaxed text-muted-foreground">
                     "Föregående räkenskapsår är inte stängt, så de ingående balanserna är preliminära."
@@ -148,8 +147,8 @@ pub fn TrialBalance() -> impl IntoView {
 fn PartTable(title: &'static str, part: Part, year: String) -> impl IntoView {
     let (opening, debit, credit, closing) = (part.opening, part.debit, part.credit, part.closing());
     view! {
-        <section class="grid gap-2">
-            <h2 class="text-sm font-medium">{title}</h2>
+        <TableCard>
+            <h2 class="px-2 pt-1 text-sm font-medium">{title}</h2>
             <Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
@@ -191,7 +190,7 @@ fn PartTable(title: &'static str, part: Part, year: String) -> impl IntoView {
                     </tr>
                 </tbody>
             </Table>
-        </section>
+        </TableCard>
     }
 }
 

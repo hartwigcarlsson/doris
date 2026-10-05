@@ -7,8 +7,8 @@ use crate::errors::describe;
 use crate::fiscal_year::{FiscalYearSelect, is_closed, keep_year_in_url, period, use_fiscal_years};
 use crate::format::amount;
 use crate::ui::{
-    ErrorAlert, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL,
-    TABLE_ROW, Table,
+    Badge, ErrorAlert, PageHeader, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
+    TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -53,15 +53,14 @@ pub fn FinancialStatements() -> impl IntoView {
     let closed = move || years.with(|ys| is_closed(ys, &year.get()));
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <h1 class="text-sm font-medium">"Resultat- och balansräkning"</h1>
-            <ErrorAlert message=error />
-            <div class="flex items-end gap-4">
-                <FiscalYearSelect years=years year=year />
+        <div class="grid gap-6">
+            <PageHeader title="Resultat- och balansräkning">
                 <Show when=closed>
-                    <span class="pb-2 text-xs/relaxed text-muted-foreground">"Räkenskapsåret är stängt"</span>
+                    <Badge>"Räkenskapsåret är stängt"</Badge>
                 </Show>
-            </div>
+                <FiscalYearSelect years=years year=year />
+            </PageHeader>
+            <ErrorAlert message=error />
             {move || {
                 statements.get().map(|s| {
                     let current = years.with_untracked(|ys| period(ys, &year.get_untracked()));
@@ -72,8 +71,10 @@ pub fn FinancialStatements() -> impl IntoView {
                         .filter(|d| *d != 0)
                         .collect();
                     view! {
-                        <StatementTable title="Resultaträkning" lines=s.income_statement current=current.clone() previous=previous.clone() />
-                        <StatementTable title="Balansräkning" lines=s.balance_sheet current=current previous=previous />
+                        <div class="grid items-start gap-6 lg:grid-cols-2">
+                            <StatementTable title="Resultaträkning" lines=s.income_statement current=current.clone() previous=previous.clone() />
+                            <StatementTable title="Balansräkning" lines=s.balance_sheet current=current previous=previous />
+                        </div>
                         {differences
                             .into_iter()
                             .map(|d| view! {
@@ -103,8 +104,8 @@ fn StatementTable(
 ) -> impl IntoView {
     let has_previous = previous.is_some();
     view! {
-        <section class="grid gap-2">
-            <h2 class="text-sm font-medium">{title}</h2>
+        <TableCard>
+            <h2 class="px-2 pt-1 text-sm font-medium">{title}</h2>
             <Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
@@ -142,6 +143,6 @@ fn StatementTable(
                         .collect_view()}
                 </tbody>
             </Table>
-        </section>
+        </TableCard>
     }
 }

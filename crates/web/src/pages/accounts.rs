@@ -4,8 +4,8 @@ use crate::active_company::Companies;
 use crate::api::{ledger_api, lpb};
 use crate::errors::describe;
 use crate::ui::{
-    Button, Card, Checkbox, ErrorAlert, Field, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
-    TABLE_HEADER_CELL, TABLE_ROW, Table, TextInput, Variant,
+    Badge, BadgeVariant, Button, Card, Checkbox, ErrorAlert, Field, PageHeader, TABLE_BODY,
+    TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, TextInput, Variant,
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
@@ -80,8 +80,8 @@ pub fn Accounts() -> impl IntoView {
     };
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <h1 class="text-sm font-medium">"Kontoplan"</h1>
+        <div class="grid gap-6">
+            <PageHeader title="Kontoplan" />
             <ErrorAlert message=error />
             <Card title="Lägg till konto">
                 <form class="grid grid-cols-[8rem_1fr_auto] items-end gap-4" novalidate on:submit=add>
@@ -91,7 +91,7 @@ pub fn Accounts() -> impl IntoView {
                 </form>
             </Card>
             <Checkbox label="Visa inaktiva" id="show_inactive" checked=show_inactive />
-            <Table>
+            <TableCard><Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
                         <th class=TABLE_HEADER_CELL>"Konto"</th>
@@ -115,7 +115,7 @@ pub fn Accounts() -> impl IntoView {
                         <AccountRow company_id=company_id account=account changed=changed error=error />
                     </For>
                 </tbody>
-            </Table>
+            </Table></TableCard>
         </div>
     }
 }
@@ -187,7 +187,13 @@ fn AccountRow(
                     </form>
                 </Show>
             </td>
-            <td class=TABLE_CELL>{if active { "Aktivt" } else { "Inaktivt" }}</td>
+            <td class=TABLE_CELL>
+                {if active {
+                    view! { <Badge>"Aktivt"</Badge> }.into_any()
+                } else {
+                    view! { <Badge variant=BadgeVariant::Outline>"Inaktivt"</Badge> }.into_any()
+                }}
+            </td>
             <td class=format!("{TABLE_CELL} text-right")>
                 <Button variant=Variant::Ghost kind="button" on:click=move |_| editing.set(true)>
                     "Byt namn"

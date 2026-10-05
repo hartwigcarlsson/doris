@@ -7,8 +7,8 @@ use crate::errors::describe;
 use crate::fiscal_year::{FiscalYearSelect, keep_year_in_url, use_fiscal_years};
 use crate::format::amount;
 use crate::ui::{
-    ErrorAlert, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL,
-    TABLE_ROW, Table,
+    ErrorAlert, PageHeader, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
+    TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -94,15 +94,16 @@ pub fn AccountLedger() -> impl IntoView {
     });
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <div class="flex items-end justify-between gap-4">
-                <h1 class="text-sm font-medium">{move || format!("{account} {}", name.get()).trim_end().to_owned()}</h1>
-                <A href=move || format!("/trial-balance?fy={}", year.get()) attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline">
+        <div class="grid gap-6">
+            <PageHeader title=Signal::derive(move || format!("{account} {}", name.get()).trim_end().to_owned())>
+                <FiscalYearSelect years=years year=year />
+                // The year in the link follows the select, so this is an `<A>`
+                // with the outline button's look rather than a `LinkButton`.
+                <A href=move || format!("/trial-balance?fy={}", year.get()) attr:class="inline-flex h-7 items-center rounded-md border border-border px-2 text-xs/relaxed font-medium whitespace-nowrap hover:bg-muted dark:bg-input/30">
                     "Tillbaka till saldobalansen"
                 </A>
-            </div>
+            </PageHeader>
             <ErrorAlert message=error />
-            <FiscalYearSelect years=years year=year />
             {move || {
                 entries.get().map(|(opening, entries)| {
                     if entries.is_empty() && opening == 0 {
@@ -115,7 +116,7 @@ pub fn AccountLedger() -> impl IntoView {
                     let credit: i64 = entries.iter().map(|e| e.credit).sum();
                     let balance = entries.last().map_or(opening, |e| e.balance);
                     view! {
-                        <Table>
+                        <TableCard><Table>
                             <thead class=TABLE_HEAD>
                                 <tr class=TABLE_ROW>
                                     <th class=TABLE_HEADER_CELL>"Datum"</th>
@@ -159,7 +160,7 @@ pub fn AccountLedger() -> impl IntoView {
                                     <td class=TABLE_AMOUNT_CELL>{amount(balance)}</td>
                                 </tr>
                             </tbody>
-                        </Table>
+                        </Table></TableCard>
                     }
                     .into_any()
                 })
