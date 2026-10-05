@@ -1,11 +1,10 @@
-import { addCompany, expect, register, test } from "./fixtures";
+import { addCompany, expect, goTo, register, test } from "./fixtures";
 import type { Page } from "@playwright/test";
 
-const nav = (page: Page) => page.getByRole("link", { name: "Företag", exact: true });
 
 test("a user adds a company by hand and finds it in the list", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
-  await nav(page).click();
+  await goTo(page, "Företag");
   await expect(page.getByText("Inga företag än.")).toBeVisible();
 
   await addCompany(page, app, "5560160680", "Exempel AB");
@@ -13,7 +12,7 @@ test("a user adds a company by hand and finds it in the list", async ({ page, ap
   await expect(page.getByText("556016-0680")).toBeVisible();
   await expect(page.getByText("Faktureringsmetoden")).toBeVisible();
   await expect(page.getByText(/^\d{4}-01-01 – \d{4}-12-31$/)).toBeVisible();
-  await nav(page).click();
+  await goTo(page, "Företag");
   await expect(page.getByRole("link", { name: "Exempel AB" })).toBeVisible();
 });
 
@@ -59,7 +58,7 @@ test("the end of the first räkenskapsår follows from its start, unless it is s
 
 test("a colleague sees a company only after being added as a member", async ({ page, app, newPerson }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
-  await page.getByRole("link", { name: "Inbjudningar" }).click();
+  await goTo(page, "Inbjudningar");
   await page.getByLabel("E-post").fill("bo@example.se");
   await page.getByRole("button", { name: "Skapa inbjudan" }).click();
   const link = await page.getByLabel("Inbjudningslänk").inputValue();

@@ -1,4 +1,4 @@
-import { addCompany, expect, register, test } from "./fixtures";
+import { addCompany, expect, goTo, openMenu, register, test } from "./fixtures";
 
 // Spacing measured from the shadcn preset b1Gdz9bFY reference (mira): cards
 // ~336px wide, 16px between fields, 8px from label to input, 16px from the
@@ -26,21 +26,98 @@ test("forms follow the preset's spacing", async ({ page, app }) => {
   expect(m.cardWidth).toBeLessThanOrEqual(352);
 });
 
-// An admin with a company sees every header link; the picker must keep its
-// width and nothing may spill out of the header, on a desktop or a phone.
-test("the header keeps the company picker readable", async ({ page, app }) => {
+const linksIn = async (panel: import("@playwright/test").Locator) =>
+  (await panel.getByRole("link").allInnerTexts()).map((t) => t.trim());
+
+test("the header is one row with grouped menus", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna Lind" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const banner = page.getByRole("banner");
+
+  const height = (await banner.boundingBox())!.height;
+  expect(height).toBeGreaterThanOrEqual(48);
+  expect(height).toBeLessThanOrEqual(49);
+  await expect(banner.getByRole("link", { name: "Översikt" })).toBeVisible();
+  await expect(banner.getByRole("link", { name: "Kunder" })).toBeVisible();
+  await expect(banner.getByRole("link", { name: "Verifikationer" })).toBeHidden();
+
+  expect(await linksIn(await openMenu(page, "Bokföring"))).toEqual(["Verifikationer", "Saldobalans", "Rapporter", "Kontoplan", "Räkenskapsår"]);
+  expect(await linksIn(await openMenu(page, "Inköp"))).toEqual(["Leverantörsfakturor", "Leverantörer"]);
+  // Opening one menu closed the one before it.
+  await expect(banner.getByRole("link", { name: "Verifikationer" })).toBeHidden();
+  expect(await linksIn(await openMenu(page, "Lön"))).toEqual(["Lönekörningar", "Anställda"]);
+  const account = await openMenu(page, "Konto");
+  expect(await linksIn(account)).toEqual(["Företag", "Passkeys", "Inbjudningar"]);
+  await expect(account.getByRole("button", { name: "Logga ut" })).toBeVisible();
+  await expect(banner.getByText("AL", { exact: true })).toBeVisible();
+});
+
+test("a menu closes on Escape, on a click outside and when its current page is chosen", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
   const banner = page.getByRole("banner");
-  await expect(banner.getByRole("link", { name: "Rapporter" })).toBeVisible();
+  const link = banner.getByRole("link", { name: "Verifikationer" });
 
+  await openMenu(page, "Bokföring");
+  await page.keyboard.press("Escape");
+  await expect(link).toBeHidden();
+
+  await openMenu(page, "Bokföring");
+  await page.getByRole("main").click({ position: { x: 5, y: 5 } });
+  await expect(link).toBeHidden();
+
+  await goTo(page, "Verifikationer");
+  await expect(page).toHaveURL(/\/vouchers$/);
+  await expect(link).toBeHidden();
+  // Already on the page: the path does not change, and the menu still closes.
+  await goTo(page, "Verifikationer");
+  await expect(link).toBeHidden();
+});
+
+test("the header marks where the current page lives", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.goto(`${app}/vouchers/new`);
+  const banner = page.getByRole("banner");
+  await expect(banner.locator("summary", { hasText: "Bokföring" })).toHaveAttribute("data-current", "true");
+  await expect(banner.locator("summary", { hasText: "Inköp" })).not.toHaveAttribute("data-current", "true");
+  await page.goto(`${app}/vouchers`);
+  const panel = await openMenu(page, "Bokföring");
+  await expect(panel.getByRole("link", { name: "Verifikationer" })).toHaveAttribute("aria-current", "page");
+});
+
+test("without a company there is no main menu", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  const banner = page.getByRole("banner");
+  await expect(banner.getByRole("link", { name: "Lägg till företag" })).toBeVisible();
+  await expect(banner.locator("summary", { hasText: "Bokföring" })).toHaveCount(0);
+  await expect(banner.locator("summary", { hasText: "Konto" })).toHaveCount(1);
+});
+
+test("nothing spills out of the header, with a menu open or not", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 800 });
     const picker = await page.getByLabel("Aktivt företag").boundingBox();
     expect(picker!.width, `picker at ${width}px`).toBeGreaterThanOrEqual(150);
-    const spills = await banner.evaluate((header) =>
-      [...header.querySelectorAll("nav")].some((nav) => nav.scrollWidth > nav.clientWidth),
-    );
-    expect(spills, `header spills at ${width}px`).toBe(false);
+    for (const menu of [null, "Bokföring", "Konto"] as const) {
+      if (menu) await openMenu(page, menu);
+      const wider = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+      expect(wider, `page scrolls sideways at ${width}px with ${menu ?? "no menu"} open`).toBe(false);
+      await page.keyboard.press("Escape");
+    }
   }
+});
+
+test("the menu panel follows the colour scheme", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  const background = async () => (await openMenu(page, "Bokföring")).evaluate((el) => getComputedStyle(el).backgroundColor);
+  await page.emulateMedia({ colorScheme: "light" });
+  const light = await background();
+  await page.keyboard.press("Escape");
+  await page.emulateMedia({ colorScheme: "dark" });
+  expect(await background()).not.toBe(light);
 });

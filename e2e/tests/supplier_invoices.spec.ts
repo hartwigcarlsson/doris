@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { addCompany, addSupplier, expect, register, test } from "./fixtures";
+import { addCompany, addSupplier, expect, goTo, register, test } from "./fixtures";
 
 // The Status cell; the row's buttons have words of their own.
 const status = (row: Locator) => row.getByRole("cell").nth(6);
@@ -25,7 +25,7 @@ test("a supplier invoice is registered with its underlag, paid, reversed and pai
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
   await addSupplier(page, app, "Lev AB");
-  await page.getByRole("banner").getByRole("link", { name: "Leverantörsfakturor" }).click();
+  await goTo(page, "Leverantörsfakturor");
   await registerInvoice(page, app, "F-4711");
 
   const row = page.getByRole("row", { name: /^1 Lev AB F-4711/ });
@@ -34,10 +34,10 @@ test("a supplier invoice is registered with its underlag, paid, reversed and pai
   await expect(page.getByText("faktura.pdf")).toBeVisible();
   await expect(page.getByText("Bankgiro 5050-1055")).toBeVisible();
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await expect(page.getByRole("row", { name: /Leverantörsfaktura 1, Lev AB \(F-4711\)/ })).toContainText("1 underlag");
 
-  await page.getByRole("banner").getByRole("link", { name: "Leverantörsfakturor" }).click();
+  await goTo(page, "Leverantörsfakturor");
   await page.getByLabel("Visa betalda och makulerade").check();
   await row.getByRole("button", { name: "Betala" }).click();
   await expect(page.getByLabel("Betalkonto")).toHaveValue("1930");
@@ -93,19 +93,19 @@ test("under kontantmetoden only the payment is booked, and Räkenskapsår warns 
   await addSupplier(page, app, "Lev AB");
   await registerInvoice(page, app, "F-4711");
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await expect(page.getByRole("row", { name: /Leverantörsfaktura/ })).toHaveCount(0);
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   await expect(page.getByText(warning)).toBeVisible();
 
-  await page.getByRole("banner").getByRole("link", { name: "Leverantörsfakturor" }).click();
+  await goTo(page, "Leverantörsfakturor");
   await page.getByRole("row", { name: /^1 Lev AB F-4711/ }).getByRole("button", { name: "Betala" }).click();
   await page.getByRole("button", { name: "Bekräfta betalning" }).click();
   await expect(page.getByRole("row", { name: /^1 Lev AB F-4711/ })).toHaveCount(0);
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await expect(page.getByRole("row", { name: /Leverantörsfaktura 1, Lev AB \(F-4711\)/ })).toContainText("1 underlag");
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   await expect(page.getByRole("heading", { name: "Räkenskapsår" })).toBeVisible();
   await expect(page.getByText(warning)).toHaveCount(0);
 });

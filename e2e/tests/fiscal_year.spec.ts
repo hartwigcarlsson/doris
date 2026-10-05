@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { addCompany, expect, register, test } from "./fixtures";
+import { addCompany, expect, goTo, register, test } from "./fixtures";
 
 // Last calendar year has always ended, so it can be closed.
 const last = new Date().getFullYear() - 1;
@@ -21,7 +21,7 @@ test("a year opens with balances, closes with its result and reopens", async ({ 
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB", lastStart);
 
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   await page.getByRole("link", { name: "Ingående balanser" }).click();
   await expect(page.getByRole("heading", { name: `Ingående balanser ${lastStart}` })).toBeVisible();
   await page.getByLabel("Konto, rad 1").fill("1930");
@@ -38,7 +38,7 @@ test("a year opens with balances, closes with its result and reopens", async ({ 
   await book(page, app, `${last}-06-01`, "1250");
   await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
 
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   const lastYear = page.getByRole("row", { name: new RegExp(`^${lastStart}`) });
   await lastYear.getByRole("button", { name: "Stäng år" }).click();
   await lastYear.getByRole("button", { name: "Bekräfta stängning" }).click();
@@ -57,7 +57,7 @@ test("a year opens with balances, closes with its result and reopens", async ({ 
   await expect(page.getByRole("row", { name: /Ingående balans/ })).toContainText("-10 000,00");
   await expect(page.getByText("Inga transaktioner på kontot under räkenskapsåret.")).toHaveCount(0);
 
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   await lastYear.getByRole("button", { name: "Öppna igen" }).click();
   await lastYear.getByLabel("Anledning").fill("Glömd faktura");
   await lastYear.getByRole("button", { name: "Bekräfta", exact: true }).click();
@@ -76,7 +76,7 @@ test("the fiscal years follow the active company", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560360793", "Bolaget AB", nextStart);
   await addCompany(page, app, "5560160680", "Exempel AB", lastStart);
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   const lastYear = page.getByRole("row", { name: new RegExp(`^${lastStart}`) });
   await lastYear.getByRole("button", { name: "Stäng år" }).click();
   await lastYear.getByRole("button", { name: "Bekräfta stängning" }).click();

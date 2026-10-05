@@ -2,7 +2,7 @@ use crate::api::{api, pb};
 use crate::app::Session;
 use crate::errors::describe;
 use crate::passkey;
-use crate::ui::{Button, Card, ErrorAlert, Field};
+use crate::ui::{Button, Card, ErrorAlert, Field, NARROW};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -35,6 +35,7 @@ pub fn Login() -> impl IntoView {
     view! {
         {move || done.get().then(|| view! { <Redirect path="/" /> })}
         <Show when=move || !session.bootstrap_required.get() fallback=|| view! { <Redirect path="/register" /> }>
+            <div class=format!("mx-auto {NARROW}")>
             <Card title="Logga in" description="Använd din passkey.">
                 <form class="grid gap-4" novalidate on:submit=submit>
                     <Field label="E-post" id="email" kind="email" autocomplete="username" value=email />
@@ -46,6 +47,7 @@ pub fn Login() -> impl IntoView {
                     <A href="/register" attr:class="underline">"Registrera"</A>
                 </p>
             </Card>
+            </div>
         </Show>
     }
 }

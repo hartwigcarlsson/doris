@@ -1,4 +1,4 @@
-import { test as base, expect, type BrowserContext, type CDPSession, type Page } from "@playwright/test";
+import { test as base, expect, type BrowserContext, type CDPSession, type Locator, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
@@ -172,4 +172,38 @@ export async function addCustomer(page: Page, app: string, name: string, terms =
   await page.getByLabel("Betalningsvillkor (dagar)").fill(terms);
   await page.getByRole("button", { name: "Spara" }).click();
   await expect(page.getByRole("row", { name: new RegExp(`^1 ${name}`) })).toBeVisible();
+}
+
+export type Menu = "Bokföring" | "Inköp" | "Lön" | "Konto";
+
+const MENU_OF: Record<string, Menu | null> = {
+  Översikt: null,
+  Kunder: null,
+  Verifikationer: "Bokföring",
+  Saldobalans: "Bokföring",
+  Rapporter: "Bokföring",
+  Kontoplan: "Bokföring",
+  Räkenskapsår: "Bokföring",
+  Leverantörsfakturor: "Inköp",
+  Leverantörer: "Inköp",
+  Lönekörningar: "Lön",
+  Anställda: "Lön",
+  Företag: "Konto",
+  Passkeys: "Konto",
+  Inbjudningar: "Konto",
+};
+
+/** Opens one of the header's menus (if it is closed) and returns its panel. */
+export async function openMenu(page: Page, menu: Menu): Promise<Locator> {
+  const details = page.getByRole("banner").locator("details").filter({ has: page.locator("summary", { hasText: menu }) });
+  if (!(await details.evaluate((d: HTMLDetailsElement) => d.open))) await details.locator("summary").click();
+  return details.getByRole("list");
+}
+
+/** Follows a link in the header, opening the menu that holds it first. */
+export async function goTo(page: Page, link: string) {
+  const menu = MENU_OF[link];
+  if (menu === undefined) throw new Error(`no header link called ${link}`);
+  const scope = menu ? await openMenu(page, menu) : page.getByRole("banner");
+  await scope.getByRole("link", { name: link, exact: true }).click();
 }

@@ -1,4 +1,4 @@
-import { addCompany, expect, register, test } from "./fixtures";
+import { addCompany, expect, goTo, register, test } from "./fixtures";
 import type { Page } from "@playwright/test";
 
 /** A date `days` from today in the browser's sense, as YYYY-MM-DD. */
@@ -10,7 +10,7 @@ function isoDate(days = 0): string {
 }
 
 async function addEmployee(page: Page, name: string, personnummer: string, salary: string) {
-  await page.getByRole("banner").getByRole("link", { name: "Anställda" }).click();
+  await goTo(page, "Anställda");
   await page.getByLabel("Namn").fill(name);
   await page.getByLabel("Personnummer").fill(personnummer);
   await page.getByLabel("Månadslön (kr)").fill(salary);
@@ -21,7 +21,7 @@ async function addEmployee(page: Page, name: string, personnummer: string, salar
 
 /** A finalized run paying Åsa on `payDate`, with 8 000 kr tax. */
 async function finalizeRun(page: Page, payDate: string) {
-  await page.getByRole("banner").getByRole("link", { name: "Lönekörningar" }).click();
+  await goTo(page, "Lönekörningar");
   await page.getByRole("link", { name: "Ny lönekörning" }).click();
   // The form resets itself when the employees arrive; fill it only after that.
   await expect(page.getByLabel("Brutto, Åsa Öberg")).toHaveValue(/35\s000,00/);
@@ -36,7 +36,7 @@ test("an employee is paid: previewed, finalized, booked and backed out", async (
   await addCompany(page, app, "5560160680", "Exempel AB");
   await addEmployee(page, "Åsa Öberg", "19800101-1231", "35000");
 
-  await page.getByRole("banner").getByRole("link", { name: "Lönekörningar" }).click();
+  await goTo(page, "Lönekörningar");
   await page.getByRole("link", { name: "Ny lönekörning" }).click();
   await expect(page.getByLabel("Brutto, Åsa Öberg")).toHaveValue(/35\s000,00/);
   await page.getByLabel("Utbetalningsdag").fill(isoDate());
@@ -54,7 +54,7 @@ test("an employee is paid: previewed, finalized, booked and backed out", async (
   await expect(page.getByRole("link", { name: "Ver 1" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Öppna" })).toHaveCount(0);
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   const voucher = page.getByRole("row", { name: /^1 / });
   await expect(voucher).toContainText("Lön");
   await voucher.getByRole("button", { name: "1" }).click();
@@ -62,7 +62,7 @@ test("an employee is paid: previewed, finalized, booked and backed out", async (
     await expect(page.getByText(new RegExp(`^${account} `))).toBeVisible();
   }
 
-  await page.getByRole("banner").getByRole("link", { name: "Lönekörningar" }).click();
+  await goTo(page, "Lönekörningar");
   await expect(page.getByRole("row", { name: new RegExp(isoDate()) })).toContainText("Bokförd");
   await page.getByRole("link", { name: isoDate() }).click();
   await page.getByRole("button", { name: "Backa bokföring" }).click();
@@ -71,7 +71,7 @@ test("an employee is paid: previewed, finalized, booked and backed out", async (
   await page.getByRole("button", { name: "Öppna" }).click();
   await expect(page.getByLabel("Skatt, Åsa Öberg")).toHaveValue(/8\s000,00/);
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await expect(page.getByRole("row", { name: /^2 / })).toContainText("Rättelse av ver 1");
 });
 
@@ -89,7 +89,7 @@ test("a run for a later pay date is finalized now and booked only from that date
   await page.getByRole("button", { name: "Öppna" }).click();
   await page.getByLabel("Skatt, Åsa Öberg").fill("8100");
   await page.getByRole("button", { name: "Spara" }).click();
-  await page.getByRole("banner").getByRole("link", { name: "Lönekörningar" }).click();
+  await goTo(page, "Lönekörningar");
   await expect(page.getByRole("row", { name: new RegExp(tomorrow) })).toContainText("Öppen");
 });
 
@@ -101,19 +101,19 @@ test("a grundbok rättelse of the payroll voucher makes the run finalized again"
   await page.getByRole("button", { name: "Bokför" }).click();
   await expect(page.getByRole("link", { name: "Ver 1" })).toBeVisible();
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await page.getByRole("row", { name: /^1 / }).getByRole("button", { name: "Rätta" }).click();
   await page.getByRole("button", { name: "Bekräfta rättelse" }).click();
   await expect(page.getByRole("row", { name: /^1 / })).toContainText("Rättad av ver 2");
 
-  await page.getByRole("banner").getByRole("link", { name: "Lönekörningar" }).click();
+  await goTo(page, "Lönekörningar");
   await expect(page.getByRole("row", { name: new RegExp(isoDate()) })).toContainText("Att bokföra");
 });
 
 test("employees are refused in Swedish and edited without their personnummer", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
-  await page.getByRole("banner").getByRole("link", { name: "Anställda" }).click();
+  await goTo(page, "Anställda");
 
   await page.getByLabel("Namn").fill("Åsa Öberg");
   await page.getByLabel("Personnummer").fill("19800101-1232");

@@ -1,4 +1,4 @@
-import { addAuthenticator, expect, logIn, register, removeAuthenticator, test } from "./fixtures";
+import { addAuthenticator, expect, goTo, logIn, openMenu, register, removeAuthenticator, test } from "./fixtures";
 
 test("the first user registers with a passkey and becomes admin", async ({ page, app }) => {
   await page.goto(app);
@@ -8,13 +8,13 @@ test("the first user registers with a passkey and becomes admin", async ({ page,
   await register(page, app, { email: "anna@example.se", name: "Anna" });
 
   await expect(page.getByText("administratör")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Inbjudningar" })).toBeVisible();
+  await expect((await openMenu(page, "Konto")).getByRole("link", { name: "Inbjudningar" })).toBeVisible();
 });
 
 test("a user signs out and back in with the passkey", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
 
-  await page.getByRole("button", { name: "Logga ut" }).click();
+  await (await openMenu(page, "Konto")).getByRole("button", { name: "Logga ut" }).click();
   await expect(page).toHaveURL(`${app}/login`);
   await page.goto(app);
   await expect(page).toHaveURL(`${app}/login`);
@@ -27,7 +27,7 @@ test("a user signs out and back in with the passkey", async ({ page, app }) => {
 
 test("an unknown email fails like any other failed login", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
-  await page.getByRole("button", { name: "Logga ut" }).click();
+  await (await openMenu(page, "Konto")).getByRole("button", { name: "Logga ut" }).click();
 
   await logIn(page, app, "nobody@example.se");
 
@@ -36,7 +36,7 @@ test("an unknown email fails like any other failed login", async ({ page, app })
 
 test("an admin invites a member who registers through the link", async ({ page, app, newPerson }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
-  await page.getByRole("link", { name: "Inbjudningar" }).click();
+  await goTo(page, "Inbjudningar");
   await page.getByLabel("E-post").fill("bo@example.se");
   await page.getByRole("button", { name: "Skapa inbjudan" }).click();
   const link = await page.getByLabel("Inbjudningslänk").inputValue();
@@ -75,7 +75,7 @@ test("an unusable invitation shows the error and closes the registration form", 
 
 test("a user adds a second passkey and signs in with it", async ({ page, app, authenticator: laptop }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna", passkey: "Laptop" });
-  await page.getByRole("link", { name: "Passkeys" }).click();
+  await goTo(page, "Passkeys");
   await expect(page.getByText("Laptop")).toBeVisible();
 
   // Switch to another device: only the "phone" authenticator is present now.
@@ -85,14 +85,14 @@ test("a user adds a second passkey and signs in with it", async ({ page, app, au
   await page.getByRole("button", { name: "Lägg till passkey" }).click();
   await expect(page.getByText("Telefon")).toBeVisible();
 
-  await page.getByRole("button", { name: "Logga ut" }).click();
+  await (await openMenu(page, "Konto")).getByRole("button", { name: "Logga ut" }).click();
   await logIn(page, app, "anna@example.se");
   await expect(page.getByText("Inloggad som Anna")).toBeVisible();
 });
 
 test("an invited email is shown as locked, with the reason", async ({ page, app, newPerson }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
-  await page.getByRole("link", { name: "Inbjudningar" }).click();
+  await goTo(page, "Inbjudningar");
   await page.getByLabel("E-post").fill("bo@example.se");
   await page.getByRole("button", { name: "Skapa inbjudan" }).click();
   const link = await page.getByLabel("Inbjudningslänk").inputValue();
@@ -119,7 +119,7 @@ test("an invited email is shown as locked, with the reason", async ({ page, app,
 test("a new passkey shows when it was added until it is used", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna", passkey: "MacBook" });
 
-  await page.getByRole("link", { name: "Passkeys" }).click();
+  await goTo(page, "Passkeys");
 
   await expect(page.getByText(/^Tillagd \d{4}-\d{2}-\d{2}$/)).toBeVisible();
   await expect(page.getByText("Aldrig använd")).toHaveCount(0);
@@ -127,7 +127,7 @@ test("a new passkey shows when it was added until it is used", async ({ page, ap
 
 test("form validation messages are in Swedish", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
-  await page.getByRole("link", { name: "Inbjudningar" }).click();
+  await goTo(page, "Inbjudningar");
 
   await page.getByLabel("E-post").fill("inte-en-epost");
   await page.getByRole("button", { name: "Skapa inbjudan" }).click();
@@ -137,7 +137,7 @@ test("form validation messages are in Swedish", async ({ page, app }) => {
 
 test("the invitation list only shows once there are invitations", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
-  await page.getByRole("link", { name: "Inbjudningar" }).click();
+  await goTo(page, "Inbjudningar");
   await expect(page.getByRole("heading", { name: "Bjud in" })).toBeVisible();
 
   await expect(page.getByRole("heading", { name: "Inbjudningar" })).toHaveCount(0);

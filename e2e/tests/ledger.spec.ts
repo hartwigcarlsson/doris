@@ -1,9 +1,9 @@
-import { addCompany, expect, register, test } from "./fixtures";
+import { addCompany, expect, goTo, register, test } from "./fixtures";
 
 test("the chart of accounts starts from BAS and can be extended", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
-  await page.getByRole("banner").getByRole("link", { name: "Kontoplan" }).click();
+  await goTo(page, "Kontoplan");
 
   const bank = page.getByRole("row", { name: /^1930 Företagskonto/ });
   await expect(bank).toContainText("Aktivt");
@@ -57,13 +57,13 @@ async function bookSale(page: import("@playwright/test").Page, text: string, kro
 test("a voucher is booked, listed and corrected", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
 
   await bookSale(page, "Försäljning kassa", "1250");
   await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
   await expect(page.getByLabel("Text")).toHaveValue("");
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   const first = page.getByRole("row", { name: /^1 / });
   await expect(first).toContainText("Försäljning kassa");
   await expect(first).toContainText("1 250,00");
@@ -164,7 +164,7 @@ test("switching company clears the forms so nothing is booked in the wrong compa
   await page.getByRole("button", { name: "Bokför" }).click();
   await expect(page.getByRole("alert")).toBeVisible();
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await expect(company.locator("option:checked")).toHaveText("Bolaget AB");
   await expect(page.getByLabel("Räkenskapsår")).not.toHaveValue("");
   await expect(page.getByRole("row", { name: /^1 / })).toHaveCount(0);
@@ -182,11 +182,11 @@ test("choosing another fiscal year clears an old error", async ({ page, app }) =
   await page.getByLabel("Faktureringsmetoden").check();
   await page.getByRole("button", { name: "Spara företag" }).click();
   await expect(page.getByRole("heading", { name: "Exempel AB" })).toBeVisible();
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await bookSale(page, "Försäljning", "100");
   await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   const first = page.getByRole("row", { name: /^1 / });
   await first.getByRole("button", { name: "Rätta" }).click();
   await page.getByLabel("Datum för rättelse av ver 1").fill("2025-06-01");
@@ -200,7 +200,7 @@ test("choosing another fiscal year clears an old error", async ({ page, app }) =
 test("the grundbok and the chart fit without scrolling sideways", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await bookSale(page, "Försäljning kassa", "1250");
   await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
 
@@ -221,7 +221,7 @@ test("the trial balance and an account's ledger show what was booked", async ({ 
   await bookSale(page, "Försäljning kassa", "1250");
   await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
 
-  await page.getByRole("banner").getByRole("link", { name: "Saldobalans" }).click();
+  await goTo(page, "Saldobalans");
   await expect(page.getByRole("heading", { name: "Saldobalans" })).toBeVisible();
   await expect(page.getByRole("row", { name: /^1930 Företagskonto/ })).toContainText("1 250,00");
   await expect(page.getByRole("row", { name: /^3001 / })).toContainText("-1 250,00");
@@ -245,7 +245,7 @@ test("the trial balance follows the active company", async ({ page, app }) => {
   await page.goto(`${app}/vouchers`);
   await bookSale(page, "Försäljning kassa", "1250");
   await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
-  await page.getByRole("banner").getByRole("link", { name: "Saldobalans" }).click();
+  await goTo(page, "Saldobalans");
   await expect(page.getByRole("row", { name: /^1930 / })).toBeVisible();
 
   await page.getByLabel("Aktivt företag").selectOption({ label: "Bolaget AB" });
@@ -262,7 +262,7 @@ test("the income statement and balance sheet show what was booked", async ({ pag
   await bookSale(page, "Försäljning kassa", "1250");
   await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
 
-  await page.getByRole("banner").getByRole("link", { name: "Rapporter" }).click();
+  await goTo(page, "Rapporter");
   await expect(page.getByRole("heading", { name: "Resultat- och balansräkning" })).toBeVisible();
   await expect(page.getByRole("row", { name: /^Nettoomsättning/ })).toContainText("1 250,00");
   const result = page.getByRole("row", { name: /^Årets resultat/ });
@@ -291,7 +291,7 @@ test("the chosen fiscal year stays in the URL and survives a reload", async ({ p
   // A company whose first räkenskapsår is 2025, so it has two years by now.
   await addCompany(page, app, "5560160680", "Exempel AB", "2025-01-01");
 
-  await page.getByRole("banner").getByRole("link", { name: "Saldobalans" }).click();
+  await goTo(page, "Saldobalans");
   // The newest year is the second, and the first is still open.
   await expect(page.getByText(/preliminära/)).toBeVisible();
   await page.getByLabel("Räkenskapsår").selectOption("2025-01-01");

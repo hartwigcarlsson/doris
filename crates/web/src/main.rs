@@ -8,6 +8,7 @@ mod errors;
 mod fiscal_year;
 mod format;
 mod invoice_ui;
+mod nav;
 mod pages;
 mod passkey;
 mod ui;
