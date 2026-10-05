@@ -8,8 +8,8 @@ use crate::errors::describe;
 use crate::fiscal_year::{FiscalYearSelect, keep_year_in_url};
 use crate::format::{accounting_method_label, amount, legal_form_label, today};
 use crate::overview::{
-    KeyFigures, Todo, TodoInput, bar_height, by_month, default_year, key_figures, month_label,
-    progress, scale, todo_list, unpaid_supplier_invoices, whole_kronor,
+    KeyFigures, Todo, TodoInput, axis_in_thousands, axis_label, bar_height, by_month, default_year,
+    key_figures, month_label, progress, scale, todo_list, unpaid_supplier_invoices, whole_kronor,
 };
 use crate::ui::{
     Badge, BadgeVariant, Card, Icon, IconName, LinkButton, PageHeader, Panel, TABLE_AMOUNT_CELL,
@@ -107,7 +107,10 @@ fn Overview() -> impl IntoView {
     let agi_months: Loaded<Vec<ppb::AgiMonthSummary>> = RwSignal::new(None);
     keep_year_in_url("/".into(), year);
 
-    // Per company: who it is and which years it has.
+    // Per company. Every call is its own task, so a slow one holds nothing
+    // back. An answer for a company that is no longer the active one is
+    // stale and dropped; the signals of a page that is gone are disposed,
+    // and setting those does nothing.
     Effect::new(move |_| {
         let company_id = companies.active.get();
         // Never leave the previous company's figures on screen.
@@ -115,6 +118,8 @@ fn Overview() -> impl IntoView {
         years.set(None);
         year_list.set(Vec::new());
         year.set(String::new());
+        balance.set(None);
+        vouchers.set(None);
         supplier_invoices.set(None);
         customer_invoices.set(None);
         payroll_runs.set(None);
@@ -122,76 +127,107 @@ fn Overview() -> impl IntoView {
         if company_id.is_empty() {
             return;
         }
-        let preferred = preferred.clone();
-        spawn_local(async move {
-            let found = company_api()
-                .get_company(cpb::GetCompanyRequest {
-                    company_id: company_id.clone(),
-                })
-                .await;
-            let listed = ledger_api()
-                .list_fiscal_years(lpb::ListFiscalYearsRequest {
-                    company_id: company_id.clone(),
-                })
-                .await;
-            // The user switched company meanwhile: these answers are stale.
-            if company_id != companies.active.get_untracked() {
-                return;
-            }
-            company.set(Some(
-                found.map(|r| r.into_inner()).map_err(|s| describe(&s)),
-            ));
-            match listed {
-                Ok(response) => {
-                    let list = response.into_inner().fiscal_years;
-                    year_list.set(list.clone());
-                    year.set(default_year(&list, &preferred, &today()));
-                    years.set(Some(Ok(list)));
+        let stale = {
+            let company_id = company_id.clone();
+            move || company_id != companies.active.get_untracked()
+        };
+        spawn_local({
+            let (company_id, stale) = (company_id.clone(), stale.clone());
+            async move {
+                let found = company_api()
+                    .get_company(cpb::GetCompanyRequest { company_id })
+                    .await;
+                if !stale() {
+                    company.set(Some(
+                        found.map(|r| r.into_inner()).map_err(|s| describe(&s)),
+                    ));
                 }
-                Err(status) => years.set(Some(Err(describe(&status)))),
             }
-            let suppliers = invoicing_api()
-                .list_supplier_invoices(ipb::ListSupplierInvoicesRequest {
-                    company_id: company_id.clone(),
-                })
-                .await;
-            let customers = invoicing_api()
-                .list_customer_invoices(ipb::ListCustomerInvoicesRequest {
-                    company_id: company_id.clone(),
-                })
-                .await;
-            let runs = payroll_api()
-                .list_payroll_runs(ppb::ListPayrollRunsRequest {
-                    company_id: company_id.clone(),
-                })
-                .await;
-            let months = payroll_api()
-                .list_agi_months(ppb::ListAgiMonthsRequest {
-                    company_id: company_id.clone(),
-                })
-                .await;
-            if company_id != companies.active.get_untracked() {
-                return;
+        });
+        spawn_local({
+            let (company_id, stale, preferred) =
+                (company_id.clone(), stale.clone(), preferred.clone());
+            async move {
+                let listed = ledger_api()
+                    .list_fiscal_years(lpb::ListFiscalYearsRequest { company_id })
+                    .await;
+                if stale() {
+                    return;
+                }
+                match listed {
+                    Ok(response) => {
+                        let list = response.into_inner().fiscal_years;
+                        year_list.set(list.clone());
+                        year.set(default_year(&list, &preferred, &today()));
+                        years.set(Some(Ok(list)));
+                    }
+                    Err(status) => {
+                        // Without a year nothing is asked for it: the cards
+                        // that need one show why instead of loading forever.
+                        let message = describe(&status);
+                        balance.set(Some(Err(message.clone())));
+                        vouchers.set(Some(Err(message.clone())));
+                        years.set(Some(Err(message)));
+                    }
+                }
             }
-            supplier_invoices.set(Some(
-                suppliers
-                    .map(|r| r.into_inner().invoices)
-                    .map_err(|s| describe(&s)),
-            ));
-            customer_invoices.set(Some(
-                customers
-                    .map(|r| r.into_inner().invoices)
-                    .map_err(|s| describe(&s)),
-            ));
-            payroll_runs.set(Some(
-                runs.map(|r| r.into_inner().payroll_runs)
-                    .map_err(|s| describe(&s)),
-            ));
-            agi_months.set(Some(
-                months
-                    .map(|r| r.into_inner().months)
-                    .map_err(|s| describe(&s)),
-            ));
+        });
+        spawn_local({
+            let (company_id, stale) = (company_id.clone(), stale.clone());
+            async move {
+                let listed = invoicing_api()
+                    .list_supplier_invoices(ipb::ListSupplierInvoicesRequest { company_id })
+                    .await;
+                if !stale() {
+                    supplier_invoices.set(Some(
+                        listed
+                            .map(|r| r.into_inner().invoices)
+                            .map_err(|s| describe(&s)),
+                    ));
+                }
+            }
+        });
+        spawn_local({
+            let (company_id, stale) = (company_id.clone(), stale.clone());
+            async move {
+                let listed = invoicing_api()
+                    .list_customer_invoices(ipb::ListCustomerInvoicesRequest { company_id })
+                    .await;
+                if !stale() {
+                    customer_invoices.set(Some(
+                        listed
+                            .map(|r| r.into_inner().invoices)
+                            .map_err(|s| describe(&s)),
+                    ));
+                }
+            }
+        });
+        spawn_local({
+            let (company_id, stale) = (company_id.clone(), stale.clone());
+            async move {
+                let listed = payroll_api()
+                    .list_payroll_runs(ppb::ListPayrollRunsRequest { company_id })
+                    .await;
+                if !stale() {
+                    payroll_runs.set(Some(
+                        listed
+                            .map(|r| r.into_inner().payroll_runs)
+                            .map_err(|s| describe(&s)),
+                    ));
+                }
+            }
+        });
+        spawn_local(async move {
+            let listed = payroll_api()
+                .list_agi_months(ppb::ListAgiMonthsRequest { company_id })
+                .await;
+            if !stale() {
+                agi_months.set(Some(
+                    listed
+                        .map(|r| r.into_inner().months)
+                        .map_err(|s| describe(&s)),
+                ));
+            }
         });
     });
 
@@ -199,37 +235,44 @@ fn Overview() -> impl IntoView {
     Effect::new(move |_| {
         let start = year.get();
         let company_id = companies.active.get_untracked();
-        balance.set(None);
-        vouchers.set(None);
         if start.is_empty() || company_id.is_empty() {
             return;
         }
-        spawn_local(async move {
-            // Stale once the company or the year has changed.
-            let current = {
-                let (company_id, start) = (company_id.clone(), start.clone());
-                move || {
-                    company_id == companies.active.get_untracked() && start == year.get_untracked()
-                }
-            };
-            let rows = ledger_api()
-                .get_trial_balance(lpb::GetTrialBalanceRequest {
-                    company_id: company_id.clone(),
-                    fiscal_year_start: start.clone(),
-                })
-                .await;
-            if current() {
-                balance.set(Some(
-                    rows.map(|r| r.into_inner().rows).map_err(|s| describe(&s)),
-                ));
+        balance.set(None);
+        vouchers.set(None);
+        // Stale once the company or the year has changed. `try_`: the page
+        // may be gone by the time the answer comes, and its signals with it.
+        let stale = {
+            let (company_id, start) = (company_id.clone(), start.clone());
+            move || {
+                company_id != companies.active.get_untracked()
+                    || year.try_get_untracked().as_deref() != Some(start.as_str())
             }
+        };
+        spawn_local({
+            let (company_id, start, stale) = (company_id.clone(), start.clone(), stale.clone());
+            async move {
+                let rows = ledger_api()
+                    .get_trial_balance(lpb::GetTrialBalanceRequest {
+                        company_id,
+                        fiscal_year_start: start,
+                    })
+                    .await;
+                if !stale() {
+                    balance.set(Some(
+                        rows.map(|r| r.into_inner().rows).map_err(|s| describe(&s)),
+                    ));
+                }
+            }
+        });
+        spawn_local(async move {
             let listed = ledger_api()
                 .list_vouchers(lpb::ListVouchersRequest {
                     company_id,
                     fiscal_year_start: start,
                 })
                 .await;
-            if current() {
+            if !stale() {
                 vouchers.set(Some(
                     listed
                         .map(|r| r.into_inner().vouchers)
@@ -292,6 +335,10 @@ fn Overview() -> impl IntoView {
                 <LinkButton href="/customer-invoices/new" variant=Variant::Outline>"Ny kundfaktura"</LinkButton>
                 <LinkButton href="/vouchers/new" icon=IconName::Plus>"Ny verifikation"</LinkButton>
             </PageHeader>
+            {move || match company.get() {
+                Some(Err(message)) => Some(view! { <p role="alert" class="text-destructive">{message}</p> }),
+                _ => None,
+            }}
             <div class="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-4">
                 <KeyFigure title="Resultat hittills i år" note="Efter finansiella poster" balance=balance pick=|f| f.result />
                 <KeyFigure title="Intäkter" note="Konto 3000–3999" balance=balance pick=|f| f.income />
@@ -600,7 +647,7 @@ fn MonthChart(
         (Some(y), Some(Ok(list))) => scale(&by_month(&y.start, &y.end, &list)),
         _ => 0,
     });
-    let thousands = move || top.get() == 0 || top.get() >= 200_000;
+    let thousands = move || axis_in_thousands(top.get());
     view! {
         <Panel class="min-w-0 flex-[2_1_480px]">
             <div class="grid gap-3">
@@ -620,10 +667,9 @@ fn MonthChart(
                     };
                     let months = by_month(&fiscal_year.start, &fiscal_year.end, &list);
                     let top = scale(&months);
-                    let unit = if thousands() { 100_000 } else { 100 };
                     let this_month = today().get(..7).unwrap_or_default().to_owned();
                     // Gridlines at half and full scale.
-                    let label = move |ore: i64| (ore / unit).to_string();
+                    let label = move |ore: i64| axis_label(ore, top);
                     let columns = format!("grid-template-columns: repeat({}, minmax(0, 1fr))", months.len().max(1));
                     view! {
                         <figure
@@ -632,7 +678,7 @@ fn MonthChart(
                             class="grid gap-1.5"
                         >
                             <div class="flex gap-2">
-                                <div class="relative w-8 text-right text-muted-foreground tabular-nums" style=format!("height: {PLOT}px")>
+                                <div class="relative w-10 text-right text-muted-foreground tabular-nums" style=format!("height: {PLOT}px")>
                                     <span class="absolute right-0 bottom-0 translate-y-1/2 leading-none">"0"</span>
                                     {(top > 0).then(|| view! {
                                         <span class="absolute right-0 bottom-1/2 translate-y-1/2 leading-none">{label(top / 2)}</span>
@@ -655,7 +701,7 @@ fn MonthChart(
                                     </div>
                                 </div>
                             </div>
-                            <div class="ml-10 grid text-center text-muted-foreground" style=columns>
+                            <div class="ml-12 grid text-center text-muted-foreground" style=columns>
                                 {months
                                     .iter()
                                     .map(|m| {

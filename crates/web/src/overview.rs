@@ -403,6 +403,37 @@ pub fn unpaid_supplier_invoices(invoices: &[ipb::SupplierInvoice]) -> Vec<&ipb::
     unpaid
 }
 
+/// Whether the chart's axis counts thousands of kronor (from 2 000 kr up)
+/// or kronor: below that the lines would read "0" and "1".
+pub fn axis_in_thousands(scale: i64) -> bool {
+    scale == 0 || scale >= 200_000
+}
+
+/// A gridline's label for an axis that tops out at `scale` (both öre), in
+/// the axis's unit, with the decimals a 2.5 step needs: "125", "2,5".
+pub fn axis_label(ore: i64, scale: i64) -> String {
+    let unit = if axis_in_thousands(scale) {
+        100_000
+    } else {
+        100
+    };
+    let (whole, hundredths) = (ore / unit, ore % unit * 100 / unit);
+    let digits = whole.unsigned_abs().to_string();
+    let mut label = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            label.push('\u{a0}');
+        }
+        label.push(digit);
+    }
+    match hundredths {
+        0 => {}
+        h if h % 10 == 0 => label.push_str(&format!(",{}", h / 10)),
+        h => label.push_str(&format!(",{h:02}")),
+    }
+    label
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -982,5 +1013,37 @@ mod tests {
             .map(|i| i.supplier_name.as_str())
             .collect();
         assert_eq!(names, ["Early", "Late"]);
+    }
+
+    #[test]
+    fn axis_labels_keep_the_half_steps() {
+        // Thousands of kronor from 2 000 kr up, kronor below.
+        assert!(axis_in_thousands(250_000_00));
+        assert!(axis_in_thousands(2_000_00));
+        assert!(!axis_in_thousands(1_999_00));
+        assert!(axis_in_thousands(0));
+        assert_eq!(axis_label(250_000_00, 250_000_00), "250");
+        assert_eq!(axis_label(125_000_00, 250_000_00), "125");
+        assert_eq!(axis_label(2_500_00, 5_000_00), "2,5");
+        assert_eq!(axis_label(1_250_00, 2_500_00), "1,25");
+        assert_eq!(axis_label(12_500_00, 25_000_00), "12,5");
+        assert_eq!(axis_label(500_00, 1_000_00), "500");
+        assert_eq!(axis_label(12_50, 25_00), "12,5");
+        assert_eq!(axis_label(10_000_000_00, 10_000_000_00), "10\u{a0}000");
+        assert_eq!(axis_label(0, 250_000_00), "0");
+    }
+
+    #[test]
+    fn the_year_end_accounts_stay_out_of_the_months() {
+        // The closing voucher books 8999 against the result account.
+        let months = by_month(
+            "2026-01-01",
+            "2026-12-31",
+            &[voucher(
+                "2026-12-31",
+                &[(8999, 27_700_00, 0), (2099, 0, 27_700_00), (8990, 5_00, 0)],
+            )],
+        );
+        assert_eq!(months[11], month("2026-12", 0, 0));
     }
 }

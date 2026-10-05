@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { addCompany, addSupplier, expect, register, test } from "./fixtures";
+import { addCompany, addSupplier, expect, goTo, register, test } from "./fixtures";
 
 const year = new Date().getFullYear();
 const figure = (page: Page, name: string) =>
@@ -160,4 +160,69 @@ test("the overview fits a phone in both colour schemes", async ({ page, app }) =
     const wider = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     expect(wider, scheme).toBe(false);
   }
+});
+
+test("years that cannot be listed fail the cards that need a year", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.route("**/ListFiscalYears", (route) => route.abort());
+  await page.goto(app);
+  for (const name of ["Intäkter", "Räkenskapsåret", "Intäkter och kostnader per månad", "Senaste verifikationer"]) {
+    await expect(figure(page, name).getByRole("alert"), name).toBeVisible();
+  }
+  // What does not depend on a year still shows.
+  await expect(figure(page, "Att göra")).toContainText("Inget att göra just nu.");
+});
+
+test("a company that cannot be fetched says so and the rest still shows", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.route("**/GetCompany", (route) => route.abort());
+  await page.goto(app);
+  const main = page.getByRole("main");
+  await expect(main.getByRole("heading", { level: 1, name: "Exempel AB" })).toBeVisible();
+  await expect(main.getByRole("alert")).toHaveCount(1);
+  await expect(figure(page, "Intäkter").locator("p").first()).toHaveText(/^0\skr$/);
+});
+
+test("one slow call does not hold the others back", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  await page.route("**/GetCompany", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto(app);
+  // GetCompany has not answered, and everything else is already there.
+  await expect(figure(page, "Intäkter").locator("p").first()).toHaveText(/^0\skr$/);
+  await expect(figure(page, "Att göra")).toContainText("Inget att göra just nu.");
+  await expect(page.getByRole("main").getByText("556016-0680")).toHaveCount(0);
+  release();
+  await expect(page.getByRole("main").getByText("556016-0680 · Aktiebolag · Faktureringsmetoden")).toBeVisible();
+});
+
+test("leaving the overview while it loads breaks nothing", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  await page.route("**/GetTrialBalance", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto(app);
+  await expect(page.getByRole("main").getByRole("heading", { level: 1, name: "Exempel AB" })).toBeVisible();
+  await goTo(page, "Kontoplan");
+  await expect(page.getByRole("heading", { level: 1, name: "Kontoplan" })).toBeVisible();
+  // The answer for the page that is gone arrives now.
+  release();
+  await page.waitForTimeout(500);
+  await goTo(page, "Räkenskapsår");
+  await expect(page.getByRole("heading", { level: 1, name: "Räkenskapsår" })).toBeVisible();
+  expect(errors).toEqual([]);
 });

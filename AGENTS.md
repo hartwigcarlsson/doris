@@ -347,8 +347,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `ListAgiMonths`, and `src/overview.rs` works everything out in pure
   functions: key figures (income 3000–3999, costs 4000–8989, cash
   1900–1999), income and costs per month, the year's progress and the
-  "Att göra" rules. A card whose call failed shows the error; the others
-  still show. The monthly sums read every voucher of the year: when that
+  "Att göra" rules. Each call is its own task, so a slow one holds nothing
+  back. A card whose call failed shows the error and the others still show;
+  if the years cannot be listed, every card that needs a year shows that
+  error. After an `await`, read the page's own signals with `try_get…`:
+  the user may have left, and a disposed signal panics on `get`. The monthly sums read every voucher of the year: when that
   gets heavy, add a `GetMonthlyTotals` to the ledger.
 - A view is a `grid gap-6` that starts with `PageHeader` (the page's one
   `<h1>`, actions to the right). Tables sit in `TableCard`, statuses are
