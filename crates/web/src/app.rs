@@ -122,3 +122,121 @@ fn SignedIn(#[prop(optional)] admin: bool, children: ChildrenFn) -> impl IntoVie
         Some(_) => children().into_any(),
     }
 }
+
+/// The design is kept by tests as well as by habit: a new route has to be
+/// given to the design test and to the menu, or these fail.
+#[cfg(test)]
+mod tests {
+    use crate::nav::section_of;
+
+    const APP: &str = include_str!("app.rs");
+    const NAV: &str = include_str!("nav.rs");
+    const DESIGN_SPEC: &str = include_str!("../../../e2e/tests/design.spec.ts");
+
+    /// Pages without the signed-in shell.
+    const SIGNED_OUT: [&str; 2] = ["/register", "/login"];
+    /// Pages that belong to no menu group: the start page and the account menu's.
+    const OUTSIDE_THE_GROUPS: [&str; 4] = ["/", "/companies", "/settings", "/admin"];
+    /// Top-level pages reached from another page rather than from the menu.
+    const NOT_IN_THE_MENU: [&str; 1] = ["/opening-balances"];
+
+    /// The path of every `path!` route in `source`.
+    fn routes(source: &str) -> Vec<&str> {
+        source
+            .split("path!(\"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .collect()
+    }
+
+    /// The paths the e2e test "every signed-in view has one h1…" visits.
+    fn design_paths(spec: &str) -> Vec<&str> {
+        let list = spec
+            .split("const paths = [")
+            .nth(1)
+            .and_then(|rest| rest.split("];").next())
+            .unwrap_or_default();
+        list.split('"').skip(1).step_by(2).collect()
+    }
+
+    /// Whether `path` is an instance of `route` (`:name` matches any segment).
+    fn is_instance(route: &str, path: &str) -> bool {
+        let (route, path): (Vec<_>, Vec<_>) =
+            (route.split('/').collect(), path.split('/').collect());
+        route.len() == path.len()
+            && route
+                .iter()
+                .zip(&path)
+                .all(|(r, p)| r.starts_with(':') || r == p)
+    }
+
+    /// The signed-in routes that none of `visited` is an instance of.
+    fn unvisited<'a>(routes: &[&'a str], visited: &[&str]) -> Vec<&'a str> {
+        routes
+            .iter()
+            .filter(|route| !SIGNED_OUT.contains(route))
+            .filter(|route| !visited.iter().any(|path| is_instance(route, path)))
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn the_checks_notice_a_route_that_was_forgotten() {
+        let all = ["/login", "/vouchers", "/vouchers/:id", "/new-page"];
+        assert_eq!(
+            unvisited(&all, &["/vouchers", "/vouchers/7"]),
+            ["/new-page"]
+        );
+        assert_eq!(
+            unvisited(&all, &["/vouchers", "/new-page"]),
+            ["/vouchers/:id"]
+        );
+        assert_eq!(
+            routes("a path!(\"/x\") b path!(\"/y/:id\")"),
+            ["/x", "/y/:id"]
+        );
+        assert_eq!(
+            design_paths("const paths = [\n \"/\", \"/a\",\n \"/b\",\n];"),
+            ["/", "/a", "/b"]
+        );
+    }
+
+    #[test]
+    fn every_signed_in_route_is_in_the_design_test() {
+        let (routes, visited) = (routes(APP), design_paths(DESIGN_SPEC));
+        assert!(
+            routes.len() > 20 && visited.len() > 15,
+            "the sources were not read"
+        );
+        assert_eq!(
+            unvisited(&routes, &visited),
+            Vec::<&str>::new(),
+            "add these to `paths` in e2e/tests/design.spec.ts, so the page's h1 and width are checked"
+        );
+    }
+
+    #[test]
+    fn every_page_belongs_to_a_menu_group_and_top_level_pages_are_linked() {
+        for route in routes(APP) {
+            let outside = |prefixes: &[&str]| {
+                prefixes
+                    .iter()
+                    .any(|p| route == *p || (*p != "/" && route.starts_with(&format!("{p}/"))))
+            };
+            if SIGNED_OUT.contains(&route) || outside(&OUTSIDE_THE_GROUPS) {
+                continue;
+            }
+            assert!(
+                section_of(route).is_some(),
+                "{route}: add it to SECTIONS in nav.rs, so its menu is marked when the page is open"
+            );
+            let top_level = route.matches('/').count() == 1;
+            if top_level && !NOT_IN_THE_MENU.contains(&route) {
+                assert!(
+                    NAV.contains(&format!("href=\"{route}\"")),
+                    "{route}: add a NavItem for it in nav.rs, or list it in NOT_IN_THE_MENU"
+                );
+            }
+        }
+    }
+}

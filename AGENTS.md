@@ -406,6 +406,12 @@ progress bar.
 Design tokens live in `crates/web/style/input.css`. Build only the components
 you need.
 
+Every view follows one design, and a new or changed view is not done until
+it does. The rules are in `docs/design/README.md`: read them before any
+work on the UI. They cover the shell and its menus, how a view is built,
+which component to use, tokens, light and dark, 390px, and the tests that
+keep it so.
+
 ## Commands
 ```
 make dev       # server :3000 + `trunk serve` :8080 (open http://localhost:8080)
