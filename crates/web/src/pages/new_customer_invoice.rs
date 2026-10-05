@@ -209,7 +209,10 @@ pub fn NewCustomerInvoice() -> impl IntoView {
                 <InvoiceLineRows rows=rows next_id=next_id list="customer_invoice_accounts" />
                 <p class="text-xs/relaxed">{summary}</p>
                 <PickedFiles id="customer_invoice_files" files=files reading=reading error=error company=form_company />
+                // In its own row, so the grid does not stretch it across the card.
+                <div>
                 <Button disabled=Signal::derive(move || busy.get() || reading.get() > 0)>"Registrera"</Button>
+                </div>
             </form>
         </Panel>
         </div>

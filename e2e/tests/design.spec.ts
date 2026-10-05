@@ -307,3 +307,18 @@ test("a menu is found by its own name, whatever the user is called", async ({ pa
   expect(await linksIn(await openMenu(page, "Lön"))).toEqual(["Lönekörningar", "Anställda", "Arbetsgivardeklaration"]);
   expect(await linksIn(await openMenu(page, "Inköp"))).toEqual(["Leverantörsfakturor", "Leverantörer"]);
 });
+
+test("a wide form's submit button keeps its own width", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.setViewportSize({ width: 1280, height: 800 });
+  for (const [path, name] of [
+    ["/vouchers/new", "Bokför"],
+    ["/supplier-invoices/new", "Registrera"],
+    ["/customer-invoices/new", "Registrera"],
+  ]) {
+    await page.goto(`${app}${path}`);
+    const button = (await page.getByRole("button", { name, exact: true }).boundingBox())!;
+    expect(button.width, `${name} on ${path}`).toBeLessThan(200);
+  }
+});

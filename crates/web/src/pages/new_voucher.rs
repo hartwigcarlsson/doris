@@ -170,9 +170,12 @@ pub fn NewVoucher() -> impl IntoView {
                     }}
                 </datalist>
                 <LineRows lines=lines list="accounts" />
+                // In its own row, so the grid does not stretch it across the card.
+                <div>
                 <Button disabled=Signal::derive(move || busy.get() || reading.get() > 0)>
                     "Bokför"
                 </Button>
+                </div>
             </form>
         </Panel>
         </div>
