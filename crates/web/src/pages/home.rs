@@ -1,7 +1,7 @@
 use crate::active_company::Companies;
 use crate::api::pb;
 use crate::app::Session;
-use crate::ui::Card;
+use crate::ui::{Card, PageHeader};
 use leptos::prelude::*;
 use leptos_router::components::A;
 
@@ -16,12 +16,13 @@ pub fn Home() -> impl IntoView {
     };
     view! {
         <div class="grid gap-6">
-            <Card title="Välkommen">
+            <PageHeader title="Översikt" />
+            <Card title="Välkommen" narrow=true>
                 <p>
                     "Inloggad som " <strong>{move || user().display_name}</strong> " (" {move || user().email} "), " {role} "."
                 </p>
             </Card>
-            <Card title="Aktivt företag">
+            <Card title="Aktivt företag" narrow=true>
                 {move || match companies.active_company() {
                     Some(c) => {
                         view! {

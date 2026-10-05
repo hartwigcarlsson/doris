@@ -140,9 +140,9 @@ test("the invitation list only shows once there are invitations", async ({ page,
   await goTo(page, "Inbjudningar");
   await expect(page.getByRole("heading", { name: "Bjud in" })).toBeVisible();
 
-  await expect(page.getByRole("heading", { name: "Inbjudningar" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Skickade inbjudningar" })).toHaveCount(0);
 
   await page.getByLabel("E-post").fill("bo@example.se");
   await page.getByRole("button", { name: "Skapa inbjudan" }).click();
-  await expect(page.getByRole("heading", { name: "Inbjudningar" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Skickade inbjudningar" })).toBeVisible();
 });

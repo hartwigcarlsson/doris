@@ -197,3 +197,25 @@ test("the payroll views follow the design", async ({ page, app }) => {
   await add.click();
   await expectDesign(page, /lönekörning/i);
 });
+
+test("the account views follow the design, with narrow left-aligned forms", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expectDesign(page, "Översikt");
+  await goTo(page, "Företag");
+  await expectDesign(page, "Företag");
+  await page.getByRole("main").getByRole("link", { name: "Lägg till företag" }).click();
+  await expectDesign(page, "Lägg till företag");
+  const { card, heading } = await page.getByRole("main").evaluate((main) => ({
+    card: main.querySelector("section")!.getBoundingClientRect(),
+    heading: main.querySelector("h1")!.getBoundingClientRect(),
+  }));
+  expect(card.width).toBeLessThanOrEqual(352);
+  expect(card.left).toBe(heading.left);
+  await goTo(page, "Passkeys");
+  await expectDesign(page, "Passkeys");
+  await goTo(page, "Inbjudningar");
+  await expectDesign(page, "Inbjudningar");
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await expectDesign(page, "Exempel AB");
+});

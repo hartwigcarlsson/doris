@@ -3,7 +3,9 @@ use crate::api::{company_api, cpb};
 use crate::errors::describe;
 use crate::fiscal_year::default_end;
 use crate::format::{LEGAL_FORMS, current_year, legal_form_label};
-use crate::ui::{Button, Card, Checkbox, ErrorAlert, Field, Radio, SELECT_OPTION, Select, Variant};
+use crate::ui::{
+    Button, Card, Checkbox, ErrorAlert, Field, PageHeader, Radio, SELECT_OPTION, Select, Variant,
+};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -113,10 +115,9 @@ pub fn NewCompany() -> impl IntoView {
     };
 
     view! {
-        <Card
-            title="Lägg till företag"
-            description="Uppgifter om företaget du ska sköta bokföringen åt."
-        >
+        <div class="grid gap-6">
+        <PageHeader title="Lägg till företag" description="Uppgifter om företaget du ska sköta bokföringen åt." />
+        <Card title="Uppgifter" narrow=true>
             <form class="grid gap-4" novalidate on:submit=submit>
                 <Field
                     label="Organisationsnummer"
@@ -210,5 +211,6 @@ pub fn NewCompany() -> impl IntoView {
                 <Button disabled=busy>"Spara företag"</Button>
             </form>
         </Card>
+        </div>
     }
 }

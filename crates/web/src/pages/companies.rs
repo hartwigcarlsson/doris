@@ -1,6 +1,6 @@
 use crate::api::{company_api, cpb};
 use crate::errors::describe;
-use crate::ui::{Card, ErrorAlert};
+use crate::ui::{ErrorAlert, IconName, LinkButton, PageHeader};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
@@ -20,9 +20,12 @@ pub fn Companies() -> impl IntoView {
     });
 
     view! {
-        <Card title="Företag" description="Företagen du sköter bokföringen åt.">
-            <div class="grid gap-4">
-                <ErrorAlert message=error />
+        <div class="grid gap-6">
+            <PageHeader title="Företag" description="Företagen du sköter bokföringen åt.">
+                <LinkButton href="/companies/new" icon=IconName::Plus>"Lägg till företag"</LinkButton>
+            </PageHeader>
+            <ErrorAlert message=error />
+            <section class="w-full max-w-xl rounded-lg bg-card p-4 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10">
                 {move || {
                     companies
                         .get()
@@ -55,13 +58,7 @@ pub fn Companies() -> impl IntoView {
                             }
                         })
                 }}
-                <A
-                    href="/companies/new"
-                    attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline"
-                >
-                    "Lägg till företag"
-                </A>
-            </div>
-        </Card>
+            </section>
+        </div>
     }
 }

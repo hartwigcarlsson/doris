@@ -1,7 +1,7 @@
 use crate::api::{api, pb};
 use crate::errors::describe;
 use crate::format::date;
-use crate::ui::{Button, Card, ErrorAlert, Field};
+use crate::ui::{Button, Card, ErrorAlert, Field, PageHeader};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -49,7 +49,8 @@ pub fn Invitations() -> impl IntoView {
 
     view! {
         <div class="grid gap-6">
-            <Card title="Bjud in" description="Länken gäller i 7 dagar och kan användas en gång.">
+            <PageHeader title="Inbjudningar" />
+            <Card title="Bjud in" description="Länken gäller i 7 dagar och kan användas en gång." narrow=true>
                 <form class="grid gap-4" novalidate on:submit=submit>
                     <Field label="E-post" id="email" kind="email" value=email />
                     <ErrorAlert message=error />
@@ -67,7 +68,7 @@ pub fn Invitations() -> impl IntoView {
                 }}
             </Card>
             <Show when=move || !invitations.get().is_empty()>
-                <Card title="Inbjudningar">
+                <Card title="Skickade inbjudningar" narrow=true>
                     <ul class="grid gap-2">
                         <For each=move || invitations.get() key=|i| i.id.clone() let(invitation)>
                             <li class="flex justify-between gap-2">
