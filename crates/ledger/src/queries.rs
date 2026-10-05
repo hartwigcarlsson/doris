@@ -177,6 +177,43 @@ pub async fn get_attachment(
     ))
 }
 
+/// The bytes stored under `sha256`. The hash alone grants nothing: the
+/// caller must first have found it on a record of the company it is
+/// answering for (an invoice's underlag, say), as [`get_attachment`] does
+/// for a voucher's.
+pub async fn attachment_data(pool: &SqlitePool, sha256: &str) -> Result<Vec<u8>> {
+    let data: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT data FROM attachment_files WHERE sha256 = ?")
+            .bind(sha256)
+            .fetch_optional(pool)
+            .await?;
+    Ok(data.ok_or(DomainError::AttachmentNotFound)?)
+}
+
+/// The company's vouchers that a rättelse points at, in every fiscal year.
+/// A rättelse is always in its original's year. For modules that book
+/// vouchers of their own and need to know which have been backed out; read
+/// in the caller's transaction, so it agrees with what the caller reads.
+pub async fn corrected_vouchers_in(
+    conn: &mut sqlx::SqliteConnection,
+    company_id: Uuid,
+) -> Result<std::collections::HashSet<crate::VoucherRef>> {
+    let rows: Vec<(String, u32)> = sqlx::query_as(
+        "SELECT fiscal_year_start, corrects FROM vouchers
+         WHERE company_id = ? AND corrects IS NOT NULL",
+    )
+    .bind(company_id.to_string())
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(start, number)| crate::VoucherRef {
+            fiscal_year_start: start.parse().expect("projected dates are valid"),
+            number,
+        })
+        .collect())
+}
+
 /// The saldobalans for one fiscal year, by account number: every account
 /// with lines in the year or a non-zero ingående balans. The ingående balans
 /// is the first year's opening balances plus every earlier year's lines on

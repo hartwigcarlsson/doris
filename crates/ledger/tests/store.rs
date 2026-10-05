@@ -4,15 +4,16 @@ use doris_ledger::domain::AccountNumber;
 use doris_ledger::domain::{ContentType, DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
 use doris_ledger::statements::StatementLine;
 use doris_ledger::{
-    Error, NewAttachment, VoucherRef, account_ledger, add_account, add_attachment,
-    check_accounts_in, close_fiscal_year, correct_voucher, financial_statements, get_attachment,
-    link_attachment_in, list_accounts, list_fiscal_years, list_vouchers, opening_balances,
-    rebuild_projections, record_voucher, record_voucher_in, record_voucher_with_attachments,
-    rename_account, reopen_fiscal_year, set_account_active, set_opening_balances,
-    store_attachment_in, trial_balance,
+    Error, NewAttachment, VoucherRef, account_ledger, add_account, add_attachment, attachment_data,
+    check_accounts_in, close_fiscal_year, correct_voucher, corrected_vouchers_in,
+    financial_statements, get_attachment, link_attachment_in, list_accounts, list_fiscal_years,
+    list_vouchers, opening_balances, rebuild_projections, record_voucher, record_voucher_in,
+    record_voucher_with_attachments, rename_account, reopen_fiscal_year, set_account_active,
+    set_opening_balances, store_attachment_in, trial_balance,
 };
 use jiff::civil::Date;
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 async fn db() -> SqlitePool {
@@ -1638,4 +1639,104 @@ async fn a_listed_voucher_says_who_recorded_it_and_when() {
         table(&pool, "SELECT recorded_at FROM vouchers ORDER BY number").await;
     assert_eq!(vec![recorded[0].at.clone(), recorded[1].at.clone()], stored);
     assert!(recorded[0].at.ends_with('Z') && recorded[0].at.contains('T'));
+}
+
+#[tokio::test]
+async fn corrected_vouchers_are_the_ones_a_rattelse_points_at() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let other = doris_company::register_company(
+        &pool,
+        anna,
+        NewCompany {
+            org_nr: "556012-5790",
+            name: "Annat AB",
+            legal_form: LegalForm::Aktiebolag,
+            street: "",
+            postal_code: "",
+            city: "",
+            fiscal_year_start: "2025-01-01".parse().unwrap(),
+            fiscal_year_end: "2025-12-31".parse().unwrap(),
+            accounting_method: AccountingMethod::Invoice,
+        },
+    )
+    .await
+    .unwrap();
+    let today = d(TODAY);
+    for date in ["2025-03-01", "2025-03-02", "2026-03-01"] {
+        record_voucher(&pool, id, anna, sale(date, 100), today)
+            .await
+            .unwrap();
+    }
+    record_voucher(&pool, other, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    assert!(
+        corrected_vouchers_in(&mut conn, id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    drop(conn);
+
+    correct_voucher(&pool, id, anna, d("2025-01-01"), 2, d("2025-03-03"), today)
+        .await
+        .unwrap();
+    correct_voucher(&pool, id, anna, d("2026-01-01"), 1, d("2026-03-02"), today)
+        .await
+        .unwrap();
+    correct_voucher(
+        &pool,
+        other,
+        anna,
+        d("2025-01-01"),
+        1,
+        d("2025-03-02"),
+        today,
+    )
+    .await
+    .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let corrected = corrected_vouchers_in(&mut conn, id).await.unwrap();
+    let voucher = |start: &str, number| VoucherRef {
+        fiscal_year_start: d(start),
+        number,
+    };
+    assert_eq!(
+        corrected,
+        HashSet::from([voucher("2025-01-01", 2), voucher("2026-01-01", 1)])
+    );
+    // Each company has its own.
+    assert_eq!(
+        corrected_vouchers_in(&mut conn, other).await.unwrap(),
+        HashSet::from([voucher("2025-01-01", 1)])
+    );
+}
+
+#[tokio::test]
+async fn stored_bytes_are_read_by_their_hash_and_an_unknown_hash_is_not_found() {
+    let pool = db().await;
+    let pdf = b"%PDF-1.4\n%%EOF\n".to_vec();
+    let mut tx = doris_eventstore::begin(&pool).await.unwrap();
+    let stored = store_attachment_in(
+        &mut tx,
+        NewAttachment {
+            file_name: "faktura.pdf".into(),
+            data: pdf.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let sha256 = stored.sha256;
+
+    assert_eq!(attachment_data(&pool, &sha256).await.unwrap(), pdf);
+    let unknown = attachment_data(&pool, &"0".repeat(64)).await;
+    assert!(
+        matches!(unknown, Err(Error::Domain(DomainError::AttachmentNotFound))),
+        "{unknown:?}"
+    );
 }

@@ -86,7 +86,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   projection, append-only by trigger and keyed by SHA-256, so a file is
   stored once. They are read only through the company's own voucher
   (`voucher_attachments`) or the company's own customer or supplier invoice, never by
-  hash alone. An underlag is never removed
+  hash alone. Invoicing finds the underlag on its own invoice and then asks
+  the ledger for the bytes (`doris_ledger::attachment_data`); it does not
+  read `attachment_files`. An underlag is never removed
   or renamed, and it may be added to a voucher in a closed year: it changes
   no amount. The type comes from the bytes, never from the client.
 - Payroll (`payroll-{company_id}`: employees and runs) has its own
@@ -98,8 +100,10 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   its booking is backed out with a rättelse (`correct_voucher_in`,
   dated today but no later than its fiscal year's end, from the run or
   the grundbok), and the run is Färdigställd again. Whether a run is
-  booked is derived from `vouchers.corrects`, never stored. Payroll
-  tables have no foreign key to `vouchers`.
+  booked is derived from the ledger's corrections
+  (`doris_ledger::corrected_vouchers_in`, read in payroll's own
+  transaction), never stored. Payroll tables have no foreign key to
+  `vouchers`, and payroll never reads that table itself.
 - Arbetsgivaravgift (`doris_payroll::domain::employer_fee`) is in code
   from 2026: 31,42 %; 10,21 % for those 67 when the year began; 0 for
   born 1937 or earlier; 20,81 % on the first 25 000 kr a month for

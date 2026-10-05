@@ -242,9 +242,7 @@ pub async fn customer_invoice_attachment(
     let attachment = invoice
         .and_then(|i| i.attachments.into_iter().find(|a| a.sha256 == sha256))
         .ok_or_else(|| ledger(LedgerError::AttachmentNotFound))?;
-    let data: Vec<u8> = sqlx::query_scalar("SELECT data FROM attachment_files WHERE sha256 = ?")
-        .bind(&attachment.sha256)
-        .fetch_one(pool)
-        .await?;
+    // Found on the company's own invoice above; the ledger keeps the bytes.
+    let data = doris_ledger::attachment_data(pool, &attachment.sha256).await?;
     Ok((attachment, data))
 }

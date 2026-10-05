@@ -25,8 +25,8 @@ use uuid::Uuid;
 
 pub use projections::rebuild_projections;
 pub use queries::{
-    account_ledger, financial_statements, get_attachment, list_accounts, list_fiscal_years,
-    list_vouchers, opening_balances, trial_balance,
+    account_ledger, attachment_data, corrected_vouchers_in, financial_statements, get_attachment,
+    list_accounts, list_fiscal_years, list_vouchers, opening_balances, trial_balance,
 };
 
 const ACCOUNTS_STREAM: &str = "accounts-";
@@ -191,7 +191,7 @@ async fn append<E: Serialize>(
 }
 
 /// Where a voucher landed: its fiscal year and its number in that year.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VoucherRef {
     pub fiscal_year_start: Date,
     pub number: u32,

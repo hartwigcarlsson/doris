@@ -349,24 +349,18 @@ async fn load(
     Ok((company, Payroll::from_events(&events, reversed), version))
 }
 
-/// The company's vouchers that a rättelse points at, from the ledger's
-/// projection. A rättelse is always in its original's fiscal year.
+/// The company's vouchers that a rättelse points at, as the ledger knows
+/// them: a booking among these has been backed out.
 async fn reversed_vouchers(
     conn: &mut SqliteConnection,
     company_id: Uuid,
 ) -> Result<HashSet<BookedVoucher>> {
-    let rows: Vec<(String, u32)> = sqlx::query_as(
-        "SELECT fiscal_year_start, corrects FROM vouchers
-         WHERE company_id = ? AND corrects IS NOT NULL",
-    )
-    .bind(company_id.to_string())
-    .fetch_all(&mut *conn)
-    .await?;
-    Ok(rows
+    Ok(doris_ledger::corrected_vouchers_in(conn, company_id)
+        .await?
         .into_iter()
-        .map(|(start, number)| BookedVoucher {
-            fiscal_year_start: start.parse().expect("the ledger stores YYYY-MM-DD"),
-            number,
+        .map(|voucher| BookedVoucher {
+            fiscal_year_start: voucher.fiscal_year_start,
+            number: voucher.number,
         })
         .collect())
 }
