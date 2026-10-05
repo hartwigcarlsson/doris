@@ -58,6 +58,7 @@ En verifikation visas om den uppfyller alla aktiva villkor:
 |---|---|
 | Sök | Söksträngen delas vid blanksteg i ord. Varje ord ska finnas i minst ett av: numret, texten, ett kontonummer på en rad, ett kontonamn på en rad, eller ett belopp. Jämförelsen bortser från skiftläge. Tom söksträng matchar allt. |
 | Belopp | Ett ord som bara består av siffror, blanksteg-fria tusental och ett valfritt decimaltecken (`,` eller `.`) jämförs mot verifikationens summa och varje rads belopp, skrivna utan tusentalsavgränsare: "1250" och "1250,00" matchar 1 250,00. "125" matchar inte 1 250,00 som belopp, men kan matcha ett nummer eller en text. |
+| Belopp med mellanslag | Om hela söksträngen, med sina mellanslag (även hårda), är ett belopp som finns på verifikationen visas den: "1 250,00", skrivet eller inklistrat som sidan visar det, matchar 1 250,00. Annars gäller ordreglerna. |
 | Nummer | Ett ord av bara siffror matchar numret om det är lika med det ("21" matchar ver 21, inte 210 eller 121). |
 | Kontonummer | Ett ord av bara siffror matchar ett kontonummer om kontot börjar med ordet ("19" matchar 1930). |
 | Saknar underlag | `attachments` är tom. |

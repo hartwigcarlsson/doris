@@ -31,9 +31,14 @@ pub fn Vouchers() -> impl IntoView {
     let error = RwSignal::new(None::<String>);
 
     let load = move || {
-        let (company_id, start) = (companies.active.get_untracked(), year.get_untracked());
-        let Some(fiscal_year) =
-            years.with_untracked(|ys| ys.iter().find(|y| y.start == start).cloned())
+        // `try_`: a row may ask for a reload after the page is gone.
+        let Some(start) = year.try_get_untracked() else {
+            return;
+        };
+        let company_id = companies.active.get_untracked();
+        let Some(fiscal_year) = years
+            .try_with_untracked(|ys| ys.iter().find(|y| y.start == start).cloned())
+            .flatten()
         else {
             return;
         };
@@ -60,7 +65,9 @@ pub fn Vouchers() -> impl IntoView {
                     Some(fiscal_year),
                     response.into_inner().vouchers,
                 )),
-                Err(status) => error.set(Some(describe(&status))),
+                Err(status) => {
+                    error.try_set(Some(describe(&status)));
+                }
             }
         });
     };
@@ -248,7 +255,11 @@ fn VoucherRow(
     let fiscal_year = StoredValue::new(fiscal_year);
     // Behandlingshistorik: when it was recorded, in this browser's time
     // zone (JS counts minutes west of UTC), and by whom if known.
-    let offset = -(js_sys::Date::new_0().get_timezone_offset() as i32);
+    // The offset is the one that applied then, not today's: summer time
+    // must not move an old voucher an hour. (An unreadable time gives NaN,
+    // which is 0 here, and `local_time` shows nothing for it anyway.)
+    let then = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(&voucher.recorded_at));
+    let offset = -(then.get_timezone_offset() as i32);
     let recorded = local_time(&voucher.recorded_at, offset);
     let history = match (recorded.is_empty(), voucher.recorded_by_name.is_empty()) {
         (true, _) => None,
@@ -354,6 +365,9 @@ fn VoucherRow(
                     }
                 }
             }
+            // The list the search and the filters read has the new underlag
+            // too; the row keeps its key, so it stays as it is.
+            changed.try_run(());
         });
     };
 
@@ -380,11 +394,15 @@ fn VoucherRow(
                 number,
                 date: date.get_untracked(),
             };
+            let company = request.company_id.clone();
             let result = ledger_api().correct_voucher(request).await;
+            // The page may be gone by now: `try_` on everything it owns.
             match result {
-                Ok(_) => changed.run(()),
-                Err(status) if company_id.get_value() == companies.active.get_untracked() => {
-                    error.set(Some(describe(&status)))
+                Ok(_) => {
+                    changed.try_run(());
+                }
+                Err(status) if company == companies.active.get_untracked() => {
+                    error.try_set(Some(describe(&status)));
                 }
                 Err(_) => {}
             }

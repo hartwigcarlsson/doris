@@ -15,6 +15,16 @@ pub struct Filter {
     pub corrections: bool,
 }
 
+/// Whether `ore` is the voucher's total or the amount on one of its lines.
+fn has_amount(voucher: &lpb::Voucher, ore: i64) -> bool {
+    let total: i64 = voucher.lines.iter().map(|l| l.debit).sum();
+    ore == total
+        || voucher
+            .lines
+            .iter()
+            .any(|l| ore == l.debit || ore == l.credit)
+}
+
 /// Whether `word` (lower case, no spaces) is found in the voucher: as its
 /// number (exactly), an account on it (by prefix), a whole amount on it,
 /// or a part of its text or of an account's name.
@@ -33,16 +43,8 @@ fn word_matches(word: &str, voucher: &lpb::Voucher, accounts: &[lpb::Account]) -
     }
     // "1250", "1250,00" and "1250.0" are amounts; the öre must agree too.
     // Not 0: every line has an empty side.
-    if let Some(ore) = parse_amount(word).filter(|ore| *ore != 0) {
-        let total: i64 = voucher.lines.iter().map(|l| l.debit).sum();
-        if ore == total
-            || voucher
-                .lines
-                .iter()
-                .any(|l| ore == l.debit || ore == l.credit)
-        {
-            return true;
-        }
+    if parse_amount(word).is_some_and(|ore| ore != 0 && has_amount(voucher, ore)) {
+        return true;
     }
     if voucher.text.to_lowercase().contains(word) {
         return true;
@@ -64,9 +66,15 @@ pub fn visible(voucher: &lpb::Voucher, accounts: &[lpb::Account], filter: &Filte
     if filter.corrections && voucher.corrects == 0 && voucher.corrected_by == 0 {
         return false;
     }
-    filter
-        .query
-        .to_lowercase()
+    let query = filter.query.to_lowercase();
+    // "1 250,00", typed or pasted as the page shows it, is one amount
+    // although its space makes it two words.
+    if query.split_whitespace().nth(1).is_some()
+        && parse_amount(query.trim()).is_some_and(|ore| ore != 0 && has_amount(voucher, ore))
+    {
+        return true;
+    }
+    query
         .split_whitespace()
         .all(|word| word_matches(word, voucher, accounts))
 }
@@ -195,13 +203,25 @@ mod tests {
     }
 
     #[test]
-    fn an_amount_typed_with_a_space_is_two_words() {
-        // "1 250,00" asks for "1" and "250,00": neither is this voucher's
-        // amount, and "1" is not its number. Documented, not clever.
-        assert!(!found(&sale(), "1 250,00"));
-        // The same words do match a voucher that has both.
-        let both = voucher(1, "x", &[(1930, 250_00, 0), (3001, 0, 250_00)]);
-        assert!(found(&both, "1 250,00"));
+    fn an_amount_can_be_typed_or_pasted_with_its_spaces() {
+        // The page shows "1 250,00", with a no-break space.
+        assert!(found(&sale(), "1 250,00"));
+        assert!(found(&sale(), "1\u{a0}250,00"));
+        assert!(found(&sale(), "1\u{202f}250"));
+        assert!(found(&sale(), "  1 250,00 "));
+        assert!(!found(&sale(), "1 251,00"));
+        // Read as words it still works: "1" starts account 1930, "250,00" is on the voucher.
+        let other = voucher(9, "x", &[(1930, 250_00, 0), (3001, 0, 250_00)]);
+        assert!(found(&other, "1 250,00"));
+        // Words that happen to be digits are not glued into an amount when text follows.
+        assert!(!found(&sale(), "1 250 hyra"));
+        // The boxes still have to hold.
+        let filter = Filter {
+            query: "1 250,00".into(),
+            corrections: true,
+            ..Default::default()
+        };
+        assert!(!visible(&sale(), &accounts(), &filter));
     }
 
     #[test]

@@ -100,3 +100,66 @@ test("an expanded voucher says who booked it and when, and links its accounts", 
   await expect(page).toHaveURL(new RegExp(`/trial-balance/1930\\?fy=${year}-01-01$`));
   await expect(page.getByRole("heading", { level: 1, name: /^1930 / })).toBeVisible();
 });
+
+test("an underlag added in the row is still there after the row was filtered away", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await book(page, app, "Bankavgift", "6570", "1930", "150");
+  await book(page, app, "Hyra", "5010", "1930", "8000", true);
+  await goTo(page, "Verifikationer");
+  const main = page.getByRole("main");
+  await page.getByLabel("Saknar underlag").check();
+  await expect.poll(() => numbers(page)).toEqual([1]);
+  await rows(page).locator(expand).click();
+  await page.getByLabel("Lägg till underlag till ver 1").setInputFiles([{ name: "avi.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n%%EOF\n") }]);
+  // It has its underlag now, so the filter lets it go.
+  await expect(main).toContainText("Inga verifikationer matchar.");
+  await page.getByLabel("Saknar underlag").uncheck();
+  await rows(page).filter({ hasText: "Bankavgift" }).locator(expand).click();
+  await expect(main.getByRole("button", { name: /^avi\.pdf/ })).toBeVisible();
+});
+
+test("leaving while a correction is being recorded breaks nothing", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await book(page, app, "Försäljning", "1930", "3001", "100");
+  await goTo(page, "Verifikationer");
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  await page.route("**/CorrectVoucher", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await rows(page).getByRole("button", { name: "Rätta" }).click();
+  await page.getByRole("button", { name: "Bekräfta rättelse" }).click();
+  await goTo(page, "Kontoplan");
+  await expect(page.getByRole("heading", { level: 1, name: "Kontoplan" })).toBeVisible();
+  release();
+  await page.waitForTimeout(500);
+  await goTo(page, "Verifikationer");
+  await expect.poll(() => numbers(page)).toEqual([2, 1]);
+  expect(errors).toEqual([]);
+});
+
+test.describe("in a zone with summer time", () => {
+  test.use({ timezoneId: "Europe/Stockholm" });
+
+  test("a voucher's time is shown as it was then, not shifted by today's summer time", async ({ page, app }) => {
+    await register(page, app, { email: "anna@example.se", name: "Anna" });
+    await addCompany(page, app, "5560160680", "Exempel AB");
+    const local = (d: Date) => d.toLocaleString("sv-SE", { timeZone: "Europe/Stockholm", hour: "2-digit", minute: "2-digit" });
+    const before = new Date();
+    await book(page, app, "Försäljning", "1930", "3001", "100");
+    const after = new Date();
+    // Look at it half a year from now, on the other side of the clock change.
+    const summer = /\+02|GMT\+2/.test(before.toLocaleString("en-GB", { timeZone: "Europe/Stockholm", timeZoneName: "shortOffset" }));
+    await page.clock.setFixedTime(new Date(`${before.getFullYear() + 1}-${summer ? "01" : "07"}-15T12:00:00Z`));
+    await goTo(page, "Verifikationer");
+    await rows(page).locator(expand).click();
+    const line = await page.getByRole("main").getByText(/^Bokförd /).innerText();
+    expect([local(before), local(after)]).toContain(line.match(/ (\d\d:\d\d) /)![1]);
+  });
+});

@@ -360,7 +360,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   The search field and the "Saknar underlag"/"Rättelser" boxes filter in
   the browser (`src/voucher_search.rs`): every word must match the number
   (exactly), an account on the voucher (by prefix), a whole amount, or part
-  of the text or of an account's name.
+  of the text or of an account's name. A search that is one amount with
+  spaces in it ("1 250,00", as the page shows it) matches that amount.
+  A row's time is shown with the UTC offset that applied then, not today's.
 - A view is a `grid gap-6` that starts with `PageHeader` (the page's one
   `<h1>`, actions to the right). Tables sit in `TableCard`, statuses are
   `Badge`s and "Ny …" actions are `LinkButton`s. A one-column form is a
