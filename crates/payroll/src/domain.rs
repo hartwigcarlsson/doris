@@ -1,6 +1,7 @@
 //! Pure payroll rules: employees, payroll runs and arbetsgivaravgifter.
 //! No I/O, no clock.
 
+use crate::agi::{AgiContact, AgiLine, AgiSubmission, Period};
 use doris_ledger::domain::{AccountNumber, RecordVoucher, VoucherLine};
 use jiff::civil::{Date, date};
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,19 @@ pub enum DomainError {
     /// The year's table isn't stored yet; the server fetches it.
     #[error("no tax table for {0}")]
     TaxTableMissing(i16),
+    #[error("a period is ÅÅÅÅMM")]
+    InvalidPeriod,
+    #[error("the AGI contact needs a name, a phone number and a valid e-mail address")]
+    InvalidAgiContact,
+    #[error("no AGI contact person")]
+    AgiContactMissing,
+    #[error("no booked payroll that month")]
+    AgiPeriodEmpty,
+    #[error("the month is submitted and unchanged")]
+    AgiUnchanged,
+    /// The month changed after the user got the file (or saw the month).
+    #[error("the AGI file is outdated")]
+    AgiFileOutdated,
 }
 
 /// A personnummer or samordningsnummer, as twelve digits.
@@ -159,15 +173,32 @@ const YOUTH_UNTIL: Date = date(2027, 9, 30);
 /// rate under the cap) and the fee in öre, half an öre rounded up.
 ///
 /// Skatteverket, "Arbetsgivaravgifter" (2026).
-// ponytail: the rules live in code from 2026; a changed rate needs a new
-// release. A table of rates by date pays off only if they change more
-// often than Doris is released.
 pub fn employer_fee(
     birth_year: i16,
     pay_date: Date,
     gross: i64,
     earlier_gross_same_month: i64,
 ) -> (u32, i64) {
+    let [(rate, under_cap), (full, over_cap)] =
+        fee_bases(birth_year, pay_date, gross, earlier_gross_same_month);
+    let fee = (under_cap * i64::from(rate) + over_cap * i64::from(full) + 5_000) / 10_000;
+    (rate, fee)
+}
+
+/// How `gross` (öre) paid on `pay_date` to someone born in `birth_year`
+/// splits over fee rates, after `earlier_gross_same_month`: the rate for
+/// the whole (or, with the youth reduction, the part under the cap) and
+/// that part, then the full rate and the rest. Shared by `employer_fee` and
+/// the AGI sum, so both follow the same age rules.
+// ponytail: the rules live in code from 2026; a changed rate needs a new
+// release. A table of rates by date pays off only if they change more
+// often than Doris is released.
+pub fn fee_bases(
+    birth_year: i16,
+    pay_date: Date,
+    gross: i64,
+    earlier_gross_same_month: i64,
+) -> [(u32, i64); 2] {
     let year = pay_date.year();
     let (rate, under_cap) = if birth_year <= 1937 {
         (0, gross)
@@ -181,9 +212,7 @@ pub fn employer_fee(
     } else {
         (FULL_RATE, gross)
     };
-    let over_cap = gross - under_cap;
-    let fee = (under_cap * i64::from(rate) + over_cap * i64::from(FULL_RATE) + 5_000) / 10_000;
-    (rate, fee)
+    [(rate, under_cap), (FULL_RATE, gross - under_cap)]
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -233,6 +262,18 @@ pub enum PayrollEvent {
     PayrollRunBooked {
         payroll_run_id: Uuid,
         voucher: BookedVoucher,
+    },
+    /// Who Skatteverket may contact about the company's AGI.
+    AgiContactChanged {
+        contact: AgiContact,
+    },
+    /// What was submitted for a period, as the user confirms after uploading
+    /// the file. The latest per period is what Skatteverket has.
+    AgiMonthSubmitted {
+        period: Period,
+        lines: Vec<AgiLine>,
+        fee_sum: i64,
+        tax_sum: i64,
     },
 }
 
@@ -313,6 +354,9 @@ pub struct Payroll {
     pub employees: Vec<Employee>,
     pub runs: Vec<PayrollRun>,
     pub reversed: HashSet<BookedVoucher>,
+    pub agi_contact: Option<AgiContact>,
+    /// The latest submission per period.
+    pub agi_submissions: BTreeMap<Period, AgiSubmission>,
 }
 
 impl Payroll {
@@ -403,6 +447,22 @@ impl Payroll {
                 if let Some(run) = self.run_mut(payroll_run_id) {
                     run.bookings.push(voucher);
                 }
+            }
+            PayrollEvent::AgiContactChanged { contact } => self.agi_contact = Some(contact),
+            PayrollEvent::AgiMonthSubmitted {
+                period,
+                lines,
+                fee_sum,
+                tax_sum,
+            } => {
+                self.agi_submissions.insert(
+                    period,
+                    AgiSubmission {
+                        lines,
+                        fee_sum,
+                        tax_sum,
+                    },
+                );
             }
         }
     }

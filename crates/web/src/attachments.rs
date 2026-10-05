@@ -4,6 +4,7 @@
 use crate::api::lpb;
 use leptos::prelude::set_timeout;
 use std::time::Duration;
+use wasm_bindgen::JsCast;
 
 /// The server's limits, mirrored so a pick that is too large is refused
 /// before it is uploaded.
@@ -80,6 +81,36 @@ pub fn open_in(tab: &web_sys::Window, content_type: &str, data: &[u8]) {
     };
     let _ = tab.location().set_href(&url);
     // The tab has loaded it long before then; free the memory.
+    set_timeout(
+        move || {
+            let _ = web_sys::Url::revoke_object_url(&url);
+        },
+        Duration::from_secs(60),
+    );
+}
+
+/// Saves `text` as a download named `name` (a Blob behind a temporary
+/// `<a download>`).
+pub fn save_as(name: &str, content_type: &str, text: &str) {
+    let parts = js_sys::Array::of1(&wasm_bindgen::JsValue::from_str(text));
+    let options = web_sys::BlobPropertyBag::new();
+    options.set_type(content_type);
+    let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&parts, &options) else {
+        return;
+    };
+    let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
+        return;
+    };
+    let link = leptos::prelude::document()
+        .create_element("a")
+        .ok()
+        .and_then(|e| e.dyn_into::<web_sys::HtmlAnchorElement>().ok());
+    if let Some(link) = link {
+        link.set_href(&url);
+        link.set_download(name);
+        link.click();
+    }
+    // The download has started long before then; free the memory.
     set_timeout(
         move || {
             let _ = web_sys::Url::revoke_object_url(&url);

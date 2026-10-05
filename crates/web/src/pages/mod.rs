@@ -1,5 +1,6 @@
 mod account_ledger;
 mod accounts;
+mod agi;
 mod companies;
 mod company;
 mod customer_invoices;
@@ -26,6 +27,7 @@ mod vouchers;
 
 pub use account_ledger::AccountLedger;
 pub use accounts::Accounts;
+pub use agi::Agi;
 pub use companies::Companies;
 pub use company::CompanyPage;
 pub use customer_invoices::CustomerInvoices;

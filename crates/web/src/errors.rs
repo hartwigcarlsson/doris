@@ -133,6 +133,14 @@ fn message(code: &str) -> &'static str {
         "invalid_bic" => "Ange en giltig BIC (8 eller 11 tecken).",
         "customer_not_found" => "Kunden finns inte.",
         "supplier_not_found" => "Leverantören finns inte.",
+        "invalid_period" => "Ogiltig period.",
+        "invalid_agi_contact" => {
+            "Ange namn (högst 50 tecken), telefon (högst 20 tecken) och en giltig e-postadress."
+        }
+        "agi_contact_missing" => "Spara en kontaktperson först.",
+        "agi_period_empty" => "Det finns inga bokförda löner den månaden.",
+        "agi_unchanged" => "Månaden är redan inlämnad och har inte ändrats.",
+        "agi_file_outdated" => "Filen är inaktuell, ladda ner den igen.",
         "supplier_invoice_not_found" => "Leverantörsfakturan finns inte.",
         "supplier_inactive" => "Leverantören är inaktiv. Aktivera den eller välj en annan.",
         "invalid_invoice_number" => "Fakturanumret måste vara 1–50 tecken.",
@@ -163,6 +171,31 @@ fn message(code: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn agi_codes_have_swedish_messages() {
+        assert_eq!(message("invalid_period"), "Ogiltig period.");
+        assert_eq!(
+            message("invalid_agi_contact"),
+            "Ange namn (högst 50 tecken), telefon (högst 20 tecken) och en giltig e-postadress."
+        );
+        assert_eq!(
+            message("agi_contact_missing"),
+            "Spara en kontaktperson först."
+        );
+        assert_eq!(
+            message("agi_period_empty"),
+            "Det finns inga bokförda löner den månaden."
+        );
+        assert_eq!(
+            message("agi_unchanged"),
+            "Månaden är redan inlämnad och har inte ändrats."
+        );
+        assert_eq!(
+            message("agi_file_outdated"),
+            "Filen är inaktuell, ladda ner den igen."
+        );
+    }
+
     #[test]
     fn tax_table_codes_have_swedish_messages() {
         assert_eq!(

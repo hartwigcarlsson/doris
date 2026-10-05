@@ -442,7 +442,8 @@ async fn insert_file(conn: &mut SqliteConnection, sha256: &str, data: &[u8]) -> 
 }
 
 /// Lowercase hex SHA-256.
-fn sha256_hex(data: &[u8]) -> String {
+/// Lowercase hex SHA-256.
+pub fn sha256_hex(data: &[u8]) -> String {
     Sha256::digest(data)
         .iter()
         .map(|b| format!("{b:02x}"))

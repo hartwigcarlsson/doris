@@ -6,12 +6,14 @@
 //! the corrected vouchers, load the company's payroll, decide, append,
 //! project.
 
+pub mod agi;
 pub mod domain;
 mod projections;
 mod queries;
 pub mod tax;
 
 use crate::tax::{RowKind, TaxSetting, TaxTable, TaxTableRow};
+use agi::{AgiContact, AgiMonth, AgiStatus, Period};
 use domain::{
     AddEmployee, BookedVoucher, DomainError, EmployeeName, Payroll, PayrollEvent, PayrollRunDraft,
     PayrollRunLine, PersonalIdentityNumber, SalaryAccount, UpdateEmployee,
@@ -20,7 +22,7 @@ use doris_company::domain::Company;
 use doris_eventstore::{Metadata, NewEvent};
 use jiff::civil::Date;
 use sqlx::{SqliteConnection, SqlitePool};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub use projections::rebuild_projections;
@@ -454,4 +456,128 @@ pub async fn unbook_payroll_run(
         fiscal_year_start: correction.fiscal_year_start,
         number: correction.number,
     })
+}
+
+/// One period in the AGI list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgiMonthSummary {
+    pub period: Period,
+    /// Kronor, all individuppgifter.
+    pub gross: i64,
+    pub tax_sum: i64,
+    pub fee_sum: i64,
+    pub status: AgiStatus,
+    /// When the latest submission was recorded, if any.
+    pub submitted_at: Option<String>,
+}
+
+pub async fn agi_contact(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+) -> Result<Option<AgiContact>> {
+    let mut conn = pool.acquire().await?;
+    let (_, payroll, _) = load(&mut conn, company_id, actor).await?;
+    Ok(payroll.agi_contact)
+}
+
+pub async fn set_agi_contact(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    name: &str,
+    phone: &str,
+    email: &str,
+) -> Result<()> {
+    let contact = AgiContact::parse(name, phone, email)?;
+    change(pool, company_id, actor, |payroll| {
+        Ok(agi::set_agi_contact(payroll, contact))
+    })
+    .await
+}
+
+/// Every period with booked pay or a submission, newest first.
+pub async fn agi_months(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+) -> Result<Vec<AgiMonthSummary>> {
+    let mut conn = pool.acquire().await?;
+    let (_, payroll, _) = load(&mut conn, company_id, actor).await?;
+    let submitted: Vec<(u32, String)> = sqlx::query_as(
+        "SELECT period, MAX(submitted_at) FROM agi_submissions WHERE company_id = ? GROUP BY period",
+    )
+    .bind(company_id.to_string())
+    .fetch_all(&mut *conn)
+    .await?;
+    let submitted: HashMap<u32, String> = submitted.into_iter().collect();
+    Ok(agi::agi_periods(&payroll)
+        .into_iter()
+        .map(|period| {
+            let month = agi::agi_month(&payroll, period);
+            AgiMonthSummary {
+                period,
+                gross: month.lines.iter().map(|(l, _)| l.gross).sum(),
+                tax_sum: month.tax_sum,
+                fee_sum: month.fee_sum,
+                status: month.status,
+                submitted_at: submitted.get(&period.get()).cloned(),
+            }
+        })
+        .collect())
+}
+
+pub async fn agi_month(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    period: Period,
+) -> Result<AgiMonth> {
+    let mut conn = pool.acquire().await?;
+    let (_, payroll, _) = load(&mut conn, company_id, actor).await?;
+    Ok(agi::agi_month(&payroll, period))
+}
+
+/// The month's file for Skatteverket: its name, the XML and the month's
+/// fingerprint (to mark it submitted). It carries personnummer, which is
+/// its purpose; it goes only to a member.
+pub async fn agi_file(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    period: Period,
+    created: jiff::civil::DateTime,
+) -> Result<(String, String, String)> {
+    let mut conn = pool.acquire().await?;
+    let (company, payroll, _) = load(&mut conn, company_id, actor).await?;
+    let contact = payroll
+        .agi_contact
+        .clone()
+        .ok_or(DomainError::AgiContactMissing)?;
+    let month = agi::agi_month(&payroll, period);
+    if month.lines.is_empty() && month.removed.is_empty() {
+        return Err(DomainError::AgiPeriodEmpty.into());
+    }
+    let id = agi::employer_id(&company.org_nr, created.year());
+    // Every employee, so removed ones have their personnummer too.
+    let personal_ids: HashMap<Uuid, String> = payroll
+        .employees
+        .iter()
+        .map(|e| (e.id, e.personal_identity_number.as_str().to_owned()))
+        .collect();
+    let xml = agi::agi_xml(&month, &id, &contact, &personal_ids, created);
+    Ok((format!("AGI_{id}_{period}.xml"), xml, month.fingerprint()))
+}
+
+pub async fn submit_agi_month(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    period: Period,
+    fingerprint: &str,
+) -> Result<()> {
+    change(pool, company_id, actor, |payroll| {
+        Ok(vec![agi::submit_agi_month(payroll, period, fingerprint)?])
+    })
+    .await
 }
