@@ -140,6 +140,10 @@ message Voucher {
   uint32 corrects = 5;
   uint32 corrected_by = 6;
   repeated Attachment attachments = 7;
+  // When the voucher was recorded (RFC 3339, UTC) and by whom (the user's
+  // display name; empty if unknown). Set by ListVouchers; empty elsewhere.
+  string recorded_at = 8;
+  string recorded_by_name = 9;
 }
 
 message ListVouchersResponse {

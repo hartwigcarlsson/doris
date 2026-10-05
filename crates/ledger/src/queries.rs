@@ -2,7 +2,7 @@
 
 use crate::domain::{
     Account, AccountLedger, AccountName, AccountNumber, Attachment, AttachmentName, Chart,
-    ContentType, DomainError, FiscalYearStatus, TrialBalanceRow, Voucher, VoucherLine,
+    ContentType, DomainError, FiscalYearStatus, Recorded, TrialBalanceRow, Voucher, VoucherLine,
     running_balance,
 };
 use crate::statements::{FinancialStatements, build};
@@ -82,12 +82,24 @@ pub async fn list_vouchers(
 ) -> Result<Vec<Voucher>> {
     doris_company::get_company(pool, company_id, user_id).await?;
     let (company_id, fiscal_year_start) = (company_id.to_string(), fiscal_year_start.to_string());
-    type Head = (u32, String, String, Option<u32>, Option<u32>);
+    type Head = (
+        u32,
+        String,
+        String,
+        Option<u32>,
+        Option<u32>,
+        String,
+        String,
+    );
     // One read transaction: heads and lines from the same snapshot (WAL).
     let mut tx = pool.begin().await?;
     let heads: Vec<Head> = sqlx::query_as(
-        "SELECT number, date, text, corrects, corrected_by FROM vouchers
-         WHERE company_id = ? AND fiscal_year_start = ? ORDER BY number",
+        // LEFT JOIN: a voucher is listed whether or not its recorder is
+        // still (or ever was) in `users`.
+        "SELECT v.number, v.date, v.text, v.corrects, v.corrected_by, v.recorded_at,
+                COALESCE(u.display_name, '')
+         FROM vouchers v LEFT JOIN users u ON u.user_id = v.recorded_by
+         WHERE v.company_id = ? AND v.fiscal_year_start = ? ORDER BY v.number",
     )
     .bind(&company_id)
     .bind(&fiscal_year_start)
@@ -112,15 +124,18 @@ pub async fn list_vouchers(
     tx.commit().await?;
     let mut vouchers: Vec<Voucher> = heads
         .into_iter()
-        .map(|(number, date, text, corrects, corrected_by)| Voucher {
-            number,
-            date: date.parse().expect("projected dates are valid"),
-            text,
-            lines: Vec::new(),
-            corrects,
-            corrected_by,
-            attachments: Vec::new(),
-        })
+        .map(
+            |(number, date, text, corrects, corrected_by, at, by)| Voucher {
+                number,
+                date: date.parse().expect("projected dates are valid"),
+                text,
+                lines: Vec::new(),
+                corrects,
+                corrected_by,
+                attachments: Vec::new(),
+                recorded: Some(Recorded { at, by }),
+            },
+        )
         .collect();
     attach_lines(&mut vouchers, lines);
     for (number, sha256, file_name, content_type, size) in attachments {
@@ -393,6 +408,7 @@ mod tests {
             corrects: None,
             corrected_by: None,
             attachments: Vec::new(),
+            recorded: None,
         }];
         // Voucher 2 was committed after the heads were read.
         attach_lines(

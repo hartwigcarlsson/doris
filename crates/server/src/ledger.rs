@@ -406,6 +406,7 @@ pub(crate) fn attachment_message(a: &Attachment) -> pb::Attachment {
 }
 
 fn voucher_message(v: Voucher) -> pb::Voucher {
+    let (recorded_at, recorded_by_name) = v.recorded.map(|r| (r.at, r.by)).unwrap_or_default();
     pb::Voucher {
         number: v.number,
         date: v.date.to_string(),
@@ -414,6 +415,8 @@ fn voucher_message(v: Voucher) -> pb::Voucher {
         corrects: v.corrects.unwrap_or(0),
         corrected_by: v.corrected_by.unwrap_or(0),
         attachments: v.attachments.iter().map(attachment_message).collect(),
+        recorded_at,
+        recorded_by_name,
     }
 }
 

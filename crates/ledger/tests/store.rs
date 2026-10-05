@@ -1608,3 +1608,69 @@ async fn accounts_are_checked_against_the_chart() {
         .unwrap_err();
     assert!(matches!(stranger, Error::NotFound));
 }
+
+/// A row in identity's `users` projection, as registration writes it.
+async fn user(pool: &SqlitePool, id: Uuid, email: &str, name: &str) {
+    sqlx::query(
+        "INSERT INTO users (user_id, email, display_name, role, registered_at)
+         VALUES (?, ?, ?, 'member', '2025-01-01T00:00:00.000Z')",
+    )
+    .bind(id.to_string())
+    .bind(email)
+    .bind(name)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_listed_voucher_says_who_recorded_it_and_when() {
+    let pool = db().await;
+    let (anna, bo) = (Uuid::new_v4(), Uuid::new_v4());
+    user(&pool, anna, "anna@example.se", "Anna Lind").await;
+    user(&pool, bo, "bo@example.se", "Bo Ek").await;
+    let id = company(&pool, anna).await;
+    doris_company::add_member(&pool, id, anna, bo)
+        .await
+        .unwrap();
+    let today = d(TODAY);
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+    record_voucher(&pool, id, bo, sale("2025-03-02", 200), today)
+        .await
+        .unwrap();
+
+    let listed = list_vouchers(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+
+    let recorded: Vec<_> = listed.iter().map(|v| v.recorded.clone().unwrap()).collect();
+    assert_eq!(recorded[0].by, "Anna Lind");
+    assert_eq!(recorded[1].by, "Bo Ek");
+    // The event's own timestamp, as the projection stores it.
+    let stored: Vec<String> =
+        table(&pool, "SELECT recorded_at FROM vouchers ORDER BY number").await;
+    assert_eq!(vec![recorded[0].at.clone(), recorded[1].at.clone()], stored);
+    assert!(recorded[0].at.ends_with('Z') && recorded[0].at.contains('T'));
+}
+
+#[tokio::test]
+async fn a_voucher_whose_recorder_is_unknown_is_still_listed() {
+    let pool = db().await;
+    // No row in `users` for anna: the store tests' usual setup.
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), d(TODAY))
+        .await
+        .unwrap();
+
+    let listed = list_vouchers(&pool, id, anna, d("2025-01-01"))
+        .await
+        .unwrap();
+
+    assert_eq!(listed.len(), 1);
+    let recorded = listed[0].recorded.clone().unwrap();
+    assert_eq!(recorded.by, "");
+    assert!(!recorded.at.is_empty());
+}

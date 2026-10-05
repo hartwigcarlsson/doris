@@ -197,8 +197,17 @@ async fn a_member_keeps_the_chart_and_books_and_corrects_vouchers() {
             corrects: 0,
             corrected_by: 2,
             attachments: vec![],
+            recorded_at: vouchers[0].recorded_at.clone(),
+            recorded_by_name: "Anna".into(),
         }
     );
+    // RFC 3339 in UTC, and nothing of the email.
+    assert!(
+        vouchers[0].recorded_at.ends_with('Z'),
+        "{}",
+        vouchers[0].recorded_at
+    );
+    assert!(!format!("{:?}", vouchers[0]).contains('@'));
     assert_eq!(
         (vouchers[1].corrects, vouchers[1].text.as_str()),
         (1, "Rättelse av ver 1")
