@@ -4,8 +4,8 @@
 // Used by the overview page from the next commits on.
 #![allow(dead_code)]
 
-use crate::api::lpb;
-use crate::format::day_number;
+use crate::api::{ipb, lpb, ppb};
+use crate::format::{amount, day_number, plus_days};
 
 /// The year's key figures, in öre. A profit is a positive `result`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -200,9 +200,216 @@ pub fn month_label(month: &str) -> &'static str {
     year_month(month).map_or("", |(_, m)| NAMES[m as usize - 1])
 }
 
+/// One line under "Att göra".
+#[derive(Clone, Debug, PartialEq)]
+pub struct Todo {
+    /// Past its date: drawn with the destructive icon.
+    pub urgent: bool,
+    pub title: String,
+    pub detail: String,
+    pub action: &'static str,
+    pub href: String,
+}
+
+/// What the to-do rules read.
+pub struct TodoInput<'a> {
+    pub supplier_invoices: &'a [ipb::SupplierInvoice],
+    pub customer_invoices: &'a [ipb::CustomerInvoice],
+    pub payroll_runs: &'a [ppb::PayrollRun],
+    pub agi_months: &'a [ppb::AgiMonthSummary],
+}
+
+/// "1 faktura" or "2 fakturor".
+fn counted(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+/// An unpaid invoice as the rules see it: who, when it is due, how much.
+struct Due<'a> {
+    name: &'a str,
+    date: &'a str,
+    total: i64,
+}
+
+fn unpaid<'a>(status: &str, name: &'a str, date: &'a str, total: i64) -> Option<Due<'a>> {
+    (status == "unpaid").then_some(Due { name, date, total })
+}
+
+/// "N … har förfallit": invoices due before `today`.
+fn overdue(due: &[Due], today: &str, one: &str, many: &str, href: &str) -> Option<Todo> {
+    let late: Vec<&Due> = due.iter().filter(|d| d.date < today).collect();
+    let oldest = late.iter().min_by_key(|d| d.date)?;
+    Some(Todo {
+        urgent: true,
+        title: format!("{} har förfallit", counted(late.len(), one, many)),
+        detail: format!(
+            "{} kr · äldst {}, förföll {}",
+            amount(late.iter().map(|d| d.total).sum()),
+            oldest.name,
+            oldest.date
+        ),
+        action: "Visa fakturorna",
+        href: href.to_owned(),
+    })
+}
+
+/// The lines under "Att göra", most pressing first. Each rule gives at
+/// most one line. Dates are `YYYY-MM-DD` and compare as strings.
+pub fn todo_list(input: &TodoInput, today: &str) -> Vec<Todo> {
+    let mut list = Vec::new();
+
+    let suppliers: Vec<Due> = input
+        .supplier_invoices
+        .iter()
+        .filter_map(|i| unpaid(&i.status, &i.supplier_name, &i.due_date, i.total))
+        .collect();
+    list.extend(overdue(
+        &suppliers,
+        today,
+        "leverantörsfaktura",
+        "leverantörsfakturor",
+        "/supplier-invoices",
+    ));
+    if let Some(last) = plus_days(today, 30) {
+        let soon: Vec<&Due> = suppliers
+            .iter()
+            .filter(|d| today <= d.date && d.date <= last.as_str())
+            .collect();
+        if let Some(next) = soon.iter().min_by_key(|d| d.date) {
+            list.push(Todo {
+                urgent: false,
+                title: format!(
+                    "{} förfaller inom 30 dagar",
+                    counted(soon.len(), "leverantörsfaktura", "leverantörsfakturor")
+                ),
+                detail: format!(
+                    "{} kr · nästa {}, {}",
+                    amount(soon.iter().map(|d| d.total).sum()),
+                    next.date,
+                    next.name
+                ),
+                action: "Visa fakturorna",
+                href: "/supplier-invoices".into(),
+            });
+        }
+    }
+
+    let customers: Vec<Due> = input
+        .customer_invoices
+        .iter()
+        .filter_map(|i| unpaid(&i.status, &i.customer_name, &i.due_date, i.total))
+        .collect();
+    list.extend(overdue(
+        &customers,
+        today,
+        "kundfaktura",
+        "kundfakturor",
+        "/customer-invoices",
+    ));
+
+    let named = |prefix: &str, run: &ppb::PayrollRun| {
+        if run.text.is_empty() {
+            format!("Utbetalning {}", run.pay_date)
+        } else {
+            format!("{prefix} {}, utbetalning {}", run.text, run.pay_date)
+        }
+    };
+    let to_book: Vec<&ppb::PayrollRun> = input
+        .payroll_runs
+        .iter()
+        .filter(|r| r.status() == ppb::PayrollRunStatus::Finalized && r.pay_date.as_str() <= today)
+        .collect();
+    if let Some(oldest) = to_book.iter().min_by_key(|r| r.pay_date.as_str()) {
+        list.push(Todo {
+            urgent: false,
+            title: format!(
+                "{} kan bokföras",
+                counted(to_book.len(), "lönekörning", "lönekörningar")
+            ),
+            detail: named("Äldst", oldest),
+            action: "Öppna körningen",
+            href: format!("/payroll-runs/{}", oldest.id),
+        });
+    }
+    let open: Vec<&ppb::PayrollRun> = input
+        .payroll_runs
+        .iter()
+        .filter(|r| r.status() == ppb::PayrollRunStatus::Open)
+        .collect();
+    if let Some(nearest) = open.iter().min_by_key(|r| r.pay_date.as_str()) {
+        list.push(Todo {
+            urgent: false,
+            title: format!(
+                "{} är inte {}",
+                counted(open.len(), "lönekörning", "lönekörningar"),
+                if open.len() == 1 {
+                    "färdigställd"
+                } else {
+                    "färdigställda"
+                }
+            ),
+            detail: named("Närmast", nearest),
+            action: "Öppna körningen",
+            href: format!("/payroll-runs/{}", nearest.id),
+        });
+    }
+
+    // A month is declared once it has ended: the period ("YYYYMM") is
+    // before today's.
+    let this_month: String = today.chars().filter(char::is_ascii_digit).take(6).collect();
+    let mut periods: Vec<&str> = input
+        .agi_months
+        .iter()
+        .filter(|m| {
+            matches!(
+                m.status(),
+                ppb::AgiStatus::NotSubmitted | ppb::AgiStatus::Changed
+            )
+        })
+        .map(|m| m.period.as_str())
+        .filter(|p| *p < this_month.as_str())
+        .collect();
+    periods.sort_unstable();
+    if !periods.is_empty() {
+        let shown: Vec<String> = periods
+            .iter()
+            .take(3)
+            .map(|p| match (p.get(..4), p.get(4..6)) {
+                (Some(year), Some(month)) => format!("{year}-{month}"),
+                _ => (*p).to_owned(),
+            })
+            .collect();
+        let more = periods.len() - shown.len();
+        list.push(Todo {
+            urgent: false,
+            title: format!(
+                "Arbetsgivardeklarationen för {} är inte inlämnad",
+                counted(periods.len(), "månad", "månader")
+            ),
+            detail: if more == 0 {
+                shown.join(", ")
+            } else {
+                format!("{} och {more} till", shown.join(", "))
+            },
+            action: "Visa deklarationerna",
+            href: "/agi".into(),
+        });
+    }
+
+    list
+}
+
+/// The unpaid supplier invoices, earliest due first.
+pub fn unpaid_supplier_invoices(invoices: &[ipb::SupplierInvoice]) -> Vec<&ipb::SupplierInvoice> {
+    let mut unpaid: Vec<_> = invoices.iter().filter(|i| i.status == "unpaid").collect();
+    unpaid.sort_by(|a, b| a.due_date.cmp(&b.due_date));
+    unpaid
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::{ipb, ppb};
 
     fn row(account: u32, opening: i64, debit: i64, credit: i64) -> lpb::TrialBalanceRow {
         lpb::TrialBalanceRow {
@@ -498,5 +705,285 @@ mod tests {
         assert_eq!(month_label("2026-10"), "okt");
         assert_eq!(month_label("2026-13"), "");
         assert_eq!(month_label(""), "");
+    }
+
+    const TODAY: &str = "2026-10-04";
+
+    fn supplier(name: &str, due: &str, total: i64, status: &str) -> ipb::SupplierInvoice {
+        ipb::SupplierInvoice {
+            supplier_name: name.into(),
+            due_date: due.into(),
+            total,
+            status: status.into(),
+            ..Default::default()
+        }
+    }
+
+    fn customer(name: &str, due: &str, total: i64, status: &str) -> ipb::CustomerInvoice {
+        ipb::CustomerInvoice {
+            customer_name: name.into(),
+            due_date: due.into(),
+            total,
+            status: status.into(),
+            ..Default::default()
+        }
+    }
+
+    fn run(id: &str, text: &str, pay_date: &str, status: ppb::PayrollRunStatus) -> ppb::PayrollRun {
+        ppb::PayrollRun {
+            id: id.into(),
+            text: text.into(),
+            pay_date: pay_date.into(),
+            status: status as i32,
+            ..Default::default()
+        }
+    }
+
+    fn agi(period: &str, status: ppb::AgiStatus) -> ppb::AgiMonthSummary {
+        ppb::AgiMonthSummary {
+            period: period.into(),
+            status: status as i32,
+            ..Default::default()
+        }
+    }
+
+    fn todos(input: TodoInput) -> Vec<Todo> {
+        todo_list(&input, TODAY)
+    }
+
+    fn empty<'a>() -> TodoInput<'a> {
+        TodoInput {
+            supplier_invoices: &[],
+            customer_invoices: &[],
+            payroll_runs: &[],
+            agi_months: &[],
+        }
+    }
+
+    #[test]
+    fn nothing_to_do_is_an_empty_list() {
+        assert!(todos(empty()).is_empty());
+    }
+
+    #[test]
+    fn overdue_supplier_invoices_are_counted_summed_and_urgent() {
+        let invoices = [
+            supplier("Kontorshuset AB", "2026-09-30", 12_500_00, "unpaid"),
+            supplier("Telebolaget AB", "2026-10-03", 1_495_00, "unpaid"),
+            supplier("Due today AB", "2026-10-04", 9_00, "unpaid"),
+            supplier("Paid AB", "2026-09-01", 7_00, "paid"),
+            supplier("Cancelled AB", "2026-09-01", 5_00, "cancelled"),
+        ];
+        let list = todos(TodoInput {
+            supplier_invoices: &invoices,
+            ..empty()
+        });
+        assert_eq!(
+            list[0],
+            Todo {
+                urgent: true,
+                title: "2 leverantörsfakturor har förfallit".into(),
+                detail: "13\u{a0}995,00 kr · äldst Kontorshuset AB, förföll 2026-09-30".into(),
+                action: "Visa fakturorna",
+                href: "/supplier-invoices".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn supplier_invoices_due_within_thirty_days_are_listed_after_the_overdue() {
+        let invoices = [
+            supplier("Today AB", "2026-10-04", 100_00, "unpaid"),
+            supplier("Day thirty AB", "2026-11-03", 200_00, "unpaid"),
+            supplier("Day thirty-one AB", "2026-11-04", 400_00, "unpaid"),
+            supplier("Overdue AB", "2026-10-03", 800_00, "unpaid"),
+        ];
+        let list = todos(TodoInput {
+            supplier_invoices: &invoices,
+            ..empty()
+        });
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].title, "1 leverantörsfaktura har förfallit");
+        assert_eq!(
+            list[1].title,
+            "2 leverantörsfakturor förfaller inom 30 dagar"
+        );
+        assert_eq!(list[1].detail, "300,00 kr · nästa 2026-10-04, Today AB");
+        assert!(!list[1].urgent);
+    }
+
+    #[test]
+    fn overdue_customer_invoices_are_urgent_too() {
+        let invoices = [
+            customer("Kund AB", "2026-09-15", 62_500_00, "unpaid"),
+            customer("Betald AB", "2026-09-15", 1_00, "paid"),
+            customer("Ej förfallen AB", "2026-10-04", 1_00, "unpaid"),
+        ];
+        let list = todos(TodoInput {
+            customer_invoices: &invoices,
+            ..empty()
+        });
+        assert_eq!(
+            list,
+            [Todo {
+                urgent: true,
+                title: "1 kundfaktura har förfallit".into(),
+                detail: "62\u{a0}500,00 kr · äldst Kund AB, förföll 2026-09-15".into(),
+                action: "Visa fakturorna",
+                href: "/customer-invoices".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn payroll_runs_to_book_come_before_open_ones() {
+        use ppb::PayrollRunStatus::*;
+        let runs = [
+            run("r1", "Lön oktober 2026", "2026-10-23", Open),
+            run("r2", "Lön september 2026", "2026-09-25", Finalized),
+            run("r3", "Lön augusti 2026", "2026-08-25", Finalized),
+            run("r4", "Lön november 2026", "2026-11-25", Finalized),
+            run("r5", "Lön juli 2026", "2026-07-24", Booked),
+            run("r6", "Extra", "2026-10-10", Open),
+        ];
+        let list = todos(TodoInput {
+            payroll_runs: &runs,
+            ..empty()
+        });
+        assert_eq!(
+            list,
+            [
+                Todo {
+                    urgent: false,
+                    title: "2 lönekörningar kan bokföras".into(),
+                    detail: "Äldst Lön augusti 2026, utbetalning 2026-08-25".into(),
+                    action: "Öppna körningen",
+                    href: "/payroll-runs/r3".into(),
+                },
+                Todo {
+                    urgent: false,
+                    title: "2 lönekörningar är inte färdigställda".into(),
+                    detail: "Närmast Extra, utbetalning 2026-10-10".into(),
+                    action: "Öppna körningen",
+                    href: "/payroll-runs/r6".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_single_payroll_run_reads_in_the_singular() {
+        use ppb::PayrollRunStatus::*;
+        let runs = [
+            run("r1", "Lön oktober 2026", "2026-10-04", Finalized),
+            run("r2", "", "2026-10-23", Open),
+        ];
+        let list = todos(TodoInput {
+            payroll_runs: &runs,
+            ..empty()
+        });
+        assert_eq!(list[0].title, "1 lönekörning kan bokföras");
+        assert_eq!(list[1].title, "1 lönekörning är inte färdigställd");
+        // A run without a text is named by its pay date alone.
+        assert_eq!(list[1].detail, "Utbetalning 2026-10-23");
+    }
+
+    #[test]
+    fn agi_months_that_have_ended_and_are_not_submitted_are_listed() {
+        use ppb::AgiStatus::*;
+        let months = [
+            agi("202610", NotSubmitted),
+            agi("202609", NotSubmitted),
+            agi("202608", Changed),
+            agi("202607", Submitted),
+        ];
+        let list = todos(TodoInput {
+            agi_months: &months,
+            ..empty()
+        });
+        assert_eq!(
+            list,
+            [Todo {
+                urgent: false,
+                title: "Arbetsgivardeklarationen för 2 månader är inte inlämnad".into(),
+                detail: "2026-08, 2026-09".into(),
+                action: "Visa deklarationerna",
+                href: "/agi".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn many_agi_months_are_cut_after_three() {
+        use ppb::AgiStatus::NotSubmitted;
+        let months: Vec<_> = ["202609", "202608", "202607", "202606", "202605"]
+            .into_iter()
+            .map(|p| agi(p, NotSubmitted))
+            .collect();
+        let list = todos(TodoInput {
+            agi_months: &months,
+            ..empty()
+        });
+        assert_eq!(
+            list[0].title,
+            "Arbetsgivardeklarationen för 5 månader är inte inlämnad"
+        );
+        assert_eq!(list[0].detail, "2026-05, 2026-06, 2026-07 och 2 till");
+        let one = [agi("202609", NotSubmitted)];
+        assert_eq!(
+            todos(TodoInput {
+                agi_months: &one,
+                ..empty()
+            })[0]
+                .title,
+            "Arbetsgivardeklarationen för 1 månad är inte inlämnad"
+        );
+    }
+
+    #[test]
+    fn the_rules_come_in_a_fixed_order() {
+        use ppb::{AgiStatus, PayrollRunStatus};
+        let suppliers = [
+            supplier("A", "2026-09-01", 1_00, "unpaid"),
+            supplier("B", "2026-10-20", 1_00, "unpaid"),
+        ];
+        let customers = [customer("C", "2026-09-01", 1_00, "unpaid")];
+        let runs = [
+            run("r1", "x", "2026-10-23", PayrollRunStatus::Open),
+            run("r2", "y", "2026-09-25", PayrollRunStatus::Finalized),
+        ];
+        let months = [agi("202609", AgiStatus::NotSubmitted)];
+        let list = todos(TodoInput {
+            supplier_invoices: &suppliers,
+            customer_invoices: &customers,
+            payroll_runs: &runs,
+            agi_months: &months,
+        });
+        let hrefs: Vec<_> = list.iter().map(|t| t.href.as_str()).collect();
+        assert_eq!(
+            hrefs,
+            [
+                "/supplier-invoices",
+                "/supplier-invoices",
+                "/customer-invoices",
+                "/payroll-runs/r2",
+                "/payroll-runs/r1",
+                "/agi"
+            ]
+        );
+    }
+
+    #[test]
+    fn unpaid_supplier_invoices_come_earliest_due_first() {
+        let invoices = [
+            supplier("Late", "2026-10-28", 1_00, "unpaid"),
+            supplier("Paid", "2026-09-01", 1_00, "paid"),
+            supplier("Early", "2026-09-30", 1_00, "unpaid"),
+        ];
+        let names: Vec<_> = unpaid_supplier_invoices(&invoices)
+            .iter()
+            .map(|i| i.supplier_name.as_str())
+            .collect();
+        assert_eq!(names, ["Early", "Late"]);
     }
 }
