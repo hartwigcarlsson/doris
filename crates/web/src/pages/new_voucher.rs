@@ -5,11 +5,11 @@ use crate::api::{ledger_api, lpb};
 use crate::attachments::{check_sizes, read_files, size_label};
 use crate::errors::{describe, describe_code};
 use crate::format::today;
+use crate::task::spawn_local;
 use crate::ui::{Button, ErrorAlert, Field, FileInput, PageHeader, Panel, Variant};
 use crate::voucher_lines::{LineRows, Lines};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 
 #[component]
 pub fn NewVoucher() -> impl IntoView {

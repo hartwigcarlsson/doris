@@ -8,12 +8,12 @@ use crate::fiscal_year::{
     FiscalYearSelect, is_closed, keep_year_in_url, opening_balances_preliminary, use_fiscal_years,
 };
 use crate::format::amount;
+use crate::task::spawn_local;
 use crate::ui::{
     Badge, ErrorAlert, PageHeader, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
     TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
 };
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 use leptos_router::hooks::use_query_map;
 

@@ -6,6 +6,7 @@ use crate::api::{payroll_api, ppb};
 use crate::errors::{describe, describe_code};
 use crate::format::{amount, parse_amount};
 use crate::pages::payroll_runs::tax_setting_label;
+use crate::task::spawn_local;
 use crate::ui::{
     Badge, BadgeVariant, Button, Card, Checkbox, ErrorAlert, Field, PageHeader, SELECT_OPTION,
     Select, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW,
@@ -13,7 +14,6 @@ use crate::ui::{
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 
 /// The salary accounts an employee can have, in the order offered.
 pub const SALARY_ACCOUNTS: [(u32, &str); 3] = [

@@ -1,8 +1,8 @@
 use crate::api::{company_api, cpb};
 use crate::errors::describe;
+use crate::task::spawn_local;
 use crate::ui::{ErrorAlert, IconName, LinkButton, PageHeader, Panel};
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 
 #[component]

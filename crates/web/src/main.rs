@@ -12,6 +12,7 @@ mod nav;
 mod overview;
 mod pages;
 mod passkey;
+mod task;
 mod ui;
 mod voucher_lines;
 mod voucher_search;

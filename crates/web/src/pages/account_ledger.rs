@@ -6,12 +6,12 @@ use crate::api::{ledger_api, lpb};
 use crate::errors::describe;
 use crate::fiscal_year::{FiscalYearSelect, keep_year_in_url, use_fiscal_years};
 use crate::format::amount;
+use crate::task::spawn_local;
 use crate::ui::{
     ErrorAlert, PageHeader, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
     TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
 };
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 use leptos_router::hooks::{use_params_map, use_query_map};
 

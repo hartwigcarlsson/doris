@@ -363,8 +363,7 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   "Att göra" rules. Each call is its own task, so a slow one holds nothing
   back. A card whose call failed shows the error and the others still show;
   if the years cannot be listed, every card that needs a year shows that
-  error. After an `await`, read the page's own signals with `try_get…`:
-  the user may have left, and a disposed signal panics on `get`. The monthly sums read every voucher of the year: when that
+  error. The monthly sums read every voucher of the year: when that
   gets heavy, add a `GetMonthlyTotals` to the ledger.
 - Verifikationer lists the year's vouchers newest first, fifty at a time.
   The search field and the "Saknar underlag"/"Rättelser" boxes filter in
@@ -373,6 +372,16 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   of the text or of an account's name. A search that is one amount with
   spaces in it ("1 250,00", as the page shows it) matches that amount.
   A row's time is shown with the UTC offset that applied then, not today's.
+- A page starts its tasks with `crate::task::spawn_local` (`src/task.rs`),
+  never `leptos::task::spawn_local`: the answer may come after the user
+  has left, the page's signals are disposed by then, and reading one
+  panics, which aborts the release wasm. A page task is dropped at its
+  next `await` once the path has changed (the request is already sent, and
+  the server finishes it). Only what outlives a page (the session, the
+  company list, the header, login and registration) uses Leptos' own.
+  `e2e/tests/leaving.spec.ts` leaves every page while it loads and a few
+  actions mid-flight; tests in `app.rs` fail if a page is missing from it
+  or starts a task the other way.
 - A view is a `grid gap-6` that starts with `PageHeader` (the page's one
   `<h1>`, actions to the right). Tables sit in `TableCard`, statuses are
   `Badge`s and "Ny …" actions are `LinkButton`s. A one-column form is a

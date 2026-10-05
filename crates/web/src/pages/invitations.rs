@@ -1,10 +1,10 @@
 use crate::api::{api, pb};
 use crate::errors::describe;
 use crate::format::date;
+use crate::task::spawn_local;
 use crate::ui::{Button, Card, ErrorAlert, Field, PageHeader};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 
 #[component]
 pub fn Invitations() -> impl IntoView {

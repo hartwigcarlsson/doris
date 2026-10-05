@@ -9,6 +9,7 @@ use crate::pages::{
     NewSupplierInvoice, NewVoucher, OpeningBalances, Passkeys, PayrollRunPage, PayrollRuns,
     Register, SupplierInvoices, Suppliers, TrialBalance, Vouchers,
 };
+use crate::task::PageTasks;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::{Redirect, Route, Router, Routes};
@@ -67,6 +68,7 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Router>
+            <PageTasks />
             <Header />
             <main class="mx-auto w-full max-w-6xl px-4 py-10">
                 <Show when=move || session.loaded.get() fallback=|| view! { <p class="text-muted-foreground">"Laddar…"</p> }>
@@ -132,6 +134,7 @@ mod tests {
     const APP: &str = include_str!("app.rs");
     const NAV: &str = include_str!("nav.rs");
     const DESIGN_SPEC: &str = include_str!("../../../e2e/tests/design.spec.ts");
+    const LEAVING_SPEC: &str = include_str!("../../../e2e/tests/leaving.spec.ts");
 
     /// Pages without the signed-in shell.
     const SIGNED_OUT: [&str; 2] = ["/register", "/login"];
@@ -149,10 +152,10 @@ mod tests {
             .collect()
     }
 
-    /// The paths the e2e test "every signed-in view has one h1…" visits.
-    fn design_paths(spec: &str) -> Vec<&str> {
+    /// The paths in the list that `spec` opens with `declaration`.
+    fn listed<'a>(spec: &'a str, declaration: &str) -> Vec<&'a str> {
         let list = spec
-            .split("const paths = [")
+            .split(declaration)
             .nth(1)
             .and_then(|rest| rest.split("];").next())
             .unwrap_or_default();
@@ -196,14 +199,17 @@ mod tests {
             ["/x", "/y/:id"]
         );
         assert_eq!(
-            design_paths("const paths = [\n \"/\", \"/a\",\n \"/b\",\n];"),
+            listed(
+                "const paths = [\n \"/\", \"/a\",\n \"/b\",\n];",
+                "const paths = ["
+            ),
             ["/", "/a", "/b"]
         );
     }
 
     #[test]
     fn every_signed_in_route_is_in_the_design_test() {
-        let (routes, visited) = (routes(APP), design_paths(DESIGN_SPEC));
+        let (routes, visited) = (routes(APP), listed(DESIGN_SPEC, "const paths = ["));
         assert!(
             routes.len() > 20 && visited.len() > 15,
             "the sources were not read"
@@ -213,6 +219,39 @@ mod tests {
             Vec::<&str>::new(),
             "add these to `paths` in e2e/tests/design.spec.ts, so the page's h1 and width are checked"
         );
+    }
+
+    #[test]
+    fn every_signed_in_route_is_left_while_it_loads_in_a_test() {
+        let (routes, visited) = (routes(APP), listed(LEAVING_SPEC, "const pages = ["));
+        assert!(visited.len() > 15, "the source was not read");
+        assert_eq!(
+            unvisited(&routes, &visited),
+            Vec::<&str>::new(),
+            "add these to `pages` in e2e/tests/leaving.spec.ts, so leaving them mid-load is tried"
+        );
+    }
+
+    #[test]
+    fn pages_start_their_tasks_as_page_tasks() {
+        // What outlives a page starts its own; a page's task must end with the page.
+        let app_level = ["login.rs", "register.rs"];
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<_> = std::fs::read_dir(src.join("pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| !app_level.iter().any(|name| path.ends_with(name)))
+            .collect();
+        files.extend([src.join("fiscal_year.rs"), src.join("invoice_ui.rs")]);
+        assert!(files.len() > 20, "the pages were not found");
+        for file in files {
+            let source = std::fs::read_to_string(&file).unwrap();
+            assert!(
+                !source.contains("leptos::task::spawn_local"),
+                "{}: use crate::task::spawn_local, so the task is dropped when the page is left",
+                file.display()
+            );
+        }
     }
 
     #[test]

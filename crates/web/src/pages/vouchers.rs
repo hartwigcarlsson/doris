@@ -6,6 +6,7 @@ use crate::attachments::{open_in, read_files, size_label};
 use crate::errors::{describe, describe_code};
 use crate::fiscal_year::is_closed;
 use crate::format::{amount, local_time, today};
+use crate::task::spawn_local;
 use crate::ui::{
     Badge, Button, Checkbox, ErrorAlert, FileInput, INPUT, Icon, IconName, LinkButton, PageHeader,
     SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table,
@@ -13,7 +14,6 @@ use crate::ui::{
 };
 use crate::voucher_search::{Filter, PAGE, shown, visible};
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 
 #[component]

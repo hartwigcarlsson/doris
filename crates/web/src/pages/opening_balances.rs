@@ -7,6 +7,7 @@ use crate::api::{ledger_api, lpb};
 use crate::errors::describe;
 use crate::fiscal_year::use_fiscal_years;
 use crate::format::amount;
+use crate::task::spawn_local;
 use crate::ui::{
     Button, ErrorAlert, PageHeader, Panel, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
     TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
@@ -14,7 +15,6 @@ use crate::ui::{
 use crate::voucher_lines::{LineRows, Lines};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 
 #[component]
 pub fn OpeningBalances() -> impl IntoView {

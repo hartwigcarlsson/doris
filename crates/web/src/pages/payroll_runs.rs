@@ -4,12 +4,12 @@ use crate::active_company::Companies;
 use crate::api::{lpb, payroll_api, ppb};
 use crate::errors::describe;
 use crate::format::{amount, today};
+use crate::task::spawn_local;
 use crate::ui::{
     Badge, BadgeVariant, ErrorAlert, IconName, LinkButton, PageHeader, TABLE_AMOUNT_CELL,
     TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
 };
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 
 /// The status as the user sees it on `today` (both `YYYY-MM-DD`).

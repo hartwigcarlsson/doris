@@ -8,12 +8,12 @@ use crate::attachments::{open_in, size_label};
 use crate::errors::{describe, describe_code};
 use crate::format::{amount, today};
 use crate::invoice_ui::{PayForm, ReasonForm, status_badge, status_label};
+use crate::task::spawn_local;
 use crate::ui::{
     Badge, Button, Checkbox, ErrorAlert, IconName, LinkButton, PageHeader, TABLE_BODY, TABLE_CELL,
     TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, Variant,
 };
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 
 #[component]

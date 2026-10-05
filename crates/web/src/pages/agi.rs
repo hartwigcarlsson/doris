@@ -8,13 +8,13 @@ use crate::app::Session;
 use crate::attachments::save_as;
 use crate::errors::describe;
 use crate::format::amount;
+use crate::task::spawn_local;
 use crate::ui::{
     Button, Card, ErrorAlert, Field, PageHeader, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL,
     TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, Variant,
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 
 const MONTHS: [&str; 12] = [
     "januari",

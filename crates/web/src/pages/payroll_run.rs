@@ -7,12 +7,12 @@ use crate::api::{payroll_api, ppb};
 use crate::errors::describe;
 use crate::format::{amount, parse_amount, today};
 use crate::pages::payroll_runs::{RunLines, status_label, tax_setting_label};
+use crate::task::spawn_local;
 use crate::ui::{
     Button, Checkbox, ErrorAlert, Field, PageHeader, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
     TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, TextInput, Variant,
 };
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map};
 

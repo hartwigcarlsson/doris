@@ -7,12 +7,12 @@ use crate::api::{invoicing_api, ipb, ledger_api, lpb};
 use crate::errors::describe;
 use crate::fiscal_year::{closable, reopenable, use_fiscal_years};
 use crate::format::today;
+use crate::task::spawn_local;
 use crate::ui::{
     Badge, BadgeVariant, Button, ErrorAlert, LinkButton, PageHeader, TABLE_BODY, TABLE_CELL,
     TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, TextInput, Variant,
 };
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 
 #[component]
 pub fn FiscalYears() -> impl IntoView {

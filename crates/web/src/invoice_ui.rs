@@ -6,10 +6,10 @@ use crate::api::{ipb, lpb};
 use crate::attachments::{read_files, size_label};
 use crate::errors::describe_code;
 use crate::format::parse_amount;
+use crate::task::spawn_local;
 use crate::ui::{BadgeVariant, Button, FileInput, SELECT, SELECT_OPTION, TextInput, Variant};
 use crate::voucher_lines::account_number;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use std::collections::BTreeMap;
 
 /// Obetald, Förfallen (unpaid past its due date), Betald or Makulerad.

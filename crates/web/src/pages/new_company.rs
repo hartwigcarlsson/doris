@@ -3,12 +3,12 @@ use crate::api::{company_api, cpb};
 use crate::errors::describe;
 use crate::fiscal_year::default_end;
 use crate::format::{LEGAL_FORMS, current_year, legal_form_label};
+use crate::task::spawn_local;
 use crate::ui::{
     Button, Card, Checkbox, ErrorAlert, Field, PageHeader, Radio, SELECT_OPTION, Select, Variant,
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::hooks::use_navigate;
 
 #[component]

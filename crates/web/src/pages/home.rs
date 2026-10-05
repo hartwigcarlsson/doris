@@ -11,12 +11,12 @@ use crate::overview::{
     KeyFigures, Todo, TodoInput, axis_in_thousands, axis_label, bar_height, by_month, default_year,
     key_figures, month_label, progress, scale, todo_list, unpaid_supplier_invoices, whole_kronor,
 };
+use crate::task::spawn_local;
 use crate::ui::{
     Badge, BadgeVariant, Card, Icon, IconName, LinkButton, PageHeader, Panel, TABLE_AMOUNT_CELL,
     TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, Variant,
 };
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 use leptos_router::hooks::use_query_map;
 
