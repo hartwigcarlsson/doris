@@ -7,12 +7,12 @@ use crate::errors::{describe, describe_code};
 use crate::fiscal_year::is_closed;
 use crate::format::{amount, today};
 use crate::ui::{
-    Button, ErrorAlert, FileInput, Icon, IconName, SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL,
-    TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TextInput, Variant,
+    Badge, Button, ErrorAlert, FileInput, Icon, IconName, LinkButton, PageHeader, SELECT_OPTION,
+    Select, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
+    TextInput, Variant,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 
 #[component]
 pub fn Vouchers() -> impl IntoView {
@@ -108,15 +108,13 @@ pub fn Vouchers() -> impl IntoView {
     let changed = Callback::new(move |()| load());
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <div class="flex items-end justify-between gap-4">
-                <h1 class="text-sm font-medium">"Verifikationer"</h1>
-                <A href="/vouchers/new" attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline">"Ny verifikation"</A>
-            </div>
-            <ErrorAlert message=error />
-            <div class="flex items-end gap-4">
+        <div class="grid gap-6">
+            <PageHeader title="Verifikationer">
+                <Show when=move || years.with(|ys| is_closed(ys, &year.get()))>
+                    <Badge>"Stängt"</Badge>
+                </Show>
                 <div class="w-56">
-                    <Select label="Räkenskapsår" id="fiscal_year" value=year>
+                    <Select label="Räkenskapsår" id="fiscal_year" hide_label=true value=year>
                         {move || {
                             years
                                 .get()
@@ -126,10 +124,10 @@ pub fn Vouchers() -> impl IntoView {
                         }}
                     </Select>
                 </div>
-                <Show when=move || years.with(|ys| is_closed(ys, &year.get()))>
-                    <span class="pb-2 text-xs/relaxed text-muted-foreground">"Stängt"</span>
-                </Show>
-            </div>
+                <LinkButton href="/vouchers/new" icon=IconName::Plus>"Ny verifikation"</LinkButton>
+            </PageHeader>
+            <ErrorAlert message=error />
+            <TableCard>
             <Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
@@ -159,6 +157,7 @@ pub fn Vouchers() -> impl IntoView {
                     </For>
                 </tbody>
             </Table>
+            </TableCard>
         </div>
     }
 }
@@ -313,14 +312,20 @@ fn VoucherRow(
     view! {
         <tr class=TABLE_ROW>
             <td class=TABLE_CELL>
-                <button type="button" aria-expanded=move || expanded.get().to_string() on:click=move |_| expanded.update(|e| *e = !*e)>
+                <button
+                    type="button"
+                    class="inline-flex h-7 items-center gap-1 rounded-md pr-1.5 font-medium tabular-nums hover:bg-muted"
+                    aria-expanded=move || expanded.get().to_string()
+                    on:click=move |_| expanded.update(|e| *e = !*e)
+                >
+                    {move || view! { <Icon name=if expanded.get() { IconName::ChevronDown } else { IconName::ChevronRight } class="size-3.5 text-muted-foreground" /> }}
                     {number}
                 </button>
             </td>
             <td class=TABLE_CELL>{voucher.date.clone()}</td>
             <td class=TABLE_CELL>{voucher.text.clone()}</td>
             <td class=format!("{TABLE_CELL} text-right tabular-nums")>{amount(total)}</td>
-            <td class=TABLE_CELL>{status}</td>
+            <td class=TABLE_CELL>{(!status.is_empty()).then(|| view! { <Badge>{status}</Badge> })}</td>
             <td class=TABLE_CELL>
                 {move || {
                     let count = attachments.with(Vec::len);
@@ -347,28 +352,38 @@ fn VoucherRow(
             </td>
         </tr>
         <Show when=move || expanded.get()>
-            <tr class=TABLE_ROW>
+            <tr class=format!("{TABLE_ROW} bg-muted/50")>
                 <td class=TABLE_CELL></td>
                 <td class=TABLE_CELL colspan="6">
-                    <ul class="grid gap-1">
-                        {lines
-                            .iter()
-                            .map(|l| {
-                                let name = names.with(|n| n.iter().find(|a| a.number == l.account).map(|a| a.name.clone()).unwrap_or_default());
-                                let side = if l.debit > 0 {
-                                    format!("Debet {}", amount(l.debit))
-                                } else {
-                                    format!("Kredit {}", amount(l.credit))
-                                };
-                                view! {
-                                    <li class="flex justify-between gap-4">
-                                        <span>{format!("{} {}", l.account, name)}</span>
-                                        <span class="tabular-nums">{side}</span>
-                                    </li>
-                                }
-                            })
-                            .collect_view()}
-                    </ul>
+                    <table class="w-full max-w-xl text-xs">
+                        <thead>
+                            <tr class="border-b text-muted-foreground">
+                                <th class="py-1 pr-2 text-left font-normal">"Konto"</th>
+                                <th class="px-2 py-1 text-right font-normal">"Debet"</th>
+                                <th class="py-1 pl-2 text-right font-normal">"Kredit"</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {lines
+                                .iter()
+                                .map(|l| {
+                                    let name = names.with(|n| n.iter().find(|a| a.number == l.account).map(|a| a.name.clone()).unwrap_or_default());
+                                    view! {
+                                        <tr class="border-b">
+                                            <td class="py-1.5 pr-2">{format!("{} {}", l.account, name)}</td>
+                                            <td class="px-2 py-1.5 text-right tabular-nums">{(l.debit > 0).then(|| amount(l.debit))}</td>
+                                            <td class="py-1.5 pl-2 text-right tabular-nums">{(l.credit > 0).then(|| amount(l.credit))}</td>
+                                        </tr>
+                                    }
+                                })
+                                .collect_view()}
+                            <tr class="font-medium">
+                                <td class="py-1.5 pr-2">"Summa"</td>
+                                <td class="px-2 py-1.5 text-right tabular-nums">{amount(total)}</td>
+                                <td class="py-1.5 pl-2 text-right tabular-nums">{amount(total)}</td>
+                            </tr>
+                        </tbody>
+                    </table>
                     <div class="mt-3 grid gap-2">
                         <h2 class="text-xs/relaxed font-medium">"Underlag"</h2>
                         <ul class="grid gap-1">

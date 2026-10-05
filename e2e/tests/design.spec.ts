@@ -121,3 +121,19 @@ test("the menu panel follows the colour scheme", async ({ page, app }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   expect(await background()).not.toBe(light);
 });
+
+test("Verifikationer follows the design", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await goTo(page, "Verifikationer");
+  const main = page.getByRole("main");
+  await expect(main.getByRole("heading", { level: 1, name: "Verifikationer" })).toBeVisible();
+  // The action is a button-shaped link with the primary colour, not a text link.
+  const add = main.getByRole("link", { name: "Ny verifikation" });
+  expect((await add.boundingBox())!.height).toBe(28);
+  expect(await add.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+  // The table sits in a card.
+  await expect(main.locator("section").filter({ has: page.getByRole("table") })).toHaveCount(1);
+  await add.click();
+  await expect(main.getByRole("heading", { level: 1, name: "Ny verifikation" })).toBeVisible();
+});
