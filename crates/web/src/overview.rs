@@ -92,6 +92,114 @@ pub fn default_year(years: &[lpb::FiscalYear], preferred: &str, today: &str) -> 
         .unwrap_or_default()
 }
 
+/// One month's income and costs, in öre.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Month {
+    /// `YYYY-MM`.
+    pub month: String,
+    pub income: i64,
+    pub costs: i64,
+}
+
+/// `(year, month)` of a `YYYY-MM…` string.
+fn year_month(date: &str) -> Option<(i32, u32)> {
+    let year = date.get(..4)?.parse().ok()?;
+    let month = date.get(5..7)?.parse().ok()?;
+    (date.as_bytes().get(4) == Some(&b'-') && (1..=12).contains(&month)).then_some((year, month))
+}
+
+/// Income and costs for every month from `start` to `end`, in order, also
+/// the empty ones. A correction is a voucher like any other, so it cancels
+/// what it corrects. Vouchers outside the months are left out.
+// ponytail: sums every voucher line in the browser; fine for a few
+// thousand vouchers. When ListVouchers gets heavy, add GetMonthlyTotals
+// to the ledger and read it here.
+pub fn by_month(start: &str, end: &str, vouchers: &[lpb::Voucher]) -> Vec<Month> {
+    let (Some((first_year, first_month)), Some((last_year, last_month))) =
+        (year_month(start), year_month(end))
+    else {
+        return Vec::new();
+    };
+    let count = (last_year - first_year) * 12 + last_month as i32 - first_month as i32 + 1;
+    let mut months: Vec<Month> = (0..count.max(0))
+        .map(|i| {
+            let index = first_month as i32 - 1 + i;
+            Month {
+                month: format!("{:04}-{:02}", first_year + index / 12, index % 12 + 1),
+                income: 0,
+                costs: 0,
+            }
+        })
+        .collect();
+    for voucher in vouchers {
+        let Some(month) = voucher
+            .date
+            .get(..7)
+            .and_then(|key| months.iter_mut().find(|m| m.month == key))
+        else {
+            continue;
+        };
+        for line in &voucher.lines {
+            let movement = line.debit - line.credit;
+            match line.account {
+                3000..=3999 => month.income -= movement,
+                4000..=8989 => month.costs += movement,
+                _ => {}
+            }
+        }
+    }
+    months
+}
+
+/// The chart's axis maximum: the smallest of 1, 2, 2.5 or 5 times a power
+/// of ten that holds the largest value. 0 when there is nothing to draw.
+pub fn scale(months: &[Month]) -> i64 {
+    let largest = months
+        .iter()
+        .flat_map(|m| [m.income, m.costs])
+        .max()
+        .unwrap_or(0);
+    if largest <= 0 {
+        return 0;
+    }
+    if largest < 10 {
+        return largest;
+    }
+    let mut power: i64 = 1;
+    loop {
+        for step in [10, 20, 25, 50] {
+            let Some(candidate) = power.checked_mul(step) else {
+                return largest;
+            };
+            if candidate >= largest {
+                return candidate;
+            }
+        }
+        let Some(next) = power.checked_mul(10) else {
+            return largest;
+        };
+        power = next;
+    }
+}
+
+/// A bar's height in pixels out of `full`; at least 1 for any positive
+/// value, 0 for none or a negative one.
+pub fn bar_height(value: i64, scale: i64, full: u32) -> u32 {
+    if value <= 0 || scale <= 0 {
+        return 0;
+    }
+    let height = (i128::from(value) * i128::from(full) / i128::from(scale)) as u32;
+    height.clamp(1, full)
+}
+
+/// "2026-10" → "okt"; "" for anything else.
+pub fn month_label(month: &str) -> &'static str {
+    const NAMES: [&str; 12] = [
+        "jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec",
+    ];
+    year_month(month).map_or("", |(_, m)| NAMES[m as usize - 1])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,5 +374,129 @@ mod tests {
         );
         assert_eq!(default_year(&years, "", "2030-01-01"), "2027-01-01");
         assert_eq!(default_year(&[], "", "2026-10-04"), "");
+    }
+
+    fn voucher(date: &str, lines: &[(u32, i64, i64)]) -> lpb::Voucher {
+        lpb::Voucher {
+            date: date.into(),
+            lines: lines
+                .iter()
+                .map(|&(account, debit, credit)| lpb::VoucherLine {
+                    account,
+                    debit,
+                    credit,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn month(month: &str, income: i64, costs: i64) -> Month {
+        Month {
+            month: month.into(),
+            income,
+            costs,
+        }
+    }
+
+    #[test]
+    fn a_calendar_year_has_twelve_months_in_order() {
+        let months = by_month("2026-01-01", "2026-12-31", &[]);
+        assert_eq!(months.len(), 12);
+        assert_eq!(months[0], month("2026-01", 0, 0));
+        assert_eq!(months[11], month("2026-12", 0, 0));
+    }
+
+    #[test]
+    fn a_broken_or_extended_year_has_its_own_months() {
+        let broken = by_month("2026-07-01", "2027-06-30", &[]);
+        assert_eq!(broken.len(), 12);
+        assert_eq!(broken[0].month, "2026-07");
+        assert_eq!(broken[6].month, "2027-01");
+        assert_eq!(by_month("2026-07-01", "2027-12-31", &[]).len(), 18);
+        assert_eq!(by_month("2026-10-01", "2026-12-31", &[]).len(), 3);
+    }
+
+    #[test]
+    fn vouchers_land_in_their_month_by_account() {
+        let months = by_month(
+            "2026-01-01",
+            "2026-12-31",
+            &[
+                voucher(
+                    "2026-01-15",
+                    &[(1930, 1_250_00, 0), (3001, 0, 1_000_00), (2611, 0, 250_00)],
+                ),
+                voucher("2026-01-31", &[(5010, 400_00, 0), (1930, 0, 400_00)]),
+                voucher("2026-03-01", &[(1930, 80_00, 0), (3001, 0, 80_00)]),
+            ],
+        );
+        assert_eq!(months[0], month("2026-01", 1_000_00, 400_00));
+        assert_eq!(months[1], month("2026-02", 0, 0));
+        assert_eq!(months[2], month("2026-03", 80_00, 0));
+    }
+
+    #[test]
+    fn a_correction_cancels_its_voucher() {
+        let months = by_month(
+            "2026-01-01",
+            "2026-12-31",
+            &[
+                voucher("2026-02-10", &[(5010, 400_00, 0), (1930, 0, 400_00)]),
+                voucher("2026-02-12", &[(5010, 0, 400_00), (1930, 400_00, 0)]),
+            ],
+        );
+        assert_eq!(months[1], month("2026-02", 0, 0));
+    }
+
+    #[test]
+    fn a_voucher_outside_the_year_or_without_a_date_is_left_out() {
+        let months = by_month(
+            "2026-01-01",
+            "2026-12-31",
+            &[
+                voucher("2025-12-31", &[(3001, 0, 1_00)]),
+                voucher("", &[(3001, 0, 1_00)]),
+                voucher("x", &[(3001, 0, 1_00)]),
+            ],
+        );
+        assert!(months.iter().all(|m| m.income == 0 && m.costs == 0));
+        assert!(by_month("nonsense", "2026-12-31", &[]).is_empty());
+        assert!(by_month("2026-12-01", "2026-01-31", &[]).is_empty());
+    }
+
+    #[test]
+    fn the_scale_is_the_next_round_number() {
+        let of = |income, costs| scale(&[month("2026-01", income, costs)]);
+        assert_eq!(of(0, 0), 0);
+        assert_eq!(of(1, 0), 1);
+        assert_eq!(of(241_000_00, 173_000_00), 250_000_00);
+        assert_eq!(of(100_000_00, 0), 100_000_00);
+        assert_eq!(of(100_000_01, 0), 200_000_00);
+        assert_eq!(of(0, 450_000_00), 500_000_00);
+        // A month where corrections outweigh is not what the axis is for.
+        assert_eq!(of(-5_000_00, 0), 0);
+        assert_eq!(of(900_000_000_000_00, 0), 1_000_000_000_000_00);
+    }
+
+    #[test]
+    fn a_bar_is_a_share_of_the_full_height() {
+        assert_eq!(bar_height(125_000_00, 250_000_00, 160), 80);
+        assert_eq!(bar_height(250_000_00, 250_000_00, 160), 160);
+        assert_eq!(bar_height(0, 250_000_00, 160), 0);
+        assert_eq!(bar_height(-1, 250_000_00, 160), 0);
+        assert_eq!(bar_height(1, 0, 160), 0);
+        // Something booked is always visible.
+        assert_eq!(bar_height(1, 250_000_00, 160), 1);
+    }
+
+    #[test]
+    fn months_have_swedish_short_names() {
+        assert_eq!(month_label("2026-01"), "jan");
+        assert_eq!(month_label("2026-05"), "maj");
+        assert_eq!(month_label("2026-10"), "okt");
+        assert_eq!(month_label("2026-13"), "");
+        assert_eq!(month_label(""), "");
     }
 }
