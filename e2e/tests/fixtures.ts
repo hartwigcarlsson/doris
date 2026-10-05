@@ -117,6 +117,11 @@ export const test = base.extend<Fixtures>({
 
 export { expect };
 
+/** The account menu shows who is signed in. */
+export async function expectSignedIn(page: Page, name: string) {
+  await expect(page.getByRole("banner").locator("summary").filter({ hasText: name })).toBeVisible();
+}
+
 /** Registers through the UI and waits until signed in. */
 export async function register(page: Page, app: string, opts: { email: string; name: string; passkey?: string; invitationLink?: string }) {
   await page.goto(opts.invitationLink ?? `${app}/register`);
@@ -125,7 +130,7 @@ export async function register(page: Page, app: string, opts: { email: string; n
   await page.getByLabel("Namn", { exact: true }).fill(opts.name);
   await page.getByLabel("Passkeyns namn").fill(opts.passkey ?? "Laptop");
   await page.getByRole("button", { name: "Skapa konto med passkey" }).click();
-  await expect(page.getByText(`Inloggad som ${opts.name}`)).toBeVisible();
+  await expectSignedIn(page, opts.name);
 }
 
 export async function logIn(page: Page, app: string, email: string) {

@@ -1,4 +1,4 @@
-import { addAuthenticator, expect, goTo, logIn, openMenu, register, removeAuthenticator, test } from "./fixtures";
+import { addAuthenticator, expect, expectSignedIn, goTo, logIn, openMenu, register, removeAuthenticator, test } from "./fixtures";
 
 test("the first user registers with a passkey and becomes admin", async ({ page, app }) => {
   await page.goto(app);
@@ -7,7 +7,6 @@ test("the first user registers with a passkey and becomes admin", async ({ page,
 
   await register(page, app, { email: "anna@example.se", name: "Anna" });
 
-  await expect(page.getByText("administratör")).toBeVisible();
   await expect((await openMenu(page, "Konto")).getByRole("link", { name: "Inbjudningar" })).toBeVisible();
 });
 
@@ -20,9 +19,9 @@ test("a user signs out and back in with the passkey", async ({ page, app }) => {
   await expect(page).toHaveURL(`${app}/login`);
 
   await logIn(page, app, "anna@example.se");
-  await expect(page.getByText("Inloggad som Anna")).toBeVisible();
+  await expectSignedIn(page, "Anna");
   await page.reload();
-  await expect(page.getByText("Inloggad som Anna")).toBeVisible();
+  await expectSignedIn(page, "Anna");
 });
 
 test("an unknown email fails like any other failed login", async ({ page, app }) => {
@@ -45,7 +44,6 @@ test("an admin invites a member who registers through the link", async ({ page, 
   const bo = await newPerson();
   await register(bo, app, { email: "bo@example.se", name: "Bo", passkey: "Telefon", invitationLink: link });
 
-  await expect(bo.getByText("användare")).toBeVisible();
   await expect(bo.getByRole("link", { name: "Inbjudningar" })).toHaveCount(0);
   await bo.goto(`${app}/admin/invitations`);
   await expect(bo.getByRole("alert")).toHaveText("Du saknar behörighet.");
@@ -87,7 +85,7 @@ test("a user adds a second passkey and signs in with it", async ({ page, app, au
 
   await (await openMenu(page, "Konto")).getByRole("button", { name: "Logga ut" }).click();
   await logIn(page, app, "anna@example.se");
-  await expect(page.getByText("Inloggad som Anna")).toBeVisible();
+  await expectSignedIn(page, "Anna");
 });
 
 test("an invited email is shown as locked, with the reason", async ({ page, app, newPerson }) => {

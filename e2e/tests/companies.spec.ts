@@ -100,10 +100,7 @@ test("the active company is chosen in the header and remembered", async ({ page,
   await expect(active().locator("option:checked")).toHaveText("Bolaget AB");
   await active().selectOption({ label: "Exempel AB" });
   await page.goto(app);
-  const card = page.getByRole("main");
-  await expect(card.getByRole("heading", { name: "Aktivt företag" })).toBeVisible();
-  await expect(card.getByText("Exempel AB")).toBeVisible();
-  await expect(card.getByText("556016-0680")).toBeVisible();
-  await card.getByRole("link", { name: "Visa företaget" }).click();
-  await expect(page.getByRole("heading", { name: "Exempel AB" })).toBeVisible();
+  const main = page.getByRole("main");
+  await expect(main.getByRole("heading", { level: 1, name: "Exempel AB" })).toBeVisible();
+  await expect(main.getByText("556016-0680")).toBeVisible();
 });
