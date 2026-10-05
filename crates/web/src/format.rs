@@ -96,9 +96,10 @@ pub fn today() -> String {
     )
 }
 
-/// `date` (`YYYY-MM-DD`) plus `days`, or `None` if it isn't a date. Howard
-/// Hinnant's civil-day arithmetic, so no date library goes into the wasm.
-pub fn plus_days(date: &str, days: i64) -> Option<String> {
+/// Days from 1970-01-01 to `date` (`YYYY-MM-DD`), or `None` if it isn't a
+/// date. Howard Hinnant's civil-day arithmetic, so no date library goes
+/// into the wasm.
+pub fn day_number(date: &str) -> Option<i64> {
     let mut parts = date.splitn(3, '-').map(|p| p.parse::<i64>().ok());
     let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
     if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
@@ -109,7 +110,12 @@ pub fn plus_days(date: &str, days: i64) -> Option<String> {
     let yoe = y - era * 400;
     let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let z = era * 146_097 + doe + days;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+/// `date` (`YYYY-MM-DD`) plus `days`, or `None` if it isn't a date.
+pub fn plus_days(date: &str, days: i64) -> Option<String> {
+    let z = day_number(date)? + 719_468 + days;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
@@ -200,5 +206,15 @@ mod tests {
             assert!(!legal_form_label(form).is_empty());
         }
         assert!(!LEGAL_FORMS.contains(&cpb::LegalForm::Unspecified));
+    }
+
+    #[test]
+    fn day_numbers_count_from_1970() {
+        assert_eq!(day_number("1970-01-01"), Some(0));
+        assert_eq!(day_number("1970-01-02"), Some(1));
+        assert_eq!(day_number("2026-10-04"), Some(20_730));
+        assert_eq!(day_number("2026-13-01"), None);
+        assert_eq!(day_number("nonsense"), None);
+        assert_eq!(day_number(""), None);
     }
 }

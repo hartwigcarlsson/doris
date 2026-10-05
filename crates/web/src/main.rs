@@ -9,6 +9,7 @@ mod fiscal_year;
 mod format;
 mod invoice_ui;
 mod nav;
+mod overview;
 mod pages;
 mod passkey;
 mod ui;
