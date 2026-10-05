@@ -81,6 +81,9 @@ test("the header marks where the current page lives", async ({ page, app }) => {
   await page.goto(`${app}/vouchers/new`);
   const banner = page.getByRole("banner");
   await expect(banner.locator("summary", { hasText: "Bokföring" })).toHaveAttribute("data-current", "true");
+  // The menu that holds the current page is filled in, like a current link.
+  const fill = (name: string) => banner.locator("summary", { hasText: name }).evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(await fill("Bokföring")).not.toBe(await fill("Inköp"));
   await expect(banner.locator("summary", { hasText: "Inköp" })).not.toHaveAttribute("data-current", "true");
   await page.goto(`${app}/vouchers`);
   const panel = await openMenu(page, "Bokföring");
@@ -102,7 +105,7 @@ test("nothing spills out of the header, with a menu open or not", async ({ page,
     await page.setViewportSize({ width, height: 800 });
     const picker = await page.getByLabel("Aktivt företag").boundingBox();
     expect(picker!.width, `picker at ${width}px`).toBeGreaterThanOrEqual(150);
-    for (const menu of [null, "Bokföring", "Konto"] as const) {
+    for (const menu of [null, "Bokföring", "Inköp", "Lön", "Konto"] as const) {
       if (menu) await openMenu(page, menu);
       const wider = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
       expect(wider, `page scrolls sideways at ${width}px with ${menu ?? "no menu"} open`).toBe(false);
@@ -238,4 +241,26 @@ test("every signed-in view has one h1 and no page scrolls sideways", async ({ pa
       expect.soft(wider, `${path} scrolls sideways at ${width}px`).toBe(false);
     }
   }
+});
+
+test("an expanded voucher shows its kontering in debit and credit columns", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await page.goto(`${app}/vouchers/new`);
+  await page.getByLabel("Datum").fill(`${new Date().getFullYear()}-01-15`);
+  await page.getByLabel("Text").fill("Försäljning");
+  await page.getByLabel("Konto, rad 1").fill("1930");
+  await page.getByLabel("Debet, rad 1").fill("1250");
+  await page.getByLabel("Konto, rad 2").fill("3001");
+  await page.getByLabel("Kredit, rad 2").fill("1250");
+  await page.getByRole("button", { name: "Bokför" }).click();
+  await expect(page.getByRole("status")).toBeVisible();
+  await goTo(page, "Verifikationer");
+  await page.getByRole("button", { name: "1", exact: true }).click();
+
+  const kontering = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: "Debet" }) }).last();
+  const cells = async (name: RegExp) => (await kontering.getByRole("row", { name }).getByRole("cell").allInnerTexts()).map((c) => c.replace(/\s/g, " ").trim());
+  expect(await cells(/^1930 /)).toEqual([expect.stringMatching(/^1930 /), "1 250,00", ""]);
+  expect(await cells(/^3001 /)).toEqual([expect.stringMatching(/^3001 /), "", "1 250,00"]);
+  expect(await cells(/^Summa/)).toEqual(["Summa", "1 250,00", "1 250,00"]);
 });

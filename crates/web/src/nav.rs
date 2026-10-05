@@ -56,8 +56,8 @@ pub fn initials(name: &str) -> String {
 
 /// Every menu shares this name, so the browser keeps one open at a time.
 const MENU_NAME: &str = "doris-nav";
-const TOP: &str = "inline-flex h-7 items-center gap-1 rounded-md px-2 text-muted-foreground hover:bg-muted hover:text-foreground aria-[current=page]:bg-muted aria-[current=page]:font-medium aria-[current=page]:text-foreground data-[current=true]:font-medium data-[current=true]:text-foreground";
-const PANEL: &str = "absolute top-8 z-10 grid min-w-46 gap-0 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10";
+const TOP: &str = "inline-flex h-7 items-center gap-1 rounded-md px-2 text-muted-foreground hover:bg-muted hover:text-foreground aria-[current=page]:bg-muted aria-[current=page]:font-medium aria-[current=page]:text-foreground data-[current=true]:bg-muted data-[current=true]:font-medium data-[current=true]:text-foreground";
+const PANEL: &str = "absolute top-full z-10 mt-1 grid min-w-46 gap-0 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10";
 const ITEM: &str = "flex h-7 w-full items-center gap-2 rounded-sm px-2 whitespace-nowrap hover:bg-muted aria-[current=page]:bg-muted aria-[current=page]:font-medium";
 
 /// Closes every open menu, except the one `keep` is inside.
@@ -89,9 +89,16 @@ fn NavMenu(
     #[prop(optional, into)] summary: Option<ViewFn>,
     children: Children,
 ) -> impl IntoView {
-    let side = if right { "right-0" } else { "left-0" };
+    // A left-aligned panel hangs from its own button, except on a phone:
+    // there it hangs from the menu row's left edge, or the last menus
+    // would reach past the screen.
+    let (anchor, side) = if right {
+        ("relative", "right-0")
+    } else {
+        ("sm:relative", "left-0")
+    };
     view! {
-        <details name=MENU_NAME class="relative">
+        <details name=MENU_NAME class=anchor>
             <summary
                 class=format!("{TOP} cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden")
                 data-current=move || current.get().to_string()
@@ -177,7 +184,7 @@ pub fn Header() -> impl IntoView {
                 <Show when=move || session.user.get().is_some()>
                     <ActiveCompanySelect />
                     <Show when=move || !companies.active.get().is_empty()>
-                        <nav aria-label="Huvudmeny" class="flex flex-wrap items-center gap-1">
+                        <nav aria-label="Huvudmeny" class="relative flex flex-wrap items-center gap-1">
                             <A href="/" exact=true attr:class=TOP>"Översikt"</A>
                             <NavMenu label="Bokföring" current=in_section(Section::Bookkeeping)>
                                 <NavItem href="/vouchers" icon=IconName::ReceiptText label="Verifikationer" />
