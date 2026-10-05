@@ -219,3 +219,23 @@ test("the account views follow the design, with narrow left-aligned forms", asyn
   await addCompany(page, app, "5560160680", "Exempel AB");
   await expectDesign(page, "Exempel AB");
 });
+
+test("every signed-in view has one h1 and no page scrolls sideways", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  const paths = [
+    "/", "/companies", "/companies/new", "/accounts", "/vouchers", "/vouchers/new", "/customers", "/suppliers",
+    "/supplier-invoices", "/supplier-invoices/new", "/trial-balance", "/trial-balance/1930", "/financial-statements",
+    "/fiscal-years", "/opening-balances", "/employees", "/payroll-runs", "/payroll-runs/new", "/settings/passkeys",
+    "/admin/invitations",
+  ];
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    for (const path of paths) {
+      await page.goto(`${app}${path}`);
+      await expect.soft(page.getByRole("main").getByRole("heading", { level: 1 }), `${path} at ${width}px`).toHaveCount(1);
+      const wider = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+      expect.soft(wider, `${path} scrolls sideways at ${width}px`).toBe(false);
+    }
+  }
+});

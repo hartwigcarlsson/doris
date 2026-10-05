@@ -1,9 +1,6 @@
 //! Components in the style of shadcn preset b1Gdz9bFY (radix-mira). Class
 //! lists are copied from the generated shadcn components; only what the app
 //! uses is here.
-// The views pick the new components up one group at a time; removed once
-// every one of them is in use.
-#![allow(dead_code)]
 
 use leptos::prelude::*;
 use leptos_router::components::A;

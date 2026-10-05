@@ -332,6 +332,18 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   shadcn's generated output. Add more by generating them with
   `npx shadcn init -t vite -b radix -p b1Gdz9bFY` in a scratch directory and
   copying the classes.
+- `src/nav.rs` holds the header: one row with Doris, the company picker,
+  the main menu (Översikt, Bokföring, Inköp, Kunder, Lön) and the account
+  menu. Menus are native `<details name="doris-nav">`, so the browser keeps
+  one open; one listener closes them on Escape, on a click outside and on
+  a click on a link. `section_of` decides which menu a path belongs to: add
+  a line there for every new page.
+- A view is a `grid gap-6` that starts with `PageHeader` (the page's one
+  `<h1>`, actions to the right). Tables sit in `TableCard`, statuses are
+  `Badge`s, "Ny …" actions are `LinkButton`s, and form cards are `narrow`
+  (352px, left-aligned). Login and registration are centered.
+- Icons are lucide shapes inlined in `ui.rs` (`Icon`, `IconName`), copied
+  from lucide-static with the closing tags written out.
 - The crate also compiles for the host, so `cargo test`/`clippy --workspace`
   include it. Also lint the wasm build:
   `cargo clippy -p doris-web --target wasm32-unknown-unknown -- -D warnings`.
@@ -345,11 +357,13 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   builds.
 - E2E tests live in `e2e/` (Playwright). Every test spawns its own server on
   a fresh database, and pages get a Chrome DevTools virtual WebAuthn
-  authenticator. Select elements by their Swedish label or role.
+  authenticator. Select elements by their Swedish label or role. Header
+  links live in menus: use `goTo(page, "Verifikationer")` from `fixtures.ts`.
 
 ## Style
 The UI follows shadcn preset `b1Gdz9bFY`: style mira, base color stone, theme
-amber, font Inter (self-hosted), small radius, lucide icons (inlined SVG).
+amber, font Inter (self-hosted), small radius, lucide icons (inlined SVG, see
+`IconName`). The page and the header are `max-w-6xl`.
 Design tokens live in `crates/web/style/input.css`. Build only the components
 you need.
 

@@ -160,7 +160,7 @@ pub fn NewSupplierInvoice() -> impl IntoView {
     view! {
         <div class="grid gap-6">
         <PageHeader title="Ny leverantörsfaktura" />
-        <section class="rounded-lg bg-card p-4 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10">
+        <section class="overflow-x-auto rounded-lg bg-card p-4 text-xs/relaxed text-card-foreground ring-1 ring-foreground/10">
             <form class="grid gap-4" novalidate on:submit=submit>
                 <ErrorAlert message=error />
                 <div class="grid grid-cols-2 gap-4">
