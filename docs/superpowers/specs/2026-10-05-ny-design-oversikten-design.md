@@ -39,15 +39,18 @@ Ur saldobalansens rader, där en rads rörelse är `debit − credit`:
 
 | Nyckeltal | Definition |
 |---|---|
-| Intäkter | −Σ rörelse för konto 3000–3999 |
-| Kostnader | Σ rörelse för konto 4000–8989 |
-| Resultat hittills | Intäkter − Kostnader (samma konton som "Årets resultat" i rapporterna, 3000–8989) |
+| Rörelseintäkter | −Σ rörelse för konto 3000–3999 |
+| Rörelsekostnader | Σ rörelse för konto 4000–7999 |
+| Finansiella poster m.m. | −Σ rörelse för konto 8000–8989 (finansiella poster, bokslutsdispositioner, skatt) |
+| Resultat hittills | Rörelseintäkter − Rörelsekostnader + Finansiella poster m.m. (konto 3000–8989, samma som "Årets resultat" i rapporterna) |
 | Kassa och bank | Σ (`opening` + rörelse) för konto 1900–1999 |
+
+Klass 8 hålls utanför kostnaderna, eftersom den blandar ränteintäkter, räntekostnader, bokslutsdispositioner och skatt: ett bolag med bara ränteintäkter skulle annars få negativa kostnader. När beloppet inte är noll visar resultatkortet raden "varav finansiella poster m.m. …". En lagerförändring på 49xx med kreditsaldo minskar rörelsekostnaderna här, medan rapporterna redovisar den på intäktssidan; resultatet är detsamma.
 
 Stora tal visas i hela kronor ("304 330 kr"); ören avrundas inte bort i summeringen, bara i visningen (trunkering mot noll).
 
 ### Per månad
-För varje verifikation i året och varje rad: månaden är verifikationens datum (`ÅÅÅÅ-MM`). Intäkter och kostnader summeras med samma kontointervall och tecken som nyckeltalen. Rättelser räknas som vanliga verifikationer, så en rättad verifikation och dess rättelse tar ut varandra. Resultatet är en rad per månad i räkenskapsåret, i ordning, även för månader utan verifikationer; ett brutet eller förlängt år ger så många månader som året har.
+För varje verifikation i året och varje rad: månaden är verifikationens datum (`ÅÅÅÅ-MM`). Rörelseintäkter och rörelsekostnader summeras med samma kontointervall och tecken som nyckeltalen; klass 8 är inte med i diagrammet. Rättelser räknas som vanliga verifikationer, så en rättad verifikation och dess rättelse tar ut varandra. Resultatet är en rad per månad i räkenskapsåret, i ordning, även för månader utan verifikationer; ett brutet eller förlängt år ger så många månader som året har.
 
 ### Räkenskapsårets förlopp
 `dag = (i dag − start) + 1`, begränsad till 1..=antal dagar; `kvar = antal dagar − dag`. För ett år som inte har börjat är dag 0, för ett som har slutat är kvar 0. Andelen är `dag / antal dagar`.
@@ -72,7 +75,7 @@ Singular och plural: "1 leverantörsfaktura har förfallit", "2 leverantörsfakt
 `crates/web/src/pages/home.rs` skrivs om. Layouten är den i skissen, uppifrån:
 
 1. **`PageHeader`**: företagets namn som `<h1>`; underrad "organisationsnummer · juridisk form · bokföringsmetod". Till höger årsväljaren (`FiscalYearSelect`) och knapparna Ny lönekörning, Ny leverantörsfaktura, Ny kundfaktura (kontur) och Ny verifikation (primär, plus-ikon).
-2. **Nyckeltal**: fyra kort i `grid` med `repeat(auto-fit, minmax(min(220px, 100%), 1fr))`: Resultat hittills i år ("Efter finansiella poster"), Intäkter ("Konto 3000–3999"), Kostnader ("Konto 4000–8989"), Kassa och bank ("Saldo {i dag eller årets sista dag}").
+2. **Nyckeltal**: fyra kort i `grid` med `repeat(auto-fit, minmax(min(220px, 100%), 1fr))`: Resultat hittills i år ("Konto 3000–8989"), Rörelseintäkter ("Konto 3000–3999"), Rörelsekostnader ("Konto 4000–7999"), Kassa och bank ("Konto 1900–1999").
 3. **Rad**: Att göra (2 delar) och Räkenskapsåret (1 del): etikett Öppet/Stängt, förloppsmätare (`role="progressbar"`), "Dag N av M", "K dagar kvar", period, antal verifikationer, senast bokfört, föregående års status, länk "Visa räkenskapsår".
 4. **Rad**: Intäkter och kostnader per månad (2 delar) och Obetalda leverantörsfakturor (1 del): antal och summa, de fyra med tidigast förfallodag, etiketten "Förfallen" där det gäller, länk "Alla leverantörsfakturor".
 5. **Senaste verifikationer**: de fem med högst nummer, kolumnerna Nr, Datum, Text, Belopp, länk "Alla verifikationer".

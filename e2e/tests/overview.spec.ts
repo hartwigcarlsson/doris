@@ -24,7 +24,7 @@ test("a new company's overview is empty but complete", async ({ page, app }) => 
   const main = page.getByRole("main");
   await expect(main.getByRole("heading", { level: 1, name: "Exempel AB" })).toBeVisible();
   await expect(main.getByText("556016-0680 · Aktiebolag · Faktureringsmetoden")).toBeVisible();
-  for (const name of ["Resultat hittills i år", "Intäkter", "Kostnader", "Kassa och bank"]) {
+  for (const name of ["Resultat hittills i år", "Rörelseintäkter", "Rörelsekostnader", "Kassa och bank"]) {
     await expect(figure(page, name).locator("p").first()).toHaveText(/^0\skr$/);
   }
   const fiscalYear = figure(page, "Räkenskapsåret");
@@ -39,13 +39,13 @@ test("a booked sale shows in the key figures", async ({ page, app }) => {
   await addCompany(page, app, "5560160680", "Exempel AB");
   await book(page, app, `${year}-01-15`, "1250");
   await page.goto(app);
-  await expect(figure(page, "Intäkter")).toContainText(/1\s250\skr/);
+  await expect(figure(page, "Rörelseintäkter")).toContainText(/1\s250\skr/);
   await expect(figure(page, "Resultat hittills i år")).toContainText(/1\s250\skr/);
   await expect(figure(page, "Kassa och bank")).toContainText(/1\s250\skr/);
   const latest = figure(page, "Senaste verifikationer");
   await expect(latest.getByRole("row", { name: /^1 .* Försäljning 1\s250,00$/ })).toBeVisible();
   await expect(figure(page, "Räkenskapsåret")).toContainText(/Verifikationer\s*1/);
-  await expect(figure(page, "Kostnader").locator("p").first()).toHaveText(/^0\skr$/);
+  await expect(figure(page, "Rörelsekostnader").locator("p").first()).toHaveText(/^0\skr$/);
 });
 
 test("the overview follows the chosen year", async ({ page, app }) => {
@@ -56,9 +56,9 @@ test("the overview follows the chosen year", async ({ page, app }) => {
   await page.goto(app);
   // The year that contains today is chosen, not the newest or the oldest.
   await expect(page.getByLabel("Räkenskapsår")).toHaveValue(`${year}-01-01`);
-  await expect(figure(page, "Intäkter")).toContainText(/1\s250\skr/);
+  await expect(figure(page, "Rörelseintäkter")).toContainText(/1\s250\skr/);
   await page.getByLabel("Räkenskapsår").selectOption(`${year - 1}-01-01`);
-  await expect(figure(page, "Intäkter")).toContainText(/700\skr/);
+  await expect(figure(page, "Rörelseintäkter")).toContainText(/700\skr/);
   await expect(figure(page, "Räkenskapsåret")).toContainText(/Dag 365 av 365|Dag 366 av 366/);
   // The choice survives a reload.
   await page.reload();
@@ -70,7 +70,7 @@ test("a failed call only takes its own cards down", async ({ page, app }) => {
   await addCompany(page, app, "5560160680", "Exempel AB");
   await page.route("**/GetTrialBalance", (route) => route.abort());
   await page.goto(app);
-  await expect(figure(page, "Intäkter").getByRole("alert")).toBeVisible();
+  await expect(figure(page, "Rörelseintäkter").getByRole("alert")).toBeVisible();
   await expect(figure(page, "Räkenskapsåret")).toContainText(/Dag \d+ av/);
 });
 
@@ -167,7 +167,7 @@ test("years that cannot be listed fail the cards that need a year", async ({ pag
   await addCompany(page, app, "5560160680", "Exempel AB");
   await page.route("**/ListFiscalYears", (route) => route.abort());
   await page.goto(app);
-  for (const name of ["Intäkter", "Räkenskapsåret", "Intäkter och kostnader per månad", "Senaste verifikationer"]) {
+  for (const name of ["Rörelseintäkter", "Räkenskapsåret", "Intäkter och kostnader per månad", "Senaste verifikationer"]) {
     await expect(figure(page, name).getByRole("alert"), name).toBeVisible();
   }
   // What does not depend on a year still shows.
@@ -182,7 +182,7 @@ test("a company that cannot be fetched says so and the rest still shows", async 
   const main = page.getByRole("main");
   await expect(main.getByRole("heading", { level: 1, name: "Exempel AB" })).toBeVisible();
   await expect(main.getByRole("alert")).toHaveCount(1);
-  await expect(figure(page, "Intäkter").locator("p").first()).toHaveText(/^0\skr$/);
+  await expect(figure(page, "Rörelseintäkter").locator("p").first()).toHaveText(/^0\skr$/);
 });
 
 test("one slow call does not hold the others back", async ({ page, app }) => {
@@ -196,7 +196,7 @@ test("one slow call does not hold the others back", async ({ page, app }) => {
   });
   await page.goto(app);
   // GetCompany has not answered, and everything else is already there.
-  await expect(figure(page, "Intäkter").locator("p").first()).toHaveText(/^0\skr$/);
+  await expect(figure(page, "Rörelseintäkter").locator("p").first()).toHaveText(/^0\skr$/);
   await expect(figure(page, "Att göra")).toContainText("Inget att göra just nu.");
   await expect(page.getByRole("main").getByText("556016-0680")).toHaveCount(0);
   release();
@@ -225,4 +225,27 @@ test("leaving the overview while it loads breaks nothing", async ({ page, app })
   await goTo(page, "Räkenskapsår");
   await expect(page.getByRole("heading", { level: 1, name: "Räkenskapsår" })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("interest income is part of the result but not of the operating figures", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await book(page, app, `${year}-01-15`, "1250");
+  await page.goto(`${app}/vouchers/new`);
+  await page.getByLabel("Datum").fill(`${year}-01-20`);
+  await page.getByLabel("Text").fill("Ränta");
+  await page.getByLabel("Konto, rad 1").fill("1930");
+  await page.getByLabel("Debet, rad 1").fill("100");
+  await page.getByLabel("Konto, rad 2").fill("8310");
+  await page.getByLabel("Kredit, rad 2").fill("100");
+  await page.getByRole("button", { name: "Bokför" }).click();
+  await expect(page.getByRole("status")).toBeVisible();
+  await page.goto(app);
+  await expect(figure(page, "Rörelseintäkter").locator("p").first()).toHaveText(/^1\s250\skr$/);
+  await expect(figure(page, "Rörelsekostnader").locator("p").first()).toHaveText(/^0\skr$/);
+  const result = figure(page, "Resultat hittills i år");
+  await expect(result.locator("p").first()).toHaveText(/^1\s350\skr$/);
+  await expect(result).toContainText(/varav finansiella poster m\.m\. 100\skr/);
+  // Without anything in class 8 the extra line is not there.
+  await expect(figure(page, "Rörelseintäkter")).not.toContainText("varav");
 });

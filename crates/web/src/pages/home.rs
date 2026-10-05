@@ -340,9 +340,15 @@ fn Overview() -> impl IntoView {
                 _ => None,
             }}
             <div class="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-4">
-                <KeyFigure title="Resultat hittills i år" note="Efter finansiella poster" balance=balance pick=|f| f.result />
-                <KeyFigure title="Intäkter" note="Konto 3000–3999" balance=balance pick=|f| f.income />
-                <KeyFigure title="Kostnader" note="Konto 4000–8989" balance=balance pick=|f| f.costs />
+                <KeyFigure
+                    title="Resultat hittills i år"
+                    note="Konto 3000–8989"
+                    balance=balance
+                    pick=|f| f.result
+                    also=|f| (f.other != 0).then(|| format!("varav finansiella poster m.m. {}", whole_kronor(f.other)))
+                />
+                <KeyFigure title="Rörelseintäkter" note="Konto 3000–3999" balance=balance pick=|f| f.income />
+                <KeyFigure title="Rörelsekostnader" note="Konto 4000–7999" balance=balance pick=|f| f.costs />
                 <KeyFigure title="Kassa och bank" note="Konto 1900–1999" balance=balance pick=|f| f.cash />
             </div>
             <div class="flex flex-wrap gap-4">
@@ -365,6 +371,9 @@ fn KeyFigure(
     note: &'static str,
     balance: Loaded<Vec<lpb::TrialBalanceRow>>,
     pick: fn(KeyFigures) -> i64,
+    /// A line under the number, when there is something to add to it.
+    #[prop(optional)]
+    also: Option<fn(KeyFigures) -> Option<String>>,
 ) -> impl IntoView {
     view! {
         <Panel>
@@ -373,10 +382,12 @@ fn KeyFigure(
                 {pending(
                     move || balance.get(),
                     move |rows| {
+                        let figures = key_figures(&rows);
                         view! {
                             <p class="text-2xl/8 font-semibold tracking-tight tabular-nums">
-                                {whole_kronor(pick(key_figures(&rows)))}
+                                {whole_kronor(pick(figures))}
                             </p>
+                            {also.and_then(|line| line(figures)).map(|line| view! { <p>{line}</p> })}
                         }
                             .into_any()
                     },
@@ -654,7 +665,7 @@ fn MonthChart(
                 <div class="flex flex-wrap items-start justify-between gap-4">
                     <div>
                         <h2 class="text-sm font-medium">"Intäkter och kostnader per månad"</h2>
-                        <p class="text-muted-foreground">{move || if thousands() { "Tusental kronor" } else { "Kronor" }}</p>
+                        <p class="text-muted-foreground">{move || if thousands() { "Rörelsen, tusental kronor" } else { "Rörelsen, kronor" }}</p>
                     </div>
                     <ul class="flex gap-4">
                         <li class="flex items-center gap-1.5"><span data-legend class="size-2 rounded-xs bg-chart-1"></span>"Intäkter"</li>

@@ -7,15 +7,24 @@ use crate::format::{amount, day_number, plus_days};
 /// The year's key figures, in öre. A profit is a positive `result`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct KeyFigures {
+    /// Operating income, accounts 3000–3999.
     pub income: i64,
+    /// Operating costs, accounts 4000–7999.
     pub costs: i64,
+    /// Financial items, appropriations and tax, accounts 8000–8989, as
+    /// they add to the result: interest earned is positive.
+    pub other: i64,
+    /// `income − costs + other`: accounts 3000–8989, "Årets resultat" in
+    /// the statements.
     pub result: i64,
     pub cash: i64,
 }
 
-/// Income is accounts 3000–3999 and costs 4000–8989, the accounts behind
-/// "Årets resultat" in the statements; cash and bank is 1900–1999 with
-/// its opening balance.
+/// Income and costs are the operating ones. Class 8 mixes interest earned
+/// and paid, appropriations and tax, so it is kept apart rather than
+/// called a cost. Cash and bank is 1900–1999 with its opening balance.
+// A stock change on 49xx with a credit balance lowers the costs here; the
+// statements show it with the income. The result is the same.
 pub fn key_figures(rows: &[lpb::TrialBalanceRow]) -> KeyFigures {
     let mut figures = KeyFigures::default();
     for row in rows {
@@ -23,11 +32,12 @@ pub fn key_figures(rows: &[lpb::TrialBalanceRow]) -> KeyFigures {
         match row.account {
             1900..=1999 => figures.cash += row.opening + movement,
             3000..=3999 => figures.income -= movement,
-            4000..=8989 => figures.costs += movement,
+            4000..=7999 => figures.costs += movement,
+            8000..=8989 => figures.other -= movement,
             _ => {}
         }
     }
-    figures.result = figures.income - figures.costs;
+    figures.result = figures.income - figures.costs + figures.other;
     figures
 }
 
@@ -89,7 +99,7 @@ pub fn default_year(years: &[lpb::FiscalYear], preferred: &str, today: &str) -> 
         .unwrap_or_default()
 }
 
-/// One month's income and costs, in öre.
+/// One month's operating income and costs, in öre.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Month {
     /// `YYYY-MM`.
@@ -140,7 +150,7 @@ pub fn by_month(start: &str, end: &str, vouchers: &[lpb::Voucher]) -> Vec<Month>
             let movement = line.debit - line.credit;
             match line.account {
                 3000..=3999 => month.income -= movement,
-                4000..=8989 => month.costs += movement,
+                4000..=7999 => month.costs += movement,
                 _ => {}
             }
         }
@@ -470,7 +480,8 @@ mod tests {
             figures,
             KeyFigures {
                 income: 40_000_00,
-                costs: 12_300_00,
+                costs: 12_000_00,
+                other: -300_00,
                 result: 27_700_00,
                 cash: 40_000_00,
             }
@@ -484,8 +495,10 @@ mod tests {
             row(2999, 0, 0, 1_00),
             row(3000, 0, 0, 2_00),
             row(3999, 0, 0, 4_00),
-            row(4000, 0, 8_00, 0),
-            row(8989, 0, 16_00, 0),
+            row(4000, 0, 4_00, 0),
+            row(7999, 0, 4_00, 0),
+            row(8000, 0, 6_00, 0),
+            row(8989, 0, 10_00, 0),
             row(8990, 0, 32_00, 0),
             row(8999, 0, 64_00, 0),
             row(1899, 5_00, 0, 0),
@@ -493,8 +506,10 @@ mod tests {
             row(1999, 0, 11_00, 0),
             row(2000, 13_00, 0, 0),
         ]);
+        // Class 8 is in the result but in neither operating figure.
         assert_eq!(figures.income, 6_00);
-        assert_eq!(figures.costs, 24_00);
+        assert_eq!(figures.costs, 8_00);
+        assert_eq!(figures.other, -16_00);
         assert_eq!(figures.result, -18_00);
         assert_eq!(figures.cash, 18_00);
     }
@@ -1045,5 +1060,24 @@ mod tests {
             )],
         );
         assert_eq!(months[11], month("2026-12", 0, 0));
+    }
+
+    #[test]
+    fn financial_income_is_not_a_negative_cost() {
+        // A holding company: only interest and dividends.
+        let figures = key_figures(&[row(1930, 0, 50_000_00, 0), row(8310, 0, 0, 50_000_00)]);
+        assert_eq!(figures.income, 0);
+        assert_eq!(figures.costs, 0);
+        assert_eq!(figures.other, 50_000_00);
+        assert_eq!(figures.result, 50_000_00);
+        let months = by_month(
+            "2026-01-01",
+            "2026-12-31",
+            &[voucher(
+                "2026-03-10",
+                &[(1930, 50_000_00, 0), (8310, 0, 50_000_00)],
+            )],
+        );
+        assert_eq!(months[2], month("2026-03", 0, 0));
     }
 }

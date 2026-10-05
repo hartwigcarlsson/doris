@@ -345,8 +345,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `ListFiscalYears`, `GetTrialBalance`, `ListVouchers`,
   `ListSupplierInvoices`, `ListCustomerInvoices`, `ListPayrollRuns` and
   `ListAgiMonths`, and `src/overview.rs` works everything out in pure
-  functions: key figures (income 3000–3999, costs 4000–8989, cash
-  1900–1999), income and costs per month, the year's progress and the
+  functions: key figures (operating income 3000–3999, operating costs
+  4000–7999, class 8 only in the result, cash 1900–1999), income and costs per month, the year's progress and the
   "Att göra" rules. Each call is its own task, so a slow one holds nothing
   back. A card whose call failed shows the error and the others still show;
   if the years cannot be listed, every card that needs a year shows that
