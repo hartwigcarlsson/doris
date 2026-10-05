@@ -127,8 +127,6 @@ pub fn plus_days(date: &str, days: i64) -> Option<String> {
     Some(format!("{y:04}-{m:02}-{d:02}"))
 }
 
-// Used by Verifikationer from the next commits on.
-#[allow(dead_code)]
 /// A UTC timestamp (`YYYY-MM-DDTHH:MM…Z`) as local `YYYY-MM-DD HH:MM`,
 /// `offset_minutes` east of UTC. "" if it isn't one.
 pub fn local_time(utc: &str, offset_minutes: i32) -> String {

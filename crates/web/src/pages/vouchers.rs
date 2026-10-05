@@ -5,7 +5,7 @@ use crate::api::{ledger_api, lpb};
 use crate::attachments::{open_in, read_files, size_label};
 use crate::errors::{describe, describe_code};
 use crate::fiscal_year::is_closed;
-use crate::format::{amount, today};
+use crate::format::{amount, local_time, today};
 use crate::ui::{
     Badge, Button, Checkbox, ErrorAlert, FileInput, INPUT, Icon, IconName, LinkButton, PageHeader,
     SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table,
@@ -14,6 +14,7 @@ use crate::ui::{
 use crate::voucher_search::{Filter, PAGE, shown, visible};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos_router::components::A;
 
 #[component]
 pub fn Vouchers() -> impl IntoView {
@@ -239,7 +240,24 @@ fn VoucherRow(
     // The company and year this row was loaded for, not whatever is active now.
     let company_id = StoredValue::new(company_id);
     let closed = fiscal_year.as_ref().is_some_and(|y| y.closed);
+    // The huvudbok links go to the year this row was loaded for.
+    let ledger_year = fiscal_year
+        .as_ref()
+        .map(|y| y.start.clone())
+        .unwrap_or_default();
     let fiscal_year = StoredValue::new(fiscal_year);
+    // Behandlingshistorik: when it was recorded, in this browser's time
+    // zone (JS counts minutes west of UTC), and by whom if known.
+    let offset = -(js_sys::Date::new_0().get_timezone_offset() as i32);
+    let recorded = local_time(&voucher.recorded_at, offset);
+    let history = match (recorded.is_empty(), voucher.recorded_by_name.is_empty()) {
+        (true, _) => None,
+        (false, true) => Some(format!("Bokförd {recorded}")),
+        (false, false) => Some(format!(
+            "Bokförd {recorded} av {}",
+            voucher.recorded_by_name
+        )),
+    };
     let expanded = RwSignal::new(false);
     let correcting = RwSignal::new(false);
     let date = RwSignal::new(String::new());
@@ -436,7 +454,11 @@ fn VoucherRow(
                                     let name = names.with(|n| n.iter().find(|a| a.number == l.account).map(|a| a.name.clone()).unwrap_or_default());
                                     view! {
                                         <tr class="border-b">
-                                            <td class="py-1.5 pr-2">{format!("{} {}", l.account, name)}</td>
+                                            <td class="py-1.5 pr-2">
+                                                <A href=format!("/trial-balance/{}?fy={ledger_year}", l.account) attr:class="underline-offset-4 hover:underline">
+                                                    {format!("{} {}", l.account, name)}
+                                                </A>
+                                            </td>
                                             <td class="px-2 py-1.5 text-right tabular-nums">{(l.debit > 0).then(|| amount(l.debit))}</td>
                                             <td class="py-1.5 pl-2 text-right tabular-nums">{(l.credit > 0).then(|| amount(l.credit))}</td>
                                         </tr>
@@ -450,6 +472,7 @@ fn VoucherRow(
                             </tr>
                         </tbody>
                     </table>
+                    <div class="grid gap-3">
                     <div class="grid gap-2">
                         <h2 class="text-xs/relaxed font-medium">"Underlag"</h2>
                         <ul class="grid gap-1">
@@ -481,6 +504,13 @@ fn VoucherRow(
                                 on_pick=add_attachments
                             />
                         </div>
+                    </div>
+                    {history.clone().map(|line| view! {
+                        <div class="grid gap-1">
+                            <h2 class="text-xs/relaxed font-medium">"Behandlingshistorik"</h2>
+                            <p>{line}</p>
+                        </div>
+                    })}
                     </div>
                     </div>
                 </td>

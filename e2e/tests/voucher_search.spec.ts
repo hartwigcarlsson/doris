@@ -83,3 +83,20 @@ test("the list shows fifty at a time", async ({ page, app }) => {
   await page.getByLabel("Sök bland verifikationer").fill("");
   await expect(page.getByRole("status")).toHaveText("Visar 50 av 51");
 });
+
+test("an expanded voucher says who booked it and when, and links its accounts", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna Lind" });
+  await addCompany(page, app, "5560160680", "Exempel AB");
+  await book(page, app, "Försäljning", "1930", "3001", "1250");
+  await goTo(page, "Verifikationer");
+  await rows(page).locator(expand).click();
+  const main = page.getByRole("main");
+  await expect(main.getByRole("heading", { name: "Behandlingshistorik" })).toBeVisible();
+  // Today, in the browser's zone, to the minute.
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  await expect(main.getByText(new RegExp(`^Bokförd ${today} \\d\\d:\\d\\d av Anna Lind$`))).toBeVisible();
+  await main.getByRole("link", { name: /^1930 / }).click();
+  await expect(page).toHaveURL(new RegExp(`/trial-balance/1930\\?fy=${year}-01-01$`));
+  await expect(page.getByRole("heading", { level: 1, name: /^1930 / })).toBeVisible();
+});
