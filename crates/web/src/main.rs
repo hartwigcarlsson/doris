@@ -14,6 +14,7 @@ mod pages;
 mod passkey;
 mod ui;
 mod voucher_lines;
+mod voucher_search;
 
 fn main() {
     console_error_panic_hook::set_once();
