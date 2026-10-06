@@ -3,4 +3,5 @@
 //! Skatteverket, and the settlement voucher booked when a period is marked
 //! submitted.
 
+pub mod domain;
 pub mod period;
