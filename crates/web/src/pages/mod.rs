@@ -23,6 +23,8 @@ mod register;
 mod supplier_invoices;
 mod suppliers;
 mod trial_balance;
+pub mod vat;
+pub mod vat_return;
 mod vouchers;
 
 pub use account_ledger::AccountLedger;
@@ -50,4 +52,6 @@ pub use register::Register;
 pub use supplier_invoices::SupplierInvoices;
 pub use suppliers::Suppliers;
 pub use trial_balance::TrialBalance;
+pub use vat::Vat;
+pub use vat_return::VatReturnPage;
 pub use vouchers::Vouchers;

@@ -1,5 +1,3 @@
-#![allow(dead_code)] // used by the Moms pages (next tasks)
-
 //! Skatteverket's momsdeklaration (SKV 4700) as the page draws it: its
 //! sections, headings and row texts word for word, in its two columns.
 

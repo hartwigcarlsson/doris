@@ -15,7 +15,6 @@ pub use doris_proto::company::v1 as cpb;
 pub use doris_proto::invoicing::v1 as ipb;
 pub use doris_proto::ledger::v1 as lpb;
 pub use doris_proto::payroll::v1 as ppb;
-#[allow(unused_imports)]
 pub use doris_proto::vat::v1 as vpb;
 
 pub type Api = AuthServiceClient<Client>;
@@ -23,7 +22,6 @@ pub type CompanyApi = CompanyServiceClient<Client>;
 pub type InvoicingApi = InvoicingServiceClient<Client>;
 pub type LedgerApi = LedgerServiceClient<Client>;
 pub type PayrollApi = PayrollServiceClient<Client>;
-#[allow(dead_code)]
 pub type VatApi = VatServiceClient<Client>;
 
 pub fn api() -> Api {
@@ -48,7 +46,6 @@ pub fn ledger_api() -> LedgerApi {
     LedgerServiceClient::new(client()).max_decoding_message_size(11 << 20)
 }
 
-#[allow(dead_code)]
 pub fn vat_api() -> VatApi {
     VatServiceClient::new(client())
 }

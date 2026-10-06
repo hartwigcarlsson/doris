@@ -41,7 +41,7 @@ test("the header is one row with grouped menus", async ({ page, app }) => {
   await expect(banner.getByRole("link", { name: "Översikt" })).toBeVisible();
   await expect(banner.getByRole("link", { name: "Verifikationer" })).toBeHidden();
 
-  expect(await linksIn(await openMenu(page, "Bokföring"))).toEqual(["Verifikationer", "Saldobalans", "Rapporter", "Kontoplan", "Räkenskapsår"]);
+  expect(await linksIn(await openMenu(page, "Bokföring"))).toEqual(["Verifikationer", "Saldobalans", "Rapporter", "Kontoplan", "Räkenskapsår", "Moms"]);
   expect(await linksIn(await openMenu(page, "Inköp"))).toEqual(["Leverantörsfakturor", "Leverantörer"]);
   // Opening one menu closed the one before it.
   await expect(banner.getByRole("link", { name: "Verifikationer" })).toBeHidden();
@@ -236,7 +236,7 @@ test("every signed-in view has one h1 and no page scrolls sideways", async ({ pa
     "/", "/companies", "/companies/new", "/accounts", "/vouchers", "/vouchers/new", "/customers", "/suppliers",
     "/customer-invoices", "/customer-invoices/new", "/agi",
     "/supplier-invoices", "/supplier-invoices/new", "/trial-balance", "/trial-balance/1930", "/financial-statements",
-    "/fiscal-years", "/opening-balances", "/employees", "/payroll-runs", "/payroll-runs/new", "/settings/passkeys",
+    "/fiscal-years", "/vat", "/vat/202603", "/opening-balances", "/employees", "/payroll-runs", "/payroll-runs/new", "/settings/passkeys",
     "/admin/invitations",
   ];
   for (const width of [1280, 390]) {
