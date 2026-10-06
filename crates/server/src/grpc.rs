@@ -2,7 +2,7 @@
 //! carries the session in an HttpOnly cookie.
 
 use doris_identity::domain::{
-    Confirmation, DomainError, Grant, Role, Scope, TokenChange, TokenRequest, User,
+    Confirmation, DomainError, Email, Grant, Role, Scope, TokenChange, TokenRequest, User,
 };
 use doris_identity::{Auth, Error, SESSION_TTL};
 use doris_proto::auth::v1 as pb;
@@ -11,6 +11,7 @@ use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
@@ -18,11 +19,11 @@ pub const SESSION_COOKIE: &str = "doris_session";
 
 pub struct AuthApi {
     pool: SqlitePool,
-    auth: Auth,
+    auth: Arc<Auth>,
 }
 
 impl AuthApi {
-    pub fn new(pool: SqlitePool, auth: Auth) -> Self {
+    pub fn new(pool: SqlitePool, auth: Arc<Auth>) -> Self {
         Self { pool, auth }
     }
 
@@ -84,20 +85,12 @@ impl AuthApi {
     async fn confirmed(
         &self,
         user_id: Uuid,
-        req: &pb::FinishApiTokenRequest,
+        req: &pb::FinishConfirmationRequest,
     ) -> Result<TokenRequest, Status> {
-        let Confirmation::ApiToken { request } = self
-            .auth
-            .finish_confirmation(
-                user_id,
-                ceremony_id(&req.ceremony_id)?,
-                &credential(&req.credential_json)?,
-                Timestamp::now(),
-            )
-            .await
-            .map_err(finish_status)?
+        let Confirmation::ApiToken { request } =
+            confirmation(&self.auth, user_id, &req.ceremony_id, &req.credential_json).await?
         else {
-            return Err(Status::failed_precondition("ceremony_expired"));
+            return Err(ceremony_expired());
         };
         for grant in &request.change().grants {
             self.member_of(user_id, grant.company_id).await?;
@@ -296,14 +289,38 @@ impl AuthService for AuthApi {
         }))
     }
 
-    async fn create_invitation(
+    async fn begin_create_invitation(
         &self,
         request: Request<pb::CreateInvitationRequest>,
+    ) -> Result<Response<pb::BeginCeremonyResponse>, Status> {
+        let admin = self.admin(&request).await?;
+        let email = Email::parse(&request.get_ref().email).map_err(|e| status(Error::Domain(e)))?;
+        let (ceremony_id, options) = self
+            .auth
+            .begin_confirmation(
+                admin.id,
+                Confirmation::Invitation { email },
+                Timestamp::now(),
+            )
+            .await
+            .map_err(status)?;
+        ceremony_response(ceremony_id, &options)
+    }
+
+    async fn finish_create_invitation(
+        &self,
+        request: Request<pb::FinishConfirmationRequest>,
     ) -> Result<Response<pb::CreateInvitationResponse>, Status> {
         let admin = self.admin(&request).await?;
+        let req = request.get_ref();
+        let Confirmation::Invitation { email } =
+            confirmation(&self.auth, admin.id, &req.ceremony_id, &req.credential_json).await?
+        else {
+            return Err(ceremony_expired());
+        };
         let now = Timestamp::now();
         let (_, token) =
-            doris_identity::create_invitation(&self.pool, admin.id, &request.get_ref().email, now)
+            doris_identity::create_invitation(&self.pool, admin.id, email.as_str(), now)
                 .await
                 .map_err(status)?;
         Ok(Response::new(pb::CreateInvitationResponse {
@@ -356,12 +373,12 @@ impl AuthService for AuthApi {
 
     async fn finish_create_api_token(
         &self,
-        request: Request<pb::FinishApiTokenRequest>,
+        request: Request<pb::FinishConfirmationRequest>,
     ) -> Result<Response<pb::CreateApiTokenResponse>, Status> {
         let user = self.user(&request).await?;
         let TokenRequest::Create { change } = self.confirmed(user.id, request.get_ref()).await?
         else {
-            return Err(Status::failed_precondition("ceremony_expired"));
+            return Err(ceremony_expired());
         };
         let (token_id, secret) = doris_identity::create_api_token(
             &self.pool,
@@ -405,13 +422,13 @@ impl AuthService for AuthApi {
 
     async fn finish_change_api_token(
         &self,
-        request: Request<pb::FinishApiTokenRequest>,
+        request: Request<pb::FinishConfirmationRequest>,
     ) -> Result<Response<pb::ChangeApiTokenResponse>, Status> {
         let user = self.user(&request).await?;
         let TokenRequest::Change { token_id, change } =
             self.confirmed(user.id, request.get_ref()).await?
         else {
-            return Err(Status::failed_precondition("ceremony_expired"));
+            return Err(ceremony_expired());
         };
         doris_identity::change_api_token(&self.pool, user.id, token_id, change, Timestamp::now())
             .await
@@ -755,4 +772,26 @@ mod tests {
             date(2026, 1, 1)
         );
     }
+}
+
+/// The action a passkey just confirmed, for any finish RPC.
+pub(crate) async fn confirmation(
+    auth: &Auth,
+    user_id: Uuid,
+    raw_ceremony_id: &str,
+    credential_json: &str,
+) -> Result<Confirmation, Status> {
+    auth.finish_confirmation(
+        user_id,
+        ceremony_id(raw_ceremony_id)?,
+        &credential(credential_json)?,
+        Timestamp::now(),
+    )
+    .await
+    .map_err(finish_status)
+}
+
+/// A confirmation of another kind than the finish RPC carries out.
+pub(crate) fn ceremony_expired() -> Status {
+    Status::failed_precondition("ceremony_expired")
 }

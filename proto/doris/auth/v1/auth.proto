@@ -28,7 +28,9 @@ service AuthService {
   rpc GetInvitation(GetInvitationRequest) returns (GetInvitationResponse);
 
   // Require an admin session.
-  rpc CreateInvitation(CreateInvitationRequest) returns (CreateInvitationResponse);
+  // An admin invites someone, confirmed with one of the admin's passkeys.
+  rpc BeginCreateInvitation(CreateInvitationRequest) returns (BeginCeremonyResponse);
+  rpc FinishCreateInvitation(FinishConfirmationRequest) returns (CreateInvitationResponse);
   rpc ListInvitations(ListInvitationsRequest) returns (ListInvitationsResponse);
   // Require a session (never a token). Creating and changing a token are
   // ceremonies: Begin checks the request and returns WebAuthn request
@@ -36,9 +38,9 @@ service AuthService {
   // passkeys and carries out exactly what Begin was given. A token is shown
   // once, by FinishCreateApiToken.
   rpc BeginCreateApiToken(CreateApiTokenRequest) returns (BeginCeremonyResponse);
-  rpc FinishCreateApiToken(FinishApiTokenRequest) returns (CreateApiTokenResponse);
+  rpc FinishCreateApiToken(FinishConfirmationRequest) returns (CreateApiTokenResponse);
   rpc BeginChangeApiToken(ChangeApiTokenRequest) returns (BeginCeremonyResponse);
-  rpc FinishChangeApiToken(FinishApiTokenRequest) returns (ChangeApiTokenResponse);
+  rpc FinishChangeApiToken(FinishConfirmationRequest) returns (ChangeApiTokenResponse);
   rpc ListApiTokens(ListApiTokensRequest) returns (ListApiTokensResponse);
   // The owner, or an admin for anyone's token.
   rpc RevokeApiToken(RevokeApiTokenRequest) returns (RevokeApiTokenResponse);
@@ -181,7 +183,8 @@ message ChangeApiTokenRequest {
   repeated TokenGrant grants = 4;
 }
 
-message FinishApiTokenRequest {
+// Finishes any passkey confirmation: the ceremony and the assertion.
+message FinishConfirmationRequest {
   string ceremony_id = 1;
   string credential_json = 2;
 }

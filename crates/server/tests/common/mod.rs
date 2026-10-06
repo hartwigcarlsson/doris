@@ -85,10 +85,11 @@ impl TestServer {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let origin = Url::parse(&format!("http://localhost:{}", addr.port())).unwrap();
-        let auth = Auth::new(pool.clone(), "localhost", &origin).await.unwrap();
+        let auth =
+            std::sync::Arc::new(Auth::new(pool.clone(), "localhost", &origin).await.unwrap());
         let app = doris_server::router::<TestDist>(
-            AuthApi::new(pool.clone(), auth),
-            CompanyApi::new(pool.clone(), bolagsverket),
+            AuthApi::new(pool.clone(), auth.clone()),
+            CompanyApi::new(pool.clone(), bolagsverket, auth),
             LedgerApi::new(pool.clone()),
             PayrollApi::new(pool.clone(), TaxTables::new(tax_tables_url)),
             InvoicingApi::new(pool.clone()),
@@ -139,64 +140,114 @@ impl TestServer {
         CompanyServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
     }
 
-    /// An admin invites `email`, who registers; returns the new user's session.
-    pub async fn invite(&self, admin: &str, email: &str) -> String {
-        let invite = self
-            .grpc()
-            .create_invitation(authed(
+    /// An admin invites `email`, confirming with `admin_device`'s passkey.
+    pub async fn create_invitation(
+        &self,
+        admin: &str,
+        admin_device: &mut Device,
+        email: &str,
+    ) -> Result<pb::CreateInvitationResponse, tonic::Status> {
+        let mut grpc = self.grpc();
+        let begin = grpc
+            .begin_create_invitation(authed(
                 pb::CreateInvitationRequest {
                     email: email.into(),
                 },
                 admin,
             ))
-            .await
-            .unwrap()
+            .await?
             .into_inner();
+        let finish = pb::FinishConfirmationRequest {
+            credential_json: self.confirm(admin_device, &begin),
+            ceremony_id: begin.ceremony_id,
+        };
+        Ok(grpc
+            .finish_create_invitation(authed(finish, admin))
+            .await?
+            .into_inner())
+    }
+
+    /// An admin invites `email`, who registers; returns the new user's session.
+    pub async fn invite(&self, admin: &str, admin_device: &mut Device, email: &str) -> String {
+        let invite = self
+            .create_invitation(admin, admin_device, email)
+            .await
+            .unwrap();
         self.sign_up(&mut device(), email, Some(&invite.token))
             .await
     }
 
     /// Like `invite`, for a test that tells people apart by name.
-    pub async fn invite_as(&self, admin: &str, email: &str, name: &str) -> String {
+    pub async fn invite_as(
+        &self,
+        admin: &str,
+        admin_device: &mut Device,
+        email: &str,
+        name: &str,
+    ) -> String {
         let invite = self
-            .grpc()
-            .create_invitation(authed(
-                pb::CreateInvitationRequest {
-                    email: email.into(),
-                },
-                admin,
-            ))
+            .create_invitation(admin, admin_device, email)
             .await
-            .unwrap()
-            .into_inner();
+            .unwrap();
         self.sign_up_as(&mut device(), email, name, Some(&invite.token))
             .await
     }
 
     /// Like `invite`, keeping the new user's passkey on `device`.
-    pub async fn invite_with(&self, admin: &str, email: &str, device: &mut Device) -> String {
+    pub async fn invite_with(
+        &self,
+        admin: &str,
+        admin_device: &mut Device,
+        email: &str,
+        device: &mut Device,
+    ) -> String {
         let invite = self
-            .grpc()
-            .create_invitation(authed(
-                pb::CreateInvitationRequest {
-                    email: email.into(),
-                },
-                admin,
-            ))
+            .create_invitation(admin, admin_device, email)
             .await
-            .unwrap()
-            .into_inner();
+            .unwrap();
         self.sign_up(device, email, Some(&invite.token)).await
     }
 
-    /// `device`'s assertion for a ceremony's request options, as the browser
+    /// A member adds `email` to a company, confirming with `device`'s passkey.
+    pub async fn add_member(
+        &self,
+        session: &str,
+        device: &mut Device,
+        company_id: &str,
+        email: &str,
+    ) -> Result<(), tonic::Status> {
+        use doris_proto::company::v1 as cpb;
+        let mut api = self.companies();
+        let begin = api
+            .begin_add_member(authed(
+                cpb::AddMemberRequest {
+                    company_id: company_id.into(),
+                    email: email.into(),
+                },
+                session,
+            ))
+            .await?
+            .into_inner();
+        let finish = cpb::FinishAddMemberRequest {
+            credential_json: self.confirm_options(device, &begin.options_json),
+            ceremony_id: begin.ceremony_id,
+        };
+        api.finish_add_member(authed(finish, session)).await?;
+        Ok(())
+    }
+
+    /// `device`'s assertion for WebAuthn request options, as the browser
     /// gives it after the user touches the passkey.
-    pub fn confirm(&self, device: &mut Device, begin: &pb::BeginCeremonyResponse) -> String {
-        let options: RequestChallengeResponse = serde_json::from_str(&begin.options_json).unwrap();
+    pub fn confirm_options(&self, device: &mut Device, options_json: &str) -> String {
+        let options: RequestChallengeResponse = serde_json::from_str(options_json).unwrap();
         let credential = device
             .do_authentication(self.origin.clone(), options)
             .unwrap();
         serde_json::to_string(&credential).unwrap()
+    }
+
+    pub fn confirm(&self, device: &mut Device, begin: &pb::BeginCeremonyResponse) -> String {
+        self.confirm_options(device, &begin.options_json)
     }
 
     /// Creates a token: begins, confirms with `device`'s passkey, finishes.
@@ -211,7 +262,7 @@ impl TestServer {
             .begin_create_api_token(authed(request, session))
             .await?
             .into_inner();
-        let finish = pb::FinishApiTokenRequest {
+        let finish = pb::FinishConfirmationRequest {
             credential_json: self.confirm(device, &begin),
             ceremony_id: begin.ceremony_id,
         };
@@ -233,7 +284,7 @@ impl TestServer {
             .begin_change_api_token(authed(request, session))
             .await?
             .into_inner();
-        let finish = pb::FinishApiTokenRequest {
+        let finish = pb::FinishConfirmationRequest {
             credential_json: self.confirm(device, &begin),
             ceremony_id: begin.ceremony_id,
         };

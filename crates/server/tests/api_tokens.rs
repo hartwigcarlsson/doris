@@ -129,8 +129,9 @@ async fn a_token_without_grants_is_refused() {
 #[tokio::test]
 async fn a_token_is_only_for_the_users_own_companies_and_known_scopes() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     let annas = company(&server, &anna, "556016-0680").await;
     let mut api = server.grpc();
 
@@ -189,8 +190,10 @@ async fn someone_elses_token_cannot_be_seen_or_revoked_but_an_admin_can_revoke_i
     let mut annas = device();
     let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let mut bos = device();
-    let bo = server.invite_with(&anna, "bo@example.se", &mut bos).await;
-    let cecilia = server.invite(&anna, "cecilia@example.se").await;
+    let bo = server
+        .invite_with(&anna, &mut annas, "bo@example.se", &mut bos)
+        .await;
+    let cecilia = server.invite(&anna, &mut annas, "cecilia@example.se").await;
     let bos_company = company(&server, &bo, "556016-0680").await;
     let mut api = server.grpc();
     let created = server
@@ -473,7 +476,7 @@ async fn a_token_cannot_manage_tokens_invite_or_create_companies_but_knows_its_o
         ))
         .await
         .unwrap_err(),
-        auth.create_invitation(bearer(
+        auth.begin_create_invitation(bearer(
             pb::CreateInvitationRequest {
                 email: "bo@example.se".into(),
             },
@@ -770,7 +773,7 @@ async fn each_ceremony_is_finished_once_by_the_user_who_began_it() {
     let server = TestServer::start().await;
     let mut annas = device();
     let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     let id = company(&server, &anna, "556016-0680").await;
     let mut auth = server.grpc();
     let begin = auth
@@ -781,7 +784,7 @@ async fn each_ceremony_is_finished_once_by_the_user_who_began_it() {
         .await
         .unwrap()
         .into_inner();
-    let finish = pb::FinishApiTokenRequest {
+    let finish = pb::FinishConfirmationRequest {
         credential_json: server.confirm(&mut annas, &begin),
         ceremony_id: begin.ceremony_id.clone(),
     };
@@ -805,7 +808,7 @@ async fn each_ceremony_is_finished_once_by_the_user_who_began_it() {
         .await
         .unwrap()
         .into_inner();
-    let finish = pb::FinishApiTokenRequest {
+    let finish = pb::FinishConfirmationRequest {
         credential_json: server.confirm(&mut annas, &begin),
         ceremony_id: begin.ceremony_id,
     };
@@ -829,7 +832,9 @@ async fn a_change_is_refused_at_begin_before_any_passkey() {
     let mut annas = device();
     let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let mut bos = device();
-    let bo = server.invite_with(&anna, "bo@example.se", &mut bos).await;
+    let bo = server
+        .invite_with(&anna, &mut annas, "bo@example.se", &mut bos)
+        .await;
     let annas_company = company(&server, &anna, "556016-0680").await;
     let bos_company = company(&server, &bo, "556036-0793").await;
     api_token(
@@ -904,7 +909,7 @@ async fn a_token_revoked_during_the_ceremony_is_not_changed() {
     auth.revoke_api_token(authed(pb::RevokeApiTokenRequest { token_id }, &anna))
         .await
         .unwrap();
-    let finish = pb::FinishApiTokenRequest {
+    let finish = pb::FinishConfirmationRequest {
         credential_json: server.confirm(&mut annas, &begin),
         ceremony_id: begin.ceremony_id,
     };

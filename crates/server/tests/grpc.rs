@@ -159,18 +159,12 @@ async fn failed_logins_look_the_same_for_known_and_unknown_emails() {
 #[tokio::test]
 async fn protected_calls_need_a_session_and_admin_calls_an_admin() {
     let server = TestServer::start().await;
-    let admin = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut admins = device();
+    let admin = server.sign_up(&mut admins, "anna@example.se", None).await;
     let invite = server
-        .grpc()
-        .create_invitation(authed(
-            pb::CreateInvitationRequest {
-                email: "bo@example.se".into(),
-            },
-            &admin,
-        ))
+        .create_invitation(&admin, &mut admins, "bo@example.se")
         .await
-        .unwrap()
-        .into_inner();
+        .unwrap();
     let member = server
         .sign_up(&mut device(), "bo@example.se", Some(&invite.token))
         .await;
@@ -187,7 +181,7 @@ async fn protected_calls_need_a_session_and_admin_calls_an_admin() {
         .unwrap_err();
     let by_member = server
         .grpc()
-        .create_invitation(authed(
+        .begin_create_invitation(authed(
             pb::CreateInvitationRequest {
                 email: "c@example.se".into(),
             },
@@ -219,19 +213,13 @@ async fn protected_calls_need_a_session_and_admin_calls_an_admin() {
 #[tokio::test]
 async fn an_admin_invites_a_member_who_registers_through_the_link() {
     let server = TestServer::start().await;
-    let admin = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut admins = device();
+    let admin = server.sign_up(&mut admins, "anna@example.se", None).await;
 
     let invite = server
-        .grpc()
-        .create_invitation(authed(
-            pb::CreateInvitationRequest {
-                email: "Bo@Example.se".into(),
-            },
-            &admin,
-        ))
+        .create_invitation(&admin, &mut admins, "Bo@Example.se")
         .await
-        .unwrap()
-        .into_inner();
+        .unwrap();
     let lookup = server
         .grpc()
         .get_invitation(pb::GetInvitationRequest {

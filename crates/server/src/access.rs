@@ -39,7 +39,8 @@ fn classify(service: &str, method: &str) -> Option<Access> {
             | "FinishAddPasskey"
             | "ListPasskeys"
             | "GetInvitation"
-            | "CreateInvitation"
+            | "BeginCreateInvitation"
+            | "FinishCreateInvitation"
             | "ListInvitations"
             | "BeginCreateApiToken"
             | "FinishCreateApiToken"
@@ -53,7 +54,8 @@ fn classify(service: &str, method: &str) -> Option<Access> {
         ("doris.company.v1.CompanyService", "GetCompany" | "ListMembers") => Company(CompanyRead),
         (
             "doris.company.v1.CompanyService",
-            "GetLookupStatus" | "LookupCompany" | "CreateCompany" | "AddMember",
+            "GetLookupStatus" | "LookupCompany" | "CreateCompany" | "BeginAddMember"
+            | "FinishAddMember",
         ) => SessionOnly,
 
         (
@@ -216,7 +218,14 @@ mod tests {
                 "/doris.auth.v1.AuthService/FinishChangeApiToken",
                 SessionOnly,
             ),
-            ("/doris.company.v1.CompanyService/AddMember", SessionOnly),
+            (
+                "/doris.company.v1.CompanyService/BeginAddMember",
+                SessionOnly,
+            ),
+            (
+                "/doris.auth.v1.AuthService/FinishCreateInvitation",
+                SessionOnly,
+            ),
             ("/doris.ledger.v1.LedgerService/SomethingNew", SessionOnly),
             ("/index.html", SessionOnly),
         ] {

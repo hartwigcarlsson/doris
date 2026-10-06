@@ -84,7 +84,8 @@ async fn list(api: &mut Invoicing, id: &str, session: &str) -> pb::ListSupplierI
 #[tokio::test]
 async fn an_invoice_is_registered_paid_reversed_and_listed() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, cpb::AccountingMethod::Invoice).await;
     let mut api = server.invoicing();
 
@@ -155,7 +156,8 @@ async fn an_invoice_is_registered_paid_reversed_and_listed() {
 #[tokio::test]
 async fn kontantmetoden_is_reported_and_cancelling_works() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, cpb::AccountingMethod::Cash).await;
     let mut api = server.invoicing();
     api.register_supplier_invoice(authed(request(&id, "F-1"), &anna))
@@ -184,7 +186,8 @@ async fn kontantmetoden_is_reported_and_cancelling_works() {
 #[tokio::test]
 async fn bad_requests_have_stable_codes() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, cpb::AccountingMethod::Invoice).await;
     let mut api = server.invoicing();
     let ok = || request(&id, "F-1");
@@ -387,7 +390,8 @@ async fn bad_requests_have_stable_codes() {
 #[tokio::test]
 async fn a_cancelled_invoice_cannot_be_paid() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, cpb::AccountingMethod::Invoice).await;
     let mut api = server.invoicing();
     api.register_supplier_invoice(authed(request(&id, "F-1"), &anna))
@@ -427,8 +431,9 @@ async fn a_cancelled_invoice_cannot_be_paid() {
 #[tokio::test]
 async fn others_cannot_see_the_invoices_or_their_underlag() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     let id = company(&server, &anna, cpb::AccountingMethod::Invoice).await;
     let mut api = server.invoicing();
     api.register_supplier_invoice(authed(request(&id, "F-1"), &anna))

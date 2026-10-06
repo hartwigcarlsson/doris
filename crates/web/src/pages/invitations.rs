@@ -1,10 +1,33 @@
 use crate::api::{api, pb};
 use crate::errors::describe;
 use crate::format::date;
+use crate::passkey;
 use crate::task::spawn_local;
 use crate::ui::{Button, Card, ErrorAlert, Field, PageHeader};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
+
+/// Begins the invitation, has one of the admin's passkeys confirm it and
+/// finishes; returns the invitation's token.
+async fn invite_with_passkey(email: String) -> Result<String, String> {
+    let mut api = api();
+    let begin = api
+        .begin_create_invitation(pb::CreateInvitationRequest { email })
+        .await
+        .map_err(|s| describe(&s))?
+        .into_inner();
+    let credential_json = passkey::get(&begin.options_json).await?;
+    let finish = pb::FinishConfirmationRequest {
+        ceremony_id: begin.ceremony_id,
+        credential_json,
+    };
+    Ok(api
+        .finish_create_invitation(finish)
+        .await
+        .map_err(|s| describe(&s))?
+        .into_inner()
+        .token)
+}
 
 #[component]
 pub fn Invitations() -> impl IntoView {
@@ -30,18 +53,14 @@ pub fn Invitations() -> impl IntoView {
         error.set(None);
         link.set(None);
         spawn_local(async move {
-            let request = pb::CreateInvitationRequest {
-                email: email.get_untracked(),
-            };
-            match api().create_invitation(request).await {
-                Ok(created) => {
+            match invite_with_passkey(email.get_untracked()).await {
+                Ok(token) => {
                     let origin = window().location().origin().unwrap_or_default();
-                    let token = created.into_inner().token;
                     link.set(Some(format!("{origin}/register?invitation={token}")));
                     email.set(String::new());
                     refresh();
                 }
-                Err(status) => error.set(Some(describe(&status))),
+                Err(message) => error.set(Some(message)),
             }
             busy.set(false);
         });
@@ -50,7 +69,7 @@ pub fn Invitations() -> impl IntoView {
     view! {
         <div class="grid gap-6">
             <PageHeader title="Inbjudningar" />
-            <Card title="Bjud in" description="Länken gäller i 7 dagar och kan användas en gång." narrow=true>
+            <Card title="Bjud in" description="Länken gäller i 7 dagar och kan användas en gång. Du bekräftar med din passkey." narrow=true>
                 <form class="grid gap-4" novalidate on:submit=submit>
                     <Field label="E-post" id="email" kind="email" value=email />
                     <ErrorAlert message=error />

@@ -6,10 +6,12 @@ use crate::bolagsverket::{Bolagsverket, LookupError};
 use crate::grpc::{self, signed_in_user};
 use doris_company::domain::{AccountingMethod, Address, Company, DomainError, LegalForm, OrgNr};
 use doris_company::{Error, NewCompany};
+use doris_identity::domain::Confirmation;
 use doris_proto::company::v1 as pb;
 use doris_proto::company::v1::company_service_server::CompanyService;
 use jiff::civil::Date;
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
@@ -17,11 +19,20 @@ pub struct CompanyApi {
     pool: SqlitePool,
     /// `None` when no Bolagsverket credentials are configured.
     bolagsverket: Option<Bolagsverket>,
+    auth: Arc<doris_identity::Auth>,
 }
 
 impl CompanyApi {
-    pub fn new(pool: SqlitePool, bolagsverket: Option<Bolagsverket>) -> Self {
-        Self { pool, bolagsverket }
+    pub fn new(
+        pool: SqlitePool,
+        bolagsverket: Option<Bolagsverket>,
+        auth: Arc<doris_identity::Auth>,
+    ) -> Self {
+        Self {
+            pool,
+            bolagsverket,
+            auth,
+        }
     }
 
     /// The company, if the signed-in user is a member of it.
@@ -156,10 +167,10 @@ impl CompanyService for CompanyApi {
         }))
     }
 
-    async fn add_member(
+    async fn begin_add_member(
         &self,
         request: Request<pb::AddMemberRequest>,
-    ) -> Result<Response<pb::AddMemberResponse>, Status> {
+    ) -> Result<Response<pb::BeginAddMemberResponse>, Status> {
         // Access first, so a non-member can't probe which emails exist.
         let (company, actor) = self
             .member_company(&request, &request.get_ref().company_id)
@@ -168,7 +179,39 @@ impl CompanyService for CompanyApi {
             .await
             .map_err(grpc::status)?
             .ok_or_else(|| Status::not_found("user_not_found"))?;
-        doris_company::add_member(&self.pool, company.id, actor, member.id)
+        let action = Confirmation::AddMember {
+            company_id: company.id,
+            email: member.email,
+        };
+        let (ceremony_id, options) = self
+            .auth
+            .begin_confirmation(actor, action, jiff::Timestamp::now())
+            .await
+            .map_err(grpc::status)?;
+        Ok(Response::new(pb::BeginAddMemberResponse {
+            ceremony_id: ceremony_id.to_string(),
+            options_json: serde_json::to_string(&options)
+                .map_err(|_| Status::internal("internal"))?,
+        }))
+    }
+
+    async fn finish_add_member(
+        &self,
+        request: Request<pb::FinishAddMemberRequest>,
+    ) -> Result<Response<pb::AddMemberResponse>, Status> {
+        let user = signed_in_user(&self.pool, &request).await?;
+        let req = request.get_ref();
+        let Confirmation::AddMember { company_id, email } =
+            grpc::confirmation(&self.auth, user.id, &req.ceremony_id, &req.credential_json).await?
+        else {
+            return Err(grpc::ceremony_expired());
+        };
+        let member = doris_identity::find_user_by_email(&self.pool, email.as_str())
+            .await
+            .map_err(grpc::status)?
+            .ok_or_else(|| Status::not_found("user_not_found"))?;
+        // add_member checks again that the user is a member.
+        doris_company::add_member(&self.pool, company_id, user.id, member.id)
             .await
             .map_err(status)?;
         Ok(Response::new(pb::AddMemberResponse {}))

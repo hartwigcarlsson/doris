@@ -1,11 +1,31 @@
 use crate::api::{company_api, cpb};
 use crate::errors::describe;
 use crate::format::{accounting_method_label, legal_form_label};
+use crate::passkey;
 use crate::task::spawn_local;
 use crate::ui::{Button, Card, ErrorAlert, Field, PageHeader, Panel};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
+
+/// Begins adding the member, has one of the user's passkeys confirm it and
+/// finishes.
+async fn add_with_passkey(company_id: String, email: String) -> Result<(), String> {
+    let mut api = company_api();
+    let begin = api
+        .begin_add_member(cpb::AddMemberRequest { company_id, email })
+        .await
+        .map_err(|s| describe(&s))?
+        .into_inner();
+    let credential_json = passkey::get(&begin.options_json).await?;
+    api.finish_add_member(cpb::FinishAddMemberRequest {
+        ceremony_id: begin.ceremony_id,
+        credential_json,
+    })
+    .await
+    .map_err(|s| describe(&s))?;
+    Ok(())
+}
 
 #[component]
 pub fn CompanyPage() -> impl IntoView {
@@ -47,16 +67,12 @@ pub fn CompanyPage() -> impl IntoView {
         busy.set(true);
         member_error.set(None);
         spawn_local(async move {
-            let request = cpb::AddMemberRequest {
-                company_id: id(),
-                email: email.get_untracked(),
-            };
-            match company_api().add_member(request).await {
-                Ok(_) => {
+            match add_with_passkey(id(), email.get_untracked()).await {
+                Ok(()) => {
                     email.set(String::new());
                     load();
                 }
-                Err(status) => member_error.set(Some(describe(&status))),
+                Err(message) => member_error.set(Some(message)),
             }
             busy.set(false);
         });
@@ -93,7 +109,7 @@ pub fn CompanyPage() -> impl IntoView {
                     })
             }}
             <Show when=move || company.get().is_some()>
-                <Card title="Medlemmar" description="De som har tillgång till företaget." narrow=true>
+                <Card title="Medlemmar" description="De som har tillgång till företaget. Du bekräftar med din passkey när du lägger till någon." narrow=true>
                     <ul class="mb-4 grid gap-2">
                         <For each=move || members.get() key=|m| m.email.clone() let(member)>
                             <li class="flex justify-between gap-2">

@@ -240,7 +240,7 @@ async fn save_with_passkey(
     .map_err(|s| describe(&s))?
     .into_inner();
     let credential_json = passkey::get(&begin.options_json).await?;
-    let finish = pb::FinishApiTokenRequest {
+    let finish = pb::FinishConfirmationRequest {
         ceremony_id: begin.ceremony_id,
         credential_json,
     };

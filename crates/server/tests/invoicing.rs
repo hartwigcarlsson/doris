@@ -52,7 +52,8 @@ fn supplier(name: &str) -> pb::SupplierDetails {
 #[tokio::test]
 async fn a_member_keeps_customers() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.invoicing();
 
@@ -113,7 +114,8 @@ async fn a_member_keeps_customers() {
 #[tokio::test]
 async fn a_member_keeps_suppliers_and_sees_formatted_numbers() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.invoicing();
 
@@ -171,7 +173,8 @@ async fn a_member_keeps_suppliers_and_sees_formatted_numbers() {
 #[tokio::test]
 async fn bad_details_and_unknown_numbers_have_stable_codes() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.invoicing();
     let invalid = |code: &str| (Code::InvalidArgument, code.to_owned());
@@ -288,8 +291,9 @@ async fn bad_details_and_unknown_numbers_have_stable_codes() {
 #[tokio::test]
 async fn others_get_company_not_found_and_strangers_not_signed_in() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     let id = company(&server, &anna).await;
     let mut api = server.invoicing();
     let not_found = (Code::NotFound, "company_not_found".to_owned());
