@@ -1,7 +1,9 @@
 use doris_identity::domain::{
     Confirmation, DomainError, Email, Grant, Role, Scope, TokenChange, TokenRequest, User,
 };
-use doris_identity::{Auth, CEREMONY_TTL, Error, create_invitation, get_user, session_user};
+use doris_identity::{
+    Auth, CEREMONY_TTL, Error, create_invitation, get_user, list_invitations, session_user,
+};
 use jiff::{SignedDuration, Timestamp};
 use sqlx::SqlitePool;
 use url::Url;
@@ -879,6 +881,27 @@ async fn an_invitation_and_a_new_member_are_confirmed_exactly_as_asked() {
             .unwrap();
         assert_eq!(confirmed, action);
     }
+}
+
+#[tokio::test]
+async fn beginning_an_invitation_confirmation_saves_no_invitation() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+
+    auth.begin_confirmation(
+        anna.id,
+        Confirmation::Invitation {
+            email: email("bo@example.se"),
+        },
+        now(),
+    )
+    .await
+    .unwrap();
+
+    assert!(list_invitations(&pool).await.unwrap().is_empty());
+    create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

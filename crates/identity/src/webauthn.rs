@@ -1,6 +1,7 @@
 //! WebAuthn ceremonies: registering with a passkey, adding passkeys (confirmed
-//! by an existing one), logging in and confirming an API token request, an invitation or a new member). Ceremony state
-//! is kept server-side, is single use and expires after [`CEREMONY_TTL`].
+//! by an existing one), logging in and confirming an API token request, an
+//! invitation or a new member. Ceremony state is kept server-side, is single
+//! use and expires after [`CEREMONY_TTL`].
 
 use crate::domain::{Confirmation, DisplayName, Email, Passkey, TokenRequest, User};
 use crate::{

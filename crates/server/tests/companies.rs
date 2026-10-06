@@ -153,6 +153,12 @@ async fn every_company_rpc_needs_a_session() {
         })
         .await
         .map(drop),
+        api.finish_add_member(pb::FinishAddMemberRequest {
+            ceremony_id: "x".into(),
+            credential_json: "{}".into(),
+        })
+        .await
+        .map(drop),
         api.list_members(pb::ListMembersRequest { company_id: id() })
             .await
             .map(drop),

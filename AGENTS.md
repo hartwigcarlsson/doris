@@ -195,8 +195,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   most a year off, ends at midnight in Sweden after it, and can be revoked
   by its owner or an admin. Creating and changing a token are passkey ceremonies
   (`Auth::begin_confirmation`/`finish_confirmation`, kind `confirm` in
-  `webauthn_ceremonies`; the request is `FinishConfirmationRequest`): Begin checks the request and asks for one of the
-  user's own passkeys, and Finish carries out exactly what Begin was given
+  `webauthn_ceremonies`; the request is `FinishConfirmationRequest`): Begin
+  checks the request and asks for one of the user's own passkeys, and Finish
+  carries out exactly what Begin was given
   (`ApiTokenCreated` or `ApiTokenChanged`), after the server has checked
   each company's membership again. Only the owner changes a token (name,
   last day, grants; never its secret), and never a revoked one; revoking
