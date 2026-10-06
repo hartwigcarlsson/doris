@@ -162,12 +162,17 @@ fn Overview() -> impl IntoView {
                         let list = response.into_inner().fiscal_years;
                         year_list.set(list.clone());
                         year.set(default_year(&list, &preferred, &today()));
+                        if list.is_empty() {
+                            // No year to ask about: the other todos still show.
+                            vat_periods.set(Some(Ok(Vec::new())));
+                        }
                         years.set(Some(Ok(list)));
                     }
                     Err(status) => {
                         // Without a year nothing is asked for it: the cards
                         // that need one show why instead of loading forever.
                         let message = describe(&status);
+                        vat_periods.set(Some(Ok(Vec::new())));
                         balance.set(Some(Err(message.clone())));
                         vouchers.set(Some(Err(message.clone())));
                         years.set(Some(Err(message)));
@@ -269,21 +274,36 @@ fn Overview() -> impl IntoView {
                 }
             }
         });
+        // The chosen year and the one before it: a declaration is due soon
+        // after its period, so the year before holds every open deadline.
+        let previous = year_list.with_untracked(|ys| {
+            ys.iter()
+                .map(|y| y.start.clone())
+                .filter(|s| *s < start)
+                .max()
+        });
         spawn_local({
             let (company_id, start, stale) = (company_id.clone(), start.clone(), stale.clone());
             async move {
-                let listed = vat_api()
-                    .list_vat_returns(vpb::ListVatReturnsRequest {
-                        company_id,
-                        fiscal_year_start: start,
-                    })
-                    .await;
+                let mut all = Vec::new();
+                let mut failed = None;
+                for fiscal_year_start in previous.into_iter().chain([start]) {
+                    let listed = vat_api()
+                        .list_vat_returns(vpb::ListVatReturnsRequest {
+                            company_id: company_id.clone(),
+                            fiscal_year_start,
+                        })
+                        .await;
+                    match listed {
+                        Ok(r) => all.extend(r.into_inner().periods),
+                        Err(s) => {
+                            failed = Some(describe(&s));
+                            break;
+                        }
+                    }
+                }
                 if !stale() {
-                    vat_periods.set(Some(
-                        listed
-                            .map(|r| r.into_inner().periods)
-                            .map_err(|s| describe(&s)),
-                    ));
+                    vat_periods.set(Some(failed.map_or(Ok(all), Err)));
                 }
             }
         });
