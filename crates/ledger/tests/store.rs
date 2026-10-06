@@ -3,13 +3,15 @@ use doris_company::domain::{AccountingMethod, LegalForm};
 use doris_ledger::domain::AccountNumber;
 use doris_ledger::domain::{ContentType, DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
 use doris_ledger::statements::StatementLine;
+use doris_ledger::vat_box::VatBox;
 use doris_ledger::{
     Error, NewAttachment, VoucherRef, account_ledger, add_account, add_attachment, attachment_data,
     check_accounts_in, close_fiscal_year, correct_voucher, corrected_vouchers_in,
     financial_statements, get_attachment, link_attachment_in, list_accounts, list_fiscal_years,
     list_vouchers, opening_balances, rebuild_projections, record_voucher, record_voucher_in,
     record_voucher_with_attachments, rename_account, reopen_fiscal_year, set_account_active,
-    set_opening_balances, store_attachment_in, trial_balance,
+    set_account_vat_box, set_opening_balances, store_attachment_in, trial_balance,
+    vat_box_totals_in,
 };
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -91,6 +93,7 @@ async fn the_first_change_seeds_the_chart_in_the_same_transaction() {
         events_of(&pool, "accounts-").await,
         [
             "ChartSeeded",
+            "VatBoxesRecorded",
             "AccountAdded",
             "AccountRenamed",
             "AccountDeactivated"
@@ -292,7 +295,7 @@ async fn a_rolled_back_transaction_uses_no_number() {
 
     assert_eq!(abandoned.number, 1);
     assert_eq!(kept.number, 1);
-    assert!(events_of(&pool, "accounts-").await == ["ChartSeeded"]);
+    assert!(events_of(&pool, "accounts-").await == ["ChartSeeded", "VatBoxesRecorded"]);
 }
 
 #[tokio::test]
@@ -305,7 +308,10 @@ async fn the_first_voucher_seeds_the_chart_it_is_checked_against() {
         .await
         .unwrap();
 
-    assert_eq!(events_of(&pool, "accounts-").await, ["ChartSeeded"]);
+    assert_eq!(
+        events_of(&pool, "accounts-").await,
+        ["ChartSeeded", "VatBoxesRecorded"]
+    );
 }
 
 #[tokio::test]
@@ -1739,4 +1745,247 @@ async fn stored_bytes_are_read_by_their_hash_and_an_unknown_hash_is_not_found() 
         matches!(unknown, Err(Error::Domain(DomainError::AttachmentNotFound))),
         "{unknown:?}"
     );
+}
+
+#[tokio::test]
+async fn an_accounts_box_is_listed_set_and_cleared() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let boxed = |accounts: &[doris_ledger::domain::Account], n: u16| {
+        accounts
+            .iter()
+            .find(|a| a.number.get() == n)
+            .unwrap()
+            .vat_box
+            .map(VatBox::get)
+    };
+    let before = list_accounts(&pool, id, anna).await.unwrap();
+    assert_eq!(boxed(&before, 2611), Some(10));
+
+    set_account_vat_box(&pool, id, anna, 3004, Some(5))
+        .await
+        .unwrap();
+    set_account_vat_box(&pool, id, anna, 2611, None)
+        .await
+        .unwrap();
+    let after = list_accounts(&pool, id, anna).await.unwrap();
+    assert_eq!((boxed(&after, 3004), boxed(&after, 2611)), (Some(5), None));
+    assert_eq!(
+        events_of(&pool, "accounts-").await,
+        [
+            "ChartSeeded",
+            "VatBoxesRecorded",
+            "AccountVatBoxSet",
+            "AccountVatBoxSet"
+        ]
+    );
+
+    let refused = set_account_vat_box(&pool, id, anna, 2650, Some(48)).await;
+    assert!(matches!(
+        refused,
+        Err(Error::Domain(DomainError::InvalidVatBox))
+    ));
+    let refused = set_account_vat_box(&pool, id, anna, 2611, Some(49)).await;
+    assert!(matches!(
+        refused,
+        Err(Error::Domain(DomainError::InvalidVatBox))
+    ));
+    let stranger = set_account_vat_box(&pool, id, Uuid::new_v4(), 3004, None).await;
+    assert!(matches!(stranger, Err(Error::NotFound)));
+}
+
+fn voucher(date: &str, text: &str, lines: &[(u32, i64, i64)]) -> RecordVoucher {
+    RecordVoucher {
+        date: d(date),
+        text: text.into(),
+        lines: lines
+            .iter()
+            .map(|&(a, dr, cr)| VoucherLine::new(a, dr, cr).unwrap())
+            .collect(),
+    }
+}
+
+#[tokio::test]
+async fn vat_totals_sum_a_periods_boxed_accounts_and_leave_out_what_is_excluded() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    // A sale with 25 % VAT, a purchase with input VAT, and a sale outside the period.
+    record_voucher(
+        &pool,
+        id,
+        anna,
+        voucher(
+            "2025-02-10",
+            "Sale",
+            &[(1930, 12_500, 0), (3001, 0, 10_000), (2611, 0, 2_500)],
+        ),
+        today,
+    )
+    .await
+    .unwrap();
+    record_voucher(
+        &pool,
+        id,
+        anna,
+        voucher(
+            "2025-03-31",
+            "Buy",
+            &[(4010, 800, 0), (2640, 200, 0), (1930, 0, 1_000)],
+        ),
+        today,
+    )
+    .await
+    .unwrap();
+    record_voucher(
+        &pool,
+        id,
+        anna,
+        voucher(
+            "2025-04-01",
+            "Later",
+            &[(1930, 125, 0), (3001, 0, 100), (2611, 0, 25)],
+        ),
+        today,
+    )
+    .await
+    .unwrap();
+    // A settlement to exclude, and its correction.
+    let settled = record_voucher(
+        &pool,
+        id,
+        anna,
+        voucher(
+            "2025-03-31",
+            "Momsavräkning",
+            &[(2611, 2_500, 0), (2640, 0, 200), (2650, 0, 2_300)],
+        ),
+        today,
+    )
+    .await
+    .unwrap();
+    correct_voucher(
+        &pool,
+        id,
+        anna,
+        settled.fiscal_year_start,
+        settled.number,
+        d("2025-03-31"),
+        today,
+    )
+    .await
+    .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let totals = vat_box_totals_in(&mut conn, id, d("2025-01-01"), d("2025-03-31"), &[settled])
+        .await
+        .unwrap();
+    let got: Vec<(u16, u8, i64)> = totals
+        .iter()
+        .map(|t| (t.number, t.vat_box.get(), t.saldo))
+        .collect();
+    assert_eq!(
+        got,
+        [(2611, 10, -2_500), (2640, 48, 200), (3001, 5, -10_000)]
+    );
+    assert_eq!(
+        totals[0].name,
+        "Utgående moms på försäljning inom Sverige, 25 %"
+    );
+
+    // Without the exclusion the settlement and its correction cancel each
+    // other on 2611 and 2640; 2650 has no box.
+    let all = vat_box_totals_in(&mut conn, id, d("2025-01-01"), d("2025-03-31"), &[])
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 3);
+}
+
+#[tokio::test]
+async fn a_new_chart_records_its_boxes_with_the_seed() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    record_voucher(&pool, id, anna, sale("2025-01-15", 100), d(TODAY))
+        .await
+        .unwrap();
+    assert_eq!(
+        events_of(&pool, "accounts-").await,
+        ["ChartSeeded", "VatBoxesRecorded"]
+    );
+    add_account(&pool, id, anna, 4536, "Tjänster EU, 12 %")
+        .await
+        .unwrap();
+    let accounts = list_accounts(&pool, id, anna).await.unwrap();
+    let boxed = |n: u16| {
+        accounts
+            .iter()
+            .find(|a| a.number.get() == n)
+            .unwrap()
+            .vat_box
+            .map(VatBox::get)
+    };
+    assert_eq!(
+        (boxed(2611), boxed(4536), boxed(1930)),
+        (Some(10), Some(21), None)
+    );
+    assert_eq!(
+        events_of(&pool, "accounts-").await,
+        [
+            "ChartSeeded",
+            "VatBoxesRecorded",
+            "AccountAdded",
+            "AccountVatBoxSet"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_chart_from_before_records_its_boxes_at_the_next_write_once() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    // A chart seeded by an earlier version: just the ChartSeeded, and a box
+    // the user chose.
+    {
+        let mut tx = doris_eventstore::begin(&pool).await.unwrap();
+        let events = [
+            doris_ledger::domain::seed_chart(),
+            doris_ledger::domain::ChartEvent::AccountVatBoxSet {
+                number: AccountNumber::parse(3004).unwrap(),
+                vat_box: VatBox::parse(5).ok(),
+            },
+        ]
+        .iter()
+        .map(|e| doris_eventstore::NewEvent::from_tagged(e, 1).unwrap())
+        .collect::<Vec<_>>();
+        let metadata = doris_eventstore::Metadata {
+            actor: Some(anna.to_string()),
+        };
+        doris_eventstore::append(&mut tx, &format!("accounts-{id}"), 0, &events, &metadata)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+    let before = list_accounts(&pool, id, anna).await.unwrap();
+    record_voucher(&pool, id, anna, sale("2025-01-15", 100), d(TODAY))
+        .await
+        .unwrap();
+    record_voucher(&pool, id, anna, sale("2025-01-16", 100), d(TODAY))
+        .await
+        .unwrap();
+    assert_eq!(
+        events_of(&pool, "accounts-").await,
+        ["ChartSeeded", "AccountVatBoxSet", "VatBoxesRecorded"]
+    );
+    let after = list_accounts(&pool, id, anna).await.unwrap();
+    assert_eq!(before, after, "recording changes no box");
+    let box_3004 = after
+        .iter()
+        .find(|a| a.number.get() == 3004)
+        .unwrap()
+        .vat_box;
+    assert_eq!(box_3004.map(VatBox::get), Some(5));
 }

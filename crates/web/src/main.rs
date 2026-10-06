@@ -14,6 +14,7 @@ mod pages;
 mod passkey;
 mod task;
 mod ui;
+mod vat_form;
 mod voucher_lines;
 mod voucher_search;
 

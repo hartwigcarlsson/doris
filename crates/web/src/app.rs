@@ -7,7 +7,7 @@ use crate::pages::{
     AccountLedger, Accounts, Agi, Companies, CompanyPage, CustomerInvoices, Customers, Employees,
     FinancialStatements, FiscalYears, Home, Invitations, Login, NewCompany, NewCustomerInvoice,
     NewSupplierInvoice, NewVoucher, OpeningBalances, Passkeys, PayrollRunPage, PayrollRuns,
-    Register, SupplierInvoices, Suppliers, TrialBalance, Vouchers,
+    Register, SupplierInvoices, Suppliers, TrialBalance, Vat, VatReturnPage, Vouchers,
 };
 use crate::task::PageTasks;
 use leptos::prelude::*;
@@ -92,6 +92,8 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/trial-balance/:account") view=|| view! { <SignedIn><AccountLedger /></SignedIn> } />
                         <Route path=path!("/financial-statements") view=|| view! { <SignedIn><FinancialStatements /></SignedIn> } />
                         <Route path=path!("/fiscal-years") view=|| view! { <SignedIn><FiscalYears /></SignedIn> } />
+                        <Route path=path!("/vat") view=|| view! { <SignedIn><Vat /></SignedIn> } />
+                        <Route path=path!("/vat/:period") view=|| view! { <SignedIn><VatReturnPage /></SignedIn> } />
                         <Route path=path!("/opening-balances") view=|| view! { <SignedIn><OpeningBalances /></SignedIn> } />
                         <Route path=path!("/employees") view=|| view! { <SignedIn><Employees /></SignedIn> } />
                         <Route path=path!("/agi") view=|| view! { <SignedIn><Agi /></SignedIn> } />

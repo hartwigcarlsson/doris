@@ -955,6 +955,7 @@ dependencies = [
  "doris-ledger",
  "doris-payroll",
  "doris-proto",
+ "doris-vat",
  "http",
  "http-body-util",
  "hyper-util",
@@ -976,6 +977,24 @@ dependencies = [
  "uuid",
  "webauthn-authenticator-rs",
  "webauthn-rs",
+]
+
+[[package]]
+name = "doris-vat"
+version = "0.1.0"
+dependencies = [
+ "doris-company",
+ "doris-eventstore",
+ "doris-ledger",
+ "jiff",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

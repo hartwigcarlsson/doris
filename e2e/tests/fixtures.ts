@@ -193,6 +193,7 @@ const MENU_OF: Record<string, Menu | null> = {
   Rapporter: "Bokföring",
   Kontoplan: "Bokföring",
   Räkenskapsår: "Bokföring",
+  Moms: "Bokföring",
   Leverantörsfakturor: "Inköp",
   Leverantörer: "Inköp",
   Lönekörningar: "Lön",

@@ -8,6 +8,7 @@ mod invoicing;
 mod ledger;
 mod payroll;
 pub mod skatteverket;
+mod vat;
 
 use axum::Router;
 use axum::extract::State;
@@ -18,6 +19,7 @@ use doris_proto::company::v1::company_service_server::CompanyServiceServer;
 use doris_proto::invoicing::v1::invoicing_service_server::InvoicingServiceServer;
 use doris_proto::ledger::v1::ledger_service_server::LedgerServiceServer;
 use doris_proto::payroll::v1::payroll_service_server::PayrollServiceServer;
+use doris_proto::vat::v1::vat_service_server::VatServiceServer;
 use http::header::CONTENT_TYPE;
 use http::{HeaderName, HeaderValue, Method, StatusCode};
 use rust_embed::RustEmbed;
@@ -33,15 +35,18 @@ pub use grpc::{AuthApi, SESSION_COOKIE};
 pub use invoicing::InvoicingApi;
 pub use ledger::LedgerApi;
 pub use payroll::PayrollApi;
+pub use vat::VatApi;
 
 /// Builds the app. `E` is the embedded frontend (see [`assets::WebDist`]).
 /// With no `cors_origins`, only same-origin browsers can call the API.
+#[allow(clippy::too_many_arguments)] // one parameter per service, by design
 pub fn router<E: RustEmbed + Send + Sync + 'static>(
     api: AuthApi,
     companies: CompanyApi,
     ledger: LedgerApi,
     payroll: PayrollApi,
     invoicing: InvoicingApi,
+    vat: VatApi,
     cors_origins: Vec<HeaderValue>,
     serve_frontend: bool,
 ) -> Router {
@@ -60,6 +65,7 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
                 .max_decoding_message_size(ledger::MAX_REQUEST)
                 .max_encoding_message_size(ledger::MAX_RESPONSE),
         )
+        .add_service(VatServiceServer::new(vat))
         .into_axum_router()
         .layer(axum::middleware::from_fn_with_state(pool, session_gate))
         .layer(GrpcWebLayer::new())

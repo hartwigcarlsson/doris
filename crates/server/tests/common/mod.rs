@@ -16,7 +16,9 @@ use doris_proto::ledger::v1::ledger_service_client::LedgerServiceClient;
 use doris_proto::payroll::v1::payroll_service_client::PayrollServiceClient;
 use doris_server::bolagsverket::Bolagsverket;
 use doris_server::skatteverket::TaxTables;
-use doris_server::{AuthApi, CompanyApi, InvoicingApi, LedgerApi, PayrollApi, SESSION_COOKIE};
+use doris_server::{
+    AuthApi, CompanyApi, InvoicingApi, LedgerApi, PayrollApi, SESSION_COOKIE, VatApi,
+};
 use http::HeaderValue;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -39,6 +41,7 @@ pub type Grpc = AuthServiceClient<Transport>;
 pub type Companies = CompanyServiceClient<Transport>;
 pub type Ledger = LedgerServiceClient<Transport>;
 pub type Payroll = PayrollServiceClient<Transport>;
+pub type Vat = doris_proto::vat::v1::vat_service_client::VatServiceClient<Transport>;
 pub type Invoicing = InvoicingServiceClient<Transport>;
 pub type Device = WebauthnAuthenticator<SoftPasskey>;
 
@@ -89,6 +92,7 @@ impl TestServer {
             LedgerApi::new(pool.clone()),
             PayrollApi::new(pool.clone(), TaxTables::new(tax_tables_url)),
             InvoicingApi::new(pool.clone()),
+            VatApi::new(pool.clone()),
             cors_origins,
             serve_frontend,
         );
@@ -113,6 +117,10 @@ impl TestServer {
 
     pub fn payroll(&self) -> Payroll {
         PayrollServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
+    }
+
+    pub fn vat(&self) -> Vat {
+        Vat::with_origin(self.transport(), self.base.parse().unwrap())
     }
 
     pub fn ledger(&self) -> Ledger {

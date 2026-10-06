@@ -3,7 +3,9 @@
 //! `crate::overview`; this file loads and draws.
 
 use crate::active_company::Companies;
-use crate::api::{company_api, cpb, invoicing_api, ipb, ledger_api, lpb, payroll_api, ppb};
+use crate::api::{
+    company_api, cpb, invoicing_api, ipb, ledger_api, lpb, payroll_api, ppb, vat_api, vpb,
+};
 use crate::errors::describe;
 use crate::fiscal_year::{FiscalYearSelect, keep_year_in_url};
 use crate::format::{accounting_method_label, amount, legal_form_label, today};
@@ -105,6 +107,8 @@ fn Overview() -> impl IntoView {
     let customer_invoices: Loaded<Vec<ipb::CustomerInvoice>> = RwSignal::new(None);
     let payroll_runs: Loaded<Vec<ppb::PayrollRun>> = RwSignal::new(None);
     let agi_months: Loaded<Vec<ppb::AgiMonthSummary>> = RwSignal::new(None);
+    // Of the chosen year.
+    let vat_periods: Loaded<Vec<vpb::VatPeriodSummary>> = RwSignal::new(None);
     keep_year_in_url("/".into(), year);
 
     // Per company. Every call is its own task, so a slow one holds nothing
@@ -124,6 +128,7 @@ fn Overview() -> impl IntoView {
         customer_invoices.set(None);
         payroll_runs.set(None);
         agi_months.set(None);
+        vat_periods.set(None);
         if company_id.is_empty() {
             return;
         }
@@ -159,12 +164,17 @@ fn Overview() -> impl IntoView {
                         let list = response.into_inner().fiscal_years;
                         year_list.set(list.clone());
                         year.set(default_year(&list, &preferred, &today()));
+                        if list.is_empty() {
+                            // No year to ask about: the other todos still show.
+                            vat_periods.set(Some(Ok(Vec::new())));
+                        }
                         years.set(Some(Ok(list)));
                     }
                     Err(status) => {
                         // Without a year nothing is asked for it: the cards
                         // that need one show why instead of loading forever.
                         let message = describe(&status);
+                        vat_periods.set(Some(Ok(Vec::new())));
                         balance.set(Some(Err(message.clone())));
                         vouchers.set(Some(Err(message.clone())));
                         years.set(Some(Err(message)));
@@ -240,6 +250,7 @@ fn Overview() -> impl IntoView {
         }
         balance.set(None);
         vouchers.set(None);
+        vat_periods.set(None);
         // Stale once the company or the year has changed. `try_`: the page
         // may be gone by the time the answer comes, and its signals with it.
         let stale = {
@@ -262,6 +273,39 @@ fn Overview() -> impl IntoView {
                     balance.set(Some(
                         rows.map(|r| r.into_inner().rows).map_err(|s| describe(&s)),
                     ));
+                }
+            }
+        });
+        // The chosen year and the one before it: a declaration is due soon
+        // after its period, so the year before holds every open deadline.
+        let previous = year_list.with_untracked(|ys| {
+            ys.iter()
+                .map(|y| y.start.clone())
+                .filter(|s| *s < start)
+                .max()
+        });
+        spawn_local({
+            let (company_id, start, stale) = (company_id.clone(), start.clone(), stale.clone());
+            async move {
+                let mut all = Vec::new();
+                let mut failed = None;
+                for fiscal_year_start in previous.into_iter().chain([start]) {
+                    let listed = vat_api()
+                        .list_vat_returns(vpb::ListVatReturnsRequest {
+                            company_id: company_id.clone(),
+                            fiscal_year_start,
+                        })
+                        .await;
+                    match listed {
+                        Ok(r) => all.extend(r.into_inner().periods),
+                        Err(s) => {
+                            failed = Some(describe(&s));
+                            break;
+                        }
+                    }
+                }
+                if !stale() {
+                    vat_periods.set(Some(failed.map_or(Ok(all), Err)));
                 }
             }
         });
@@ -303,23 +347,25 @@ fn Overview() -> impl IntoView {
         year_list.with(|ys| ys.iter().find(|y| y.start == year.get()).cloned())
     });
 
-    // "Att göra" needs all four lists: loading until the last one is in,
+    // "Att göra" needs all five lists: loading until the last one is in,
     // and the first error if any call failed.
     let todos = Signal::derive(move || {
-        let (s, c, r, m) = (
+        let (s, c, r, m, v) = (
             supplier_invoices.get()?,
             customer_invoices.get()?,
             payroll_runs.get()?,
             agi_months.get()?,
+            vat_periods.get()?,
         );
         Some((|| {
-            let (s, c, r, m) = (s?, c?, r?, m?);
+            let (s, c, r, m, v) = (s?, c?, r?, m?, v?);
             Ok::<_, String>(todo_list(
                 &TodoInput {
                     supplier_invoices: &s,
                     customer_invoices: &c,
                     payroll_runs: &r,
                     agi_months: &m,
+                    vat_periods: &v,
                 },
                 &today(),
             ))

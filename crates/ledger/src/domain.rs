@@ -1,5 +1,6 @@
 //! Pure ledger rules: the chart of accounts and vouchers. No I/O, no clock.
 
+use crate::vat_box::{VatBox, default_vat_box};
 use doris_company::domain::{FiscalYear, LegalForm};
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
@@ -70,6 +71,8 @@ pub enum DomainError {
     DuplicateAttachment,
     #[error("no such underlag")]
     AttachmentNotFound,
+    #[error("no such box on the momsdeklaration, or not for this account")]
+    InvalidVatBox,
     /// A sum outgrew `i64`; no real ledger gets there.
     #[error("amount overflow")]
     Overflow,
@@ -140,6 +143,19 @@ pub enum ChartEvent {
     AccountReactivated {
         number: AccountNumber,
     },
+    /// The account's box on the momsdeklaration. None: no box, even where
+    /// BAS has one.
+    AccountVatBoxSet {
+        number: AccountNumber,
+        vat_box: Option<VatBox>,
+    },
+    /// Every account's box from now on, spelled out so the history reads
+    /// the same even after the built-in boxes change: an account not listed
+    /// has none. Accounts added afterwards get theirs as an
+    /// `AccountVatBoxSet`.
+    VatBoxesRecorded {
+        boxes: Vec<(AccountNumber, VatBox)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +163,7 @@ pub struct Account {
     pub number: AccountNumber,
     pub name: AccountName,
     pub active: bool,
+    pub vat_box: Option<VatBox>,
 }
 
 /// A company's chart of accounts. Accounts are never removed, only
@@ -154,6 +171,9 @@ pub struct Account {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Chart {
     accounts: BTreeMap<AccountNumber, Account>,
+    /// The boxes are in the history (`VatBoxesRecorded`), not read from the
+    /// built-in map.
+    vat_boxes_recorded: bool,
 }
 
 impl Chart {
@@ -175,17 +195,25 @@ impl Chart {
                             number,
                             name,
                             active: true,
+                            vat_box: default_vat_box(number.get()),
                         },
                     );
                 }
             }
             ChartEvent::AccountAdded { number, name } => {
+                // Once recorded, its box follows as its own event.
+                let vat_box = if self.vat_boxes_recorded {
+                    None
+                } else {
+                    default_vat_box(number.get())
+                };
                 self.accounts.insert(
                     number,
                     Account {
                         number,
                         name,
                         active: true,
+                        vat_box,
                     },
                 );
             }
@@ -196,7 +224,25 @@ impl Chart {
             }
             ChartEvent::AccountDeactivated { number } => self.set_active(number, false),
             ChartEvent::AccountReactivated { number } => self.set_active(number, true),
+            ChartEvent::AccountVatBoxSet { number, vat_box } => {
+                if let Some(account) = self.accounts.get_mut(&number) {
+                    account.vat_box = vat_box;
+                }
+            }
+            ChartEvent::VatBoxesRecorded { boxes } => {
+                for account in self.accounts.values_mut() {
+                    account.vat_box = boxes
+                        .iter()
+                        .find(|(number, _)| *number == account.number)
+                        .map(|&(_, vat_box)| vat_box);
+                }
+                self.vat_boxes_recorded = true;
+            }
         }
+    }
+
+    pub fn vat_boxes_recorded(&self) -> bool {
+        self.vat_boxes_recorded
     }
 
     fn set_active(&mut self, number: AccountNumber, active: bool) {
@@ -228,6 +274,19 @@ pub fn seed_chart() -> ChartEvent {
     }
 }
 
+/// Records every account's box as it is now (see
+/// `ChartEvent::VatBoxesRecorded`).
+pub fn record_vat_boxes(chart: &Chart) -> ChartEvent {
+    ChartEvent::VatBoxesRecorded {
+        boxes: chart
+            .accounts()
+            .filter_map(|a| Some((a.number, a.vat_box?)))
+            .collect(),
+    }
+}
+
+/// Once the boxes are recorded, an account with a BAS box gets it as an
+/// `AccountVatBoxSet` of its own.
 pub fn add_account(
     chart: &Chart,
     number: AccountNumber,
@@ -236,7 +295,16 @@ pub fn add_account(
     if chart.get(number).is_some() {
         return Err(DomainError::AccountExists);
     }
-    Ok(vec![ChartEvent::AccountAdded { number, name }])
+    let mut events = vec![ChartEvent::AccountAdded { number, name }];
+    if chart.vat_boxes_recorded()
+        && let Some(vat_box) = default_vat_box(number.get())
+    {
+        events.push(ChartEvent::AccountVatBoxSet {
+            number,
+            vat_box: Some(vat_box),
+        });
+    }
+    Ok(events)
 }
 
 /// Renaming to the current name yields no events.
@@ -264,6 +332,23 @@ pub fn set_account_active(
         (false, true) => vec![ChartEvent::AccountReactivated { number }],
         _ => vec![],
     })
+}
+
+/// Setting the box it already has yields no events. 2650 and 3740 take
+/// no box: the settlement itself books on them.
+pub fn set_account_vat_box(
+    chart: &Chart,
+    number: AccountNumber,
+    vat_box: Option<VatBox>,
+) -> Result<Vec<ChartEvent>, DomainError> {
+    let account = chart.get(number).ok_or(DomainError::AccountNotFound)?;
+    if vat_box.is_some() && matches!(number.get(), 2650 | 3740) {
+        return Err(DomainError::InvalidVatBox);
+    }
+    if account.vat_box == vat_box {
+        return Ok(vec![]);
+    }
+    Ok(vec![ChartEvent::AccountVatBoxSet { number, vat_box }])
 }
 
 /// The most one line may carry: 100 miljarder kronor. With at most 100

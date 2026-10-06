@@ -252,6 +252,7 @@ pub fn Select(
     id: &'static str,
     #[prop(optional)] hide_label: bool,
     value: RwSignal<String>,
+    #[prop(optional, into)] disabled: Signal<bool>,
     children: Children,
 ) -> impl IntoView {
     view! {
@@ -263,6 +264,7 @@ pub fn Select(
                     name=id
                     class=SELECT
                     prop:value=move || value.get()
+                    prop:disabled=move || disabled.get()
                     on:change=move |ev| value.set(event_target_value(&ev))
                 >
                     {children()}

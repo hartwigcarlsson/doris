@@ -20,12 +20,13 @@ pub enum Section {
     Payroll,
 }
 
-const SECTIONS: [(&str, Section); 13] = [
+const SECTIONS: [(&str, Section); 14] = [
     ("/vouchers", Section::Bookkeeping),
     ("/trial-balance", Section::Bookkeeping),
     ("/financial-statements", Section::Bookkeeping),
     ("/accounts", Section::Bookkeeping),
     ("/fiscal-years", Section::Bookkeeping),
+    ("/vat", Section::Bookkeeping),
     ("/opening-balances", Section::Bookkeeping),
     ("/supplier-invoices", Section::Purchases),
     ("/suppliers", Section::Purchases),
@@ -206,6 +207,7 @@ pub fn Header() -> impl IntoView {
                                 <NavItem href="/financial-statements" icon=IconName::ChartColumn label="Rapporter" />
                                 <NavItem href="/accounts" icon=IconName::ListTree label="Kontoplan" />
                                 <NavItem href="/fiscal-years" icon=IconName::CalendarRange label="Räkenskapsår" />
+                                <NavItem href="/vat" icon=IconName::Landmark label="Moms" />
                             </NavMenu>
                             <NavMenu label="Inköp" current=in_section(Section::Purchases)>
                                 <NavItem href="/supplier-invoices" icon=IconName::FileText label="Leverantörsfakturor" />

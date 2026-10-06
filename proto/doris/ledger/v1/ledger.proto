@@ -10,6 +10,8 @@ service LedgerService {
   rpc AddAccount(AddAccountRequest) returns (AddAccountResponse);
   rpc RenameAccount(RenameAccountRequest) returns (RenameAccountResponse);
   rpc SetAccountActive(SetAccountActiveRequest) returns (SetAccountActiveResponse);
+  // An account's box on the momsdeklaration; 0 takes it away.
+  rpc SetAccountVatBox(SetAccountVatBoxRequest) returns (SetAccountVatBoxResponse);
   // From the first räkenskapsår up to the current one, newest first.
   rpc ListFiscalYears(ListFiscalYearsRequest) returns (ListFiscalYearsResponse);
   // The server decides the voucher's number.
@@ -46,6 +48,7 @@ message Account {
   uint32 number = 1;
   string name = 2;
   bool active = 3;
+  uint32 vat_box = 4; // box on the momsdeklaration, 0: none
 }
 
 message ListAccountsRequest {
@@ -79,6 +82,14 @@ message SetAccountActiveRequest {
 }
 
 message SetAccountActiveResponse {}
+
+message SetAccountVatBoxRequest {
+  string company_id = 1;
+  uint32 number = 2;
+  uint32 vat_box = 3; // 0: none
+}
+
+message SetAccountVatBoxResponse {}
 
 message FiscalYear {
   string start = 1;

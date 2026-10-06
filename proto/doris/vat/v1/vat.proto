@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package doris.vat.v1;
+
+// The momsdeklaration: periods per räkenskapsår, each period's boxes, the
+// eSKD file and marking a period submitted (which books the settlement).
+service VatService {
+  rpc SetVatPeriod(SetVatPeriodRequest) returns (SetVatPeriodResponse);
+  rpc ListVatReturns(ListVatReturnsRequest) returns (ListVatReturnsResponse);
+  rpc GetVatReturn(VatReturnRef) returns (VatReturn);
+  rpc ExportVatFile(VatReturnRef) returns (VatFile);
+  rpc MarkVatReturnSubmitted(MarkVatReturnSubmittedRequest) returns (MarkVatReturnSubmittedResponse);
+}
+
+enum VatPeriodKind {
+  VAT_PERIOD_KIND_UNSPECIFIED = 0;
+  VAT_PERIOD_KIND_MONTHLY = 1;
+  VAT_PERIOD_KIND_QUARTERLY = 2;
+  VAT_PERIOD_KIND_YEARLY = 3;
+  VAT_PERIOD_KIND_NOT_REGISTERED = 4;
+}
+
+enum VatStatus {
+  VAT_STATUS_UNSPECIFIED = 0;
+  VAT_STATUS_IN_PROGRESS = 1;
+  VAT_STATUS_TO_SUBMIT = 2;
+  VAT_STATUS_SUBMITTED = 3;
+  VAT_STATUS_CHANGED = 4;
+}
+
+message SetVatPeriodRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+  VatPeriodKind kind = 3;
+}
+
+message SetVatPeriodResponse {}
+
+message ListVatReturnsRequest {
+  string company_id = 1;
+  string fiscal_year_start = 2;
+}
+
+message VatPeriodSummary {
+  string period = 1;   // ÅÅÅÅMM of the last month
+  string start = 2;
+  string end = 3;
+  string label = 4;    // "juli–september 2026"
+  VatStatus status = 5;
+  string due_date = 6; // empty for helår
+  int64 vat_due = 7;   // box 49, kronor
+}
+
+message ListVatReturnsResponse {
+  VatPeriodKind kind = 1;
+  bool locked = 2;
+  repeated VatPeriodSummary periods = 3;
+}
+
+message VatReturnRef {
+  string company_id = 1;
+  string period = 2; // ÅÅÅÅMM
+}
+
+message VatBoxAccount {
+  uint32 number = 1;
+  string name = 2;
+  int64 amount = 3; // öre, as the box counts it
+}
+
+message VatBoxAmount {
+  uint32 box = 1;
+  int64 amount = 2; // kronor
+  repeated VatBoxAccount accounts = 3;
+}
+
+message VatSubmission {
+  string submitted_at = 1;
+  string submitted_by_name = 2;
+  string fiscal_year_start = 3;
+  uint32 voucher_number = 4; // 0: nothing was booked
+  bool corrected = 5;
+}
+
+message VatReturn {
+  VatPeriodSummary summary = 1;
+  VatPeriodKind kind = 2;
+  string org_nr = 3;
+  string vat_number = 4;
+  repeated VatBoxAmount boxes = 5; // every box with an account behind it
+  int64 booked_vat = 6;            // box 49 in öre before rounding
+  string fingerprint = 7;
+  repeated VatSubmission submissions = 8;
+}
+
+message VatFile {
+  string file_name = 1;
+  string content = 2;
+  string fingerprint = 3;
+}
+
+message MarkVatReturnSubmittedRequest {
+  string company_id = 1;
+  string period = 2;
+  string fingerprint = 3;
+}
+
+message MarkVatReturnSubmittedResponse {
+  string fiscal_year_start = 1;
+  uint32 voucher_number = 2; // 0: nothing was booked
+}

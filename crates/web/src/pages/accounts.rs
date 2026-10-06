@@ -5,11 +5,26 @@ use crate::api::{ledger_api, lpb};
 use crate::errors::describe;
 use crate::task::spawn_local;
 use crate::ui::{
-    Badge, BadgeVariant, Button, Card, Checkbox, ErrorAlert, Field, PageHeader, TABLE_BODY,
-    TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, TextInput, Variant,
+    Badge, BadgeVariant, Button, Card, Checkbox, ErrorAlert, Field, Icon, IconName, PageHeader,
+    SELECT, SELECT_OPTION, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table,
+    TableCard, TextInput, Variant,
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
+
+/// "05 Momspliktig försäljning…", or "–" for no box.
+pub fn vat_box_text(n: u32) -> String {
+    match crate::vat_form::box_label(n) {
+        Some(label) if n != 49 => format!("{n:02} {label}"),
+        _ => "–".into(),
+    }
+}
+
+/// Whether the account may have a box: the server refuses one on the
+/// momsavräkning's own accounts, 2650 and 3740.
+pub fn takes_vat_box(number: u32) -> bool {
+    !matches!(number, 2650 | 3740)
+}
 
 #[component]
 pub fn Accounts() -> impl IntoView {
@@ -96,6 +111,7 @@ pub fn Accounts() -> impl IntoView {
                     <tr class=TABLE_ROW>
                         <th class=TABLE_HEADER_CELL>"Konto"</th>
                         <th class=TABLE_HEADER_CELL>"Namn"</th>
+                        <th class=TABLE_HEADER_CELL>"Momsruta"</th>
                         <th class=TABLE_HEADER_CELL>"Status"</th>
                         <th class=TABLE_HEADER_CELL></th>
                     </tr>
@@ -109,13 +125,14 @@ pub fn Accounts() -> impl IntoView {
                                 .map(|a| (company_id.clone(), a))
                                 .collect::<Vec<_>>()
                         }
-                        key=|(company_id, a)| (company_id.clone(), a.number, a.name.clone(), a.active)
+                        key=|(company_id, a)| (company_id.clone(), a.number, a.name.clone(), a.active, a.vat_box)
                         let((company_id, account))
                     >
                         <AccountRow company_id=company_id account=account changed=changed error=error />
                     </For>
                 </tbody>
             </Table></TableCard>
+            <p class="text-xs/relaxed text-muted-foreground">"En ändrad momsruta gäller även perioder som redan är deklarerade."</p>
         </div>
     }
 }
@@ -133,7 +150,37 @@ fn AccountRow(
         number,
         name: current,
         active,
+        vat_box,
     } = account;
+    let chosen = RwSignal::new(vat_box.to_string());
+    // The box the server has: a refused choice goes back to it, and that
+    // (like the first run) saves nothing.
+    let saved = StoredValue::new(vat_box.to_string());
+    Effect::new(move |_| {
+        let value = chosen.get();
+        if value == saved.get_value() {
+            return;
+        }
+        error.set(None);
+        let vat_box = value.parse().unwrap_or(0);
+        spawn_local(async move {
+            let request = lpb::SetAccountVatBoxRequest {
+                company_id: company_id.get_value(),
+                number,
+                vat_box,
+            };
+            match ledger_api().set_account_vat_box(request).await {
+                Ok(_) => {
+                    saved.set_value(value);
+                    changed.run(());
+                }
+                Err(status) => {
+                    error.set(Some(describe(&status)));
+                    chosen.set(saved.get_value());
+                }
+            }
+        });
+    });
     let editing = RwSignal::new(false);
     let name = RwSignal::new(current.clone());
 
@@ -188,6 +235,22 @@ fn AccountRow(
                 </Show>
             </td>
             <td class=TABLE_CELL>
+                <div class="relative w-64 max-w-full">
+                    <select
+                        class=SELECT
+                        aria-label=format!("Momsruta för {number}")
+                        prop:value=move || chosen.get()
+                        on:change=move |ev| chosen.set(event_target_value(&ev))
+                    >
+                        <option class=SELECT_OPTION value="0">"–"</option>
+                        {crate::vat_form::SECTIONS.iter().flat_map(|s| s.rows).filter(|r| r.vat_box != 49 && takes_vat_box(number)).map(|r| view! {
+                            <option class=SELECT_OPTION value=r.vat_box.to_string()>{vat_box_text(r.vat_box)}</option>
+                        }).collect_view()}
+                    </select>
+                    <Icon name=IconName::ChevronDown class="pointer-events-none absolute top-1/2 right-1.5 size-3.5 -translate-y-1/2 text-muted-foreground select-none" />
+                </div>
+            </td>
+            <td class=TABLE_CELL>
                 {if active {
                     view! { <Badge>"Aktivt"</Badge> }.into_any()
                 } else {
@@ -203,5 +266,28 @@ fn AccountRow(
                 </Button>
             </td>
         </tr>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_box_reads_as_its_number_and_the_forms_text() {
+        assert_eq!(
+            vat_box_text(5),
+            "05 Momspliktig försäljning som inte ingår i ruta 06, 07 eller 08"
+        );
+        assert_eq!(vat_box_text(48), "48 Ingående moms att dra av");
+        assert_eq!(vat_box_text(0), "–");
+    }
+
+    #[test]
+    fn the_settlement_accounts_take_no_box() {
+        assert!(!takes_vat_box(2650));
+        assert!(!takes_vat_box(3740));
+        assert!(takes_vat_box(2611));
+        assert!(takes_vat_box(3001));
     }
 }

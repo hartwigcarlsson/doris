@@ -2,7 +2,9 @@ use clap::Parser;
 use doris_identity::Auth;
 use doris_server::bolagsverket::Bolagsverket;
 use doris_server::skatteverket::TaxTables;
-use doris_server::{AuthApi, CompanyApi, InvoicingApi, LedgerApi, PayrollApi, assets::WebDist};
+use doris_server::{
+    AuthApi, CompanyApi, InvoicingApi, LedgerApi, PayrollApi, VatApi, assets::WebDist,
+};
 use http::HeaderValue;
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -86,12 +88,14 @@ async fn run(config: Config) -> Result<(), String> {
         }
     };
     let payroll = PayrollApi::new(pool.clone(), TaxTables::new(&config.tax_tables_url));
+    let vat = VatApi::new(pool.clone());
     let app = doris_server::router::<WebDist>(
         AuthApi::new(pool.clone(), auth),
         CompanyApi::new(pool.clone(), bolagsverket),
         LedgerApi::new(pool.clone()),
         payroll,
         InvoicingApi::new(pool),
+        vat,
         cors_origins,
         config.serve_frontend,
     );

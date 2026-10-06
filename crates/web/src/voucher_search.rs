@@ -115,6 +115,7 @@ mod tests {
             number,
             name: name.into(),
             active: true,
+            vat_box: 0,
         })
         .collect()
     }

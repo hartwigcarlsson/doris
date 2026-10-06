@@ -120,12 +120,14 @@ async fn a_member_keeps_the_chart_and_books_and_corrects_vouchers() {
     assert!(accounts.contains(&pb::Account {
         number: 1931,
         name: "Sparkonto SEB".into(),
-        active: true
+        active: true,
+        vat_box: 0,
     }));
     assert!(accounts.contains(&pb::Account {
         number: 1910,
         name: "Kassa".into(),
-        active: false
+        active: false,
+        vat_box: 0,
     }));
 
     let years = api
@@ -1253,4 +1255,60 @@ async fn listed_vouchers_name_whoever_recorded_them() {
     assert_eq!(names, ["Anna", "Bo Ek", "Bo Ek"]);
     // The name is all of the person that leaves the server.
     assert!(!format!("{vouchers:?}").contains("example.se"));
+}
+
+async fn vat_boxes(
+    api: &mut Ledger,
+    session: &str,
+    company_id: &str,
+) -> std::collections::HashMap<u32, u32> {
+    api.list_accounts(authed(
+        pb::ListAccountsRequest {
+            company_id: company_id.into(),
+        },
+        session,
+    ))
+    .await
+    .unwrap()
+    .into_inner()
+    .accounts
+    .into_iter()
+    .map(|a| (a.number, a.vat_box))
+    .collect()
+}
+
+fn set_box(company_id: &str, number: u32, vat_box: u32) -> pb::SetAccountVatBoxRequest {
+    pb::SetAccountVatBoxRequest {
+        company_id: company_id.into(),
+        number,
+        vat_box,
+    }
+}
+
+#[tokio::test]
+async fn an_accounts_momsruta_is_listed_and_changed() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.ledger();
+    let before = vat_boxes(&mut api, &anna, &id).await;
+    assert_eq!((before[&2611], before[&1930]), (10, 0));
+
+    api.set_account_vat_box(authed(set_box(&id, 3004, 5), &anna))
+        .await
+        .unwrap();
+    api.set_account_vat_box(authed(set_box(&id, 2611, 0), &anna))
+        .await
+        .unwrap();
+    let after = vat_boxes(&mut api, &anna, &id).await;
+    assert_eq!((after[&3004], after[&2611]), (5, 0));
+
+    let err = api
+        .set_account_vat_box(authed(set_box(&id, 2611, 49), &anna))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        code_of(err),
+        (Code::InvalidArgument, "invalid_vat_box".into())
+    );
 }
