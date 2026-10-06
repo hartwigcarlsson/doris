@@ -3,7 +3,7 @@
 
 use crate::active_company::Companies;
 use crate::api::{api, pb};
-use crate::errors::describe;
+use crate::errors::{describe, describe_code};
 use crate::format::{date, plus_days, today};
 use crate::passkey;
 use crate::task::spawn_local;
@@ -14,6 +14,7 @@ use crate::ui::{
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
+use leptos_router::hooks::{use_navigate, use_params_map};
 use std::collections::HashMap;
 
 /// The form's areas in order: what reading and (if any) writing grant.
@@ -77,6 +78,21 @@ pub fn grant(company_id: &str, boxes: &[(bool, bool)]) -> Option<pb::TokenGrant>
         company_id: company_id.into(),
         scopes,
     })
+}
+
+/// One company's (read, write) boxes, in `AREAS` order, for what `grants`
+/// gives it: the inverse of [`grant`].
+pub fn boxes_from(grants: &[pb::TokenGrant], company_id: &str) -> Vec<(bool, bool)> {
+    let scopes = grants
+        .iter()
+        .find(|g| g.company_id == company_id)
+        .map(|g| g.scopes.as_slice())
+        .unwrap_or_default();
+    let has = |scope: &str| scopes.iter().any(|s| s == scope);
+    AREAS
+        .iter()
+        .map(|(_, read, write)| (has(read), write.is_some_and(|(_, w)| has(w))))
+        .collect()
 }
 
 fn now_utc() -> String {
@@ -166,6 +182,9 @@ pub fn ApiTokens() -> impl IntoView {
                                         }}
                                     </td>
                                     <td class=TABLE_CELL>
+                                        <Show when=move || status != TokenStatus::Revoked>
+                                            <LinkButton href=format!("/settings/tokens/{}", token.id) variant=Variant::Ghost>"Ändra"</LinkButton>
+                                        </Show>
                                         <Show when=move || status == TokenStatus::Active>
                                             {
                                                 let row = row.clone();
@@ -242,15 +261,25 @@ async fn save_with_passkey(
     }
 }
 
+/// The token form: name, last day and boxes per company. With `token` it
+/// is filled in from that token and saving changes it; without, saving
+/// creates one. Saving asks for a passkey. `saved` gets a new token's
+/// secret, or `None` after a change. Companies come from the user's list,
+/// so one the user no longer has is neither shown nor kept.
 #[component]
-pub fn NewApiToken() -> impl IntoView {
+fn TokenForm(token: Option<pb::ApiToken>, saved: Callback<Option<String>>) -> impl IntoView {
     let companies = expect_context::<Companies>();
-    let name = RwSignal::new(String::new());
-    let last_day = RwSignal::new(plus_days(&today(), 90).unwrap_or_default());
+    let token_id = token.as_ref().map(|t| t.id.clone());
+    let changing = token.is_some();
+    let grants = token.as_ref().map(|t| t.grants.clone()).unwrap_or_default();
+    let name = RwSignal::new(token.as_ref().map(|t| t.name.clone()).unwrap_or_default());
+    let last_day = RwSignal::new(match &token {
+        Some(t) => date(&t.expires_at).to_owned(),
+        None => plus_days(&today(), 90).unwrap_or_default(),
+    });
     // Each company's boxes are made by its row in the form, so they live as
     // long as the row; submit looks them up here for the companies listed now.
     let boxes_of = StoredValue::new(HashMap::<String, Boxes>::new());
-    let secret = RwSignal::new(None::<String>);
     let error = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
 
@@ -273,17 +302,73 @@ pub fn NewApiToken() -> impl IntoView {
                 })
                 .collect()
         });
+        let token_id = token_id.clone();
         spawn_local(async move {
-            match save_with_passkey(None, name.get_untracked(), last_day.get_untracked(), grants)
-                .await
+            match save_with_passkey(
+                token_id,
+                name.get_untracked(),
+                last_day.get_untracked(),
+                grants,
+            )
+            .await
             {
-                Ok(created) => secret.set(created),
+                Ok(secret) => saved.run(secret),
                 Err(message) => error.set(Some(message)),
             }
             busy.set(false);
         });
     };
 
+    view! {
+        <Card title="Behörigheter" description="En token kan aldrig mer än du själv. Skriva innefattar läsa.">
+            <form class="grid gap-4" novalidate on:submit=submit>
+                <div class="grid gap-4 sm:grid-cols-2 sm:max-w-xl">
+                    <Field label="Namn" id="token_name" placeholder="t.ex. doris-cli på laptopen" value=name />
+                    <Field label="Giltig till och med" id="token_last_day" kind="date" value=last_day hint=Signal::derive(|| Some("Högst ett år.")) />
+                </div>
+                <For each=move || companies.list.get() key=|c| c.id.clone() let(company)>
+                    {
+                        let boxes: Boxes = boxes_from(&grants, &company.id)
+                            .into_iter()
+                            .map(|(r, w)| (RwSignal::new(r), RwSignal::new(w)))
+                            .collect();
+                        boxes_of.update_value(|map| { map.insert(company.id.clone(), boxes.clone()); });
+                        let row = company;
+                        view! {
+                    <fieldset class="grid gap-2 rounded-md border border-border p-3">
+                        <legend class="px-1 text-xs/relaxed font-medium">{row.name.clone()}</legend>
+                        <div class="grid gap-2 sm:grid-cols-2">
+                            {AREAS.iter().zip(boxes).map(|((read_label, read, write), (r, w))| {
+                                Effect::new(move |_| if w.get() { r.set(true) });
+                                Effect::new(move |_| if !r.get() { w.set(false) });
+                                view! {
+                                    <Checkbox label=read_label.to_string() id=format!("{}-{read}", row.id) checked=r />
+                                    {match write {
+                                        Some((write_label, scope)) => view! {
+                                            <Checkbox label=write_label.to_string() id=format!("{}-{scope}", row.id) checked=w />
+                                        }.into_any(),
+                                        None => view! { <span></span> }.into_any(),
+                                    }}
+                                }
+                            }).collect_view()}
+                        </div>
+                    </fieldset>
+                        }
+                    }
+                </For>
+                <p class="text-xs/relaxed text-muted-foreground">
+                    "Läsa lön ger också AGI-filen, som innehåller de anställdas personnummer."
+                </p>
+                <ErrorAlert message=error />
+                <div><Button disabled=busy>{if changing { "Spara med passkey" } else { "Skapa med passkey" }}</Button></div>
+            </form>
+        </Card>
+    }
+}
+
+#[component]
+pub fn NewApiToken() -> impl IntoView {
+    let secret = RwSignal::new(None::<String>);
     view! {
         <div class="grid gap-6">
             <PageHeader title="Ny token" />
@@ -300,48 +385,38 @@ pub fn NewApiToken() -> impl IntoView {
                     </Card>
                 }.into_any(),
                 None => view! {
-                    <Card title="Behörigheter" description="En token kan aldrig mer än du själv. Skriva innefattar läsa.">
-                        <form class="grid gap-4" novalidate on:submit=submit>
-                            <div class="grid gap-4 sm:grid-cols-2 sm:max-w-xl">
-                                <Field label="Namn" id="token_name" placeholder="t.ex. doris-cli på laptopen" value=name />
-                                <Field label="Giltig till och med" id="token_last_day" kind="date" value=last_day hint=Signal::derive(|| Some("Högst ett år.")) />
-                            </div>
-                            <For each=move || companies.list.get() key=|c| c.id.clone() let(company)>
-                                {
-                                    let boxes: Boxes = AREAS.iter().map(|_| (RwSignal::new(false), RwSignal::new(false))).collect();
-                                    boxes_of.update_value(|map| { map.insert(company.id.clone(), boxes.clone()); });
-                                    let row = company;
-                                    view! {
-                                <fieldset class="grid gap-2 rounded-md border border-border p-3">
-                                    <legend class="px-1 text-xs/relaxed font-medium">{row.name.clone()}</legend>
-                                    <div class="grid gap-2 sm:grid-cols-2">
-                                        {AREAS.iter().zip(boxes).map(|((read_label, read, write), (r, w))| {
-                                            Effect::new(move |_| if w.get() { r.set(true) });
-                                            Effect::new(move |_| if !r.get() { w.set(false) });
-                                            view! {
-                                                <Checkbox label=read_label.to_string() id=format!("{}-{read}", row.id) checked=r />
-                                                {match write {
-                                                    Some((write_label, scope)) => view! {
-                                                        <Checkbox label=write_label.to_string() id=format!("{}-{scope}", row.id) checked=w />
-                                                    }.into_any(),
-                                                    None => view! { <span></span> }.into_any(),
-                                                }}
-                                            }
-                                        }).collect_view()}
-                                    </div>
-                                </fieldset>
-                                    }
-                                }
-                            </For>
-                            <p class="text-xs/relaxed text-muted-foreground">
-                                "Läsa lön ger också AGI-filen, som innehåller de anställdas personnummer."
-                            </p>
-                            <ErrorAlert message=error />
-                            <div><Button disabled=busy>"Skapa token"</Button></div>
-                        </form>
-                    </Card>
+                    <TokenForm token=None saved=Callback::new(move |s: Option<String>| secret.set(s)) />
                 }.into_any(),
             }}
+        </div>
+    }
+}
+
+/// Changes a token of the user's: the same form, filled in.
+#[component]
+pub fn EditApiToken() -> impl IntoView {
+    let params = use_params_map();
+    let id = params.read_untracked().get("id").unwrap_or_default();
+    let token = RwSignal::new(None::<pb::ApiToken>);
+    let error = RwSignal::new(None::<String>);
+    let navigate = use_navigate();
+    spawn_local(async move {
+        match api().list_api_tokens(pb::ListApiTokensRequest {}).await {
+            Ok(list) => match list.into_inner().tokens.into_iter().find(|t| t.id == id) {
+                Some(found) if found.revoked_at.is_none() => token.set(Some(found)),
+                Some(_) => error.set(Some(describe_code("api_token_revoked"))),
+                None => error.set(Some(describe_code("api_token_not_found"))),
+            },
+            Err(status) => error.set(Some(describe(&status))),
+        }
+    });
+    let done =
+        Callback::new(move |_: Option<String>| navigate("/settings/tokens", Default::default()));
+    view! {
+        <div class="grid gap-6">
+            <PageHeader title="Ändra token" />
+            <ErrorAlert message=error />
+            {move || token.get().map(|t| view! { <TokenForm token=Some(t) saved=done /> })}
         </div>
     }
 }
@@ -403,5 +478,35 @@ mod tests {
             })
         );
         assert_eq!(grant("c2", &[(false, false); 5]), None);
+    }
+
+    #[test]
+    fn the_boxes_show_what_a_token_grants_in_a_company() {
+        let grants = vec![
+            pb::TokenGrant {
+                company_id: "c1".into(),
+                scopes: ["ledger:read", "ledger:write", "vat:read", "company:read"]
+                    .map(String::from)
+                    .to_vec(),
+            },
+            pb::TokenGrant {
+                company_id: "c2".into(),
+                scopes: vec!["payroll:read".into()],
+            },
+        ];
+        let c1 = boxes_from(&grants, "c1");
+        assert_eq!(
+            c1,
+            vec![
+                (true, true),
+                (false, false),
+                (false, false),
+                (true, false),
+                (true, false)
+            ]
+        );
+        // The boxes give back the same grant.
+        assert_eq!(grant("c1", &c1), Some(grants[0].clone()));
+        assert_eq!(boxes_from(&grants, "c3"), vec![(false, false); 5]);
     }
 }

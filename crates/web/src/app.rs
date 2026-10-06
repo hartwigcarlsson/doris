@@ -5,9 +5,10 @@ use crate::api::{api, pb, prefetched_status};
 use crate::nav::Header;
 use crate::pages::{
     AccountLedger, Accounts, Agi, ApiTokens, Companies, CompanyPage, CustomerInvoices, Customers,
-    Employees, FinancialStatements, FiscalYears, Home, Invitations, Login, NewApiToken, NewCompany,
-    NewCustomerInvoice, NewSupplierInvoice, NewVoucher, OpeningBalances, Passkeys, PayrollRunPage,
-    PayrollRuns, Register, SupplierInvoices, Suppliers, TrialBalance, Vat, VatReturnPage, Vouchers,
+    EditApiToken, Employees, FinancialStatements, FiscalYears, Home, Invitations, Login,
+    NewApiToken, NewCompany, NewCustomerInvoice, NewSupplierInvoice, NewVoucher, OpeningBalances,
+    Passkeys, PayrollRunPage, PayrollRuns, Register, SupplierInvoices, Suppliers, TrialBalance,
+    Vat, VatReturnPage, Vouchers,
 };
 use crate::task::PageTasks;
 use leptos::prelude::*;
@@ -103,6 +104,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/settings/passkeys") view=|| view! { <SignedIn><Passkeys /></SignedIn> } />
                         <Route path=path!("/settings/tokens") view=|| view! { <SignedIn><ApiTokens /></SignedIn> } />
                         <Route path=path!("/settings/tokens/new") view=|| view! { <SignedIn><NewApiToken /></SignedIn> } />
+                        <Route path=path!("/settings/tokens/:id") view=|| view! { <SignedIn><EditApiToken /></SignedIn> } />
                         <Route path=path!("/admin/invitations") view=|| view! { <SignedIn admin=true><Invitations /></SignedIn> } />
                     </Routes>
                 </Show>

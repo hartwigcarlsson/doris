@@ -7,7 +7,7 @@ const pages = [
   "/", "/companies", "/companies/new", "/accounts", "/vouchers", "/vouchers/new", "/customers", "/suppliers",
   "/customer-invoices", "/customer-invoices/new", "/supplier-invoices", "/supplier-invoices/new", "/agi",
   "/trial-balance", "/trial-balance/1930", "/financial-statements", "/fiscal-years", "/vat", "/vat/202603", "/opening-balances",
-  "/employees", "/payroll-runs", "/payroll-runs/new", "/settings/passkeys", "/settings/tokens", "/settings/tokens/new", "/admin/invitations",
+  "/employees", "/payroll-runs", "/payroll-runs/new", "/settings/passkeys", "/settings/tokens", "/settings/tokens/new", "/settings/tokens/00000000-0000-0000-0000-000000000000", "/admin/invitations",
 ];
 
 // A page often loads in steps (the years, then the year's figures), so each

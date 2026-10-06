@@ -65,6 +65,7 @@ fn message(code: &str) -> &'static str {
         "invalid_token_expiry" => "Välj en sista giltig dag från i dag och högst ett år fram.",
         "invalid_token_grants" => "Ge token minst en behörighet.",
         "api_token_not_found" => "Token finns inte.",
+        "api_token_revoked" => "Token är återkallad och kan inte ändras.",
         "missing_scope" => "Token saknar behörighet för det här.",
         "token_not_allowed" => "Det här kan inte göras med en token.",
         "invalid_voucher_text" => "Texten måste vara 1–200 tecken.",
@@ -195,6 +196,7 @@ mod tests {
             "invalid_token_expiry",
             "invalid_token_grants",
             "api_token_not_found",
+            "api_token_revoked",
             "missing_scope",
             "token_not_allowed",
         ] {
