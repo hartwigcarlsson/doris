@@ -382,6 +382,7 @@ async fn append(
         .collect::<Result<Vec<_>, _>>()?;
     let metadata = Metadata {
         actor: Some(actor.to_string()),
+        ..Default::default()
     };
     let stream = payroll_stream(company_id);
     let recorded =

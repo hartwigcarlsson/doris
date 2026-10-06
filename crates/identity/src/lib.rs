@@ -337,6 +337,7 @@ async fn commit<T: Serialize>(
         .collect::<Result<Vec<_>, _>>()?;
     let metadata = Metadata {
         actor: actor.map(|id| id.to_string()),
+        ..Default::default()
     };
     let recorded =
         doris_eventstore::append(conn, stream, expected_version, &new_events, &metadata).await?;

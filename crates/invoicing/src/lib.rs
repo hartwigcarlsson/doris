@@ -254,6 +254,7 @@ async fn append<E: Serialize>(
         .collect::<Result<Vec<_>, _>>()?;
     let metadata = Metadata {
         actor: Some(actor.to_string()),
+        ..Default::default()
     };
     let recorded =
         doris_eventstore::append(conn, stream, expected_version, &new_events, &metadata).await?;
