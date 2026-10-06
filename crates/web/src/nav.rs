@@ -239,6 +239,7 @@ pub fn Header() -> impl IntoView {
                         >
                             <NavItem href="/companies" icon=IconName::Building label="Företag" />
                             <NavItem href="/settings/passkeys" icon=IconName::KeyRound label="Passkeys" />
+                            <NavItem href="/settings/tokens" icon=IconName::SquareTerminal label="API-tokens" />
                             <Show when=move || session.is_admin()>
                                 <NavItem href="/admin/invitations" icon=IconName::MailPlus label="Inbjudningar" />
                             </Show>
@@ -287,6 +288,8 @@ mod tests {
             ("/companies", None),
             ("/companies/abc", None),
             ("/settings/passkeys", None),
+            ("/settings/tokens", None),
+            ("/settings/tokens/new", None),
             ("/admin/invitations", None),
             // A longer word that only starts the same is another page.
             ("/suppliers-old", None),

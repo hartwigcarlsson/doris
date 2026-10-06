@@ -201,6 +201,7 @@ const MENU_OF: Record<string, Menu | null> = {
   Arbetsgivardeklaration: "Lön",
   Företag: "Konto",
   Passkeys: "Konto",
+  "API-tokens": "Konto",
   Inbjudningar: "Konto",
 };
 
