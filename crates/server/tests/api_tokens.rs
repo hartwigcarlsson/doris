@@ -491,3 +491,41 @@ async fn a_token_sends_large_underlag_through_the_gate() {
 
     server.ledger().record_voucher(bearer(request, &token)).await.unwrap();
 }
+
+#[tokio::test]
+async fn another_authorization_scheme_does_not_hide_the_session() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut request = authed(pb::GetStatusRequest {}, &anna);
+    request
+        .metadata_mut()
+        .insert("authorization", "Basic eDp5".parse().unwrap());
+
+    let status = server.grpc().get_status(request).await.unwrap().into_inner();
+
+    assert!(status.current_user.is_some());
+}
+
+#[tokio::test]
+async fn a_call_with_a_token_records_its_last_use() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna, "556016-0680").await;
+    let token = api_token(&server, &anna, &[(&id, &["ledger:read"])]).await;
+    let last_used = || async {
+        server
+            .grpc()
+            .list_api_tokens(authed(pb::ListApiTokensRequest {}, &anna))
+            .await
+            .unwrap()
+            .into_inner()
+            .tokens[0]
+            .last_used_at
+            .clone()
+    };
+    assert_eq!(last_used().await, None);
+
+    server.ledger().list_vouchers(bearer(vouchers(&id), &token)).await.unwrap();
+
+    assert!(last_used().await.is_some());
+}

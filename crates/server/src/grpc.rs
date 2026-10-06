@@ -340,17 +340,16 @@ pub(crate) struct TokenCaller {
 }
 
 /// The token in an `authorization: Bearer …` header. The scheme is
-/// case-insensitive; anything else in the header is not a token, but is
-/// still returned, so that it fails as one rather than falling back to the
-/// cookie.
+/// case-insensitive. Another scheme (a proxy's `Basic`) is not ours and
+/// leaves the cookie in charge; a `Bearer` with an empty or garbled token
+/// is returned and fails as a token, never falling back to the cookie.
 pub(crate) fn bearer(headers: &http::HeaderMap) -> Option<String> {
     let value = headers.get(http::header::AUTHORIZATION)?;
     let value = value.to_str().unwrap_or_default().trim();
-    let token = match value.split_once(' ') {
-        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("bearer") => rest.trim(),
-        _ => value,
-    };
-    Some(token.to_owned())
+    let (scheme, rest) = value.split_once(' ').unwrap_or((value, ""));
+    scheme
+        .eq_ignore_ascii_case("bearer")
+        .then(|| rest.trim().to_owned())
 }
 
 /// The company asked about and the caller. A token needs the call's scope
