@@ -190,8 +190,14 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   …`) let doris-cli and agents call the API without a passkey. A user
   creates them in the account menu (API-tokens); each has a last day at
   most a year off, ends at midnight in Sweden after it, and can be revoked
-  by its owner or an admin. A token is never changed: it is revoked and a
-  new one made. Only its SHA-256 is stored (`api_tokens`, events in
+  by its owner or an admin. Creating and changing a token are passkey ceremonies
+  (`Auth::begin_api_token`/`finish_api_token`, kind `api_token` in
+  `webauthn_ceremonies`): Begin checks the request and asks for one of the
+  user's own passkeys, and Finish carries out exactly what Begin was given
+  (`ApiTokenCreated` or `ApiTokenChanged`), after the server has checked
+  each company's membership again. Only the owner changes a token (name,
+  last day, grants; never its secret), and never a revoked one; revoking
+  needs no passkey. Only its SHA-256 is stored (`api_tokens`, events in
   `api-token-{id}`); it is never logged.
 - A token has scopes per company (`ledger|invoicing|payroll|vat:read|write`,
   `company:read`) and never more than its owner: membership is checked on
@@ -259,11 +265,13 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `customer_invoice_not_found`, `customer_inactive`,
   `duplicate_customer_invoice`, `customer_invoice_paid`,
   `customer_invoice_not_paid` and `customer_invoice_cancelled`.
-- `AuthService` also has `CreateApiToken`, `ListApiTokens` and
+- `AuthService` also has `BeginCreateApiToken`, `FinishCreateApiToken`,
+  `BeginChangeApiToken`, `FinishChangeApiToken`, `ListApiTokens` and
   `RevokeApiToken` (session only). Codes: `invalid_token_name`,
   `invalid_token_expiry`, `invalid_token_grants`, `api_token_not_found`,
-  `missing_scope` (the token lacks the scope for that company) and
-  `token_not_allowed` (the rpc is for sessions only).
+  `api_token_revoked`, `missing_scope` (the token lacks the scope for that
+  company), `ceremony_expired`, `credential_rejected` and `token_not_allowed`
+  (the rpc is for sessions only).
 - `VatService` (`proto/doris/vat/v1/vat.proto`; codes mapped in
   `crates/server/src/vat.rs`): `SetVatPeriod`, `ListVatReturns`,
   `GetVatReturn`, `ExportVatFile` (eSKD 6.0, ISO-8859-1) and
