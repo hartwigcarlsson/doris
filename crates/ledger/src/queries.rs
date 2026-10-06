@@ -5,7 +5,7 @@ use crate::domain::{
     FiscalYearStatus, Recorded, TrialBalanceRow, Voucher, VoucherLine, running_balance,
 };
 use crate::statements::{FinancialStatements, build};
-use crate::{Error, Result};
+use crate::{Error, Result, VoucherRef};
 use jiff::civil::Date;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -417,6 +417,67 @@ fn projected_attachment(
         content_type: ContentType::from_mime(content_type).expect("projected types are valid"),
         size: size as u64,
     }
+}
+
+/// One account with a momsruta and its saldo over a period.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VatAccountTotal {
+    pub number: u16,
+    pub name: String,
+    pub vat_box: crate::vat_box::VatBox,
+    /// Debit − credit, öre.
+    pub saldo: i64,
+}
+
+/// Each account with a box and lines dated `from..=to`: its box and saldo.
+/// Vouchers in `exclude`, and every voucher that corrects one of them,
+/// are left out. For `doris-vat`, in its own transaction, which has
+/// checked membership.
+// ponytail: sums the period's lines in Rust; a GROUP BY when periods get big.
+pub async fn vat_box_totals_in(
+    conn: &mut sqlx::SqliteConnection,
+    company_id: Uuid,
+    from: Date,
+    to: Date,
+    exclude: &[VoucherRef],
+) -> Result<Vec<VatAccountTotal>> {
+    let chart = crate::chart_in(conn, company_id).await?;
+    let rows: Vec<(String, u32, Option<u32>, u16, i64)> = sqlx::query_as(
+        "SELECT v.fiscal_year_start, v.number, v.corrects, l.account, l.debit - l.credit
+         FROM voucher_lines l
+         JOIN vouchers v ON v.company_id = l.company_id
+             AND v.fiscal_year_start = l.fiscal_year_start AND v.number = l.number
+         WHERE l.company_id = ? AND v.date BETWEEN ? AND ?",
+    )
+    .bind(company_id.to_string())
+    .bind(from.to_string())
+    .bind(to.to_string())
+    .fetch_all(&mut *conn)
+    .await?;
+    let excluded = |start: &str, number: u32| {
+        exclude
+            .iter()
+            .any(|v| v.number == number && v.fiscal_year_start.to_string() == start)
+    };
+    let mut sums = std::collections::BTreeMap::<u16, i64>::new();
+    for (start, number, corrects, account, saldo) in rows {
+        if excluded(&start, number) || corrects.is_some_and(|c| excluded(&start, c)) {
+            continue;
+        }
+        *sums.entry(account).or_default() += saldo;
+    }
+    Ok(sums
+        .into_iter()
+        .filter_map(|(number, saldo)| {
+            let account = chart.get(AccountNumber::parse(number.into()).ok()?)?;
+            Some(VatAccountTotal {
+                number,
+                name: account.name.as_str().to_owned(),
+                vat_box: account.vat_box?,
+                saldo,
+            })
+        })
+        .collect())
 }
 
 #[cfg(test)]

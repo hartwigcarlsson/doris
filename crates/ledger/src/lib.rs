@@ -29,6 +29,7 @@ pub use projections::rebuild_projections;
 pub use queries::{
     account_ledger, attachment_data, corrected_vouchers_in, financial_statements, get_attachment,
     list_accounts, list_fiscal_years, list_vouchers, opening_balances, trial_balance,
+    vat_box_totals_in, VatAccountTotal,
 };
 
 const ACCOUNTS_STREAM: &str = "accounts-";
