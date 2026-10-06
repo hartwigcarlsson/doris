@@ -250,6 +250,71 @@ pub fn authed<T>(message: T, session: &str) -> Request<T> {
     request
 }
 
+/// A request carrying an API token, as doris-cli sends it.
+pub fn bearer<T>(message: T, secret: &str) -> Request<T> {
+    let mut request = Request::new(message);
+    request
+        .metadata_mut()
+        .insert("authorization", format!("Bearer {secret}").parse().unwrap());
+    request
+}
+
+/// A company of `session`'s with the räkenskapsår 2026.
+pub async fn company(server: &TestServer, session: &str, org_nr: &str) -> String {
+    use doris_proto::company::v1 as cpb;
+    server
+        .companies()
+        .create_company(authed(
+            cpb::CreateCompanyRequest {
+                org_nr: org_nr.into(),
+                name: format!("Bolag {org_nr}"),
+                legal_form: cpb::LegalForm::Aktiebolag as i32,
+                address: None,
+                fiscal_year_start: "2026-01-01".into(),
+                fiscal_year_end: "2026-12-31".into(),
+                accounting_method: cpb::AccountingMethod::Invoice as i32,
+            },
+            session,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .company_id
+}
+
+/// The day `days` from today in Sweden, as `CreateApiToken` takes it.
+pub fn in_days(days: i64) -> String {
+    use jiff::ToSpan;
+    let sweden = jiff::tz::TimeZone::get("Europe/Stockholm").unwrap();
+    let today = jiff::Timestamp::now().to_zoned(sweden).date();
+    today.checked_add(days.days()).unwrap().to_string()
+}
+
+/// A 30-day token of `session`'s with these scopes per company; returns
+/// its secret.
+pub async fn api_token(server: &TestServer, session: &str, grants: &[(&str, &[&str])]) -> String {
+    server
+        .grpc()
+        .create_api_token(authed(
+            pb::CreateApiTokenRequest {
+                name: "Agent".into(),
+                expires_on: in_days(30),
+                grants: grants
+                    .iter()
+                    .map(|(company, scopes)| pb::TokenGrant {
+                        company_id: company.to_string(),
+                        scopes: scopes.iter().map(|s| s.to_string()).collect(),
+                    })
+                    .collect(),
+            },
+            session,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .secret
+}
+
 pub fn set_cookie(metadata: &tonic::metadata::MetadataMap) -> Option<String> {
     metadata
         .get("set-cookie")

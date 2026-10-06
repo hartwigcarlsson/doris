@@ -26,6 +26,11 @@ service AuthService {
   // Require an admin session.
   rpc CreateInvitation(CreateInvitationRequest) returns (CreateInvitationResponse);
   rpc ListInvitations(ListInvitationsRequest) returns (ListInvitationsResponse);
+  // Require a session (never a token). A token is shown once, at creation.
+  rpc CreateApiToken(CreateApiTokenRequest) returns (CreateApiTokenResponse);
+  rpc ListApiTokens(ListApiTokensRequest) returns (ListApiTokensResponse);
+  // The owner, or an admin for anyone's token.
+  rpc RevokeApiToken(RevokeApiTokenRequest) returns (RevokeApiTokenResponse);
 }
 
 enum Role {
@@ -132,3 +137,44 @@ message Invitation {
 message ListInvitationsResponse {
   repeated Invitation invitations = 1;
 }
+
+// Scopes are "ledger:read", "ledger:write", "invoicing:read",
+// "invoicing:write", "payroll:read", "payroll:write", "vat:read",
+// "vat:write" and "company:read".
+message TokenGrant {
+  string company_id = 1;
+  repeated string scopes = 2;
+}
+
+message CreateApiTokenRequest {
+  string name = 1;
+  string expires_on = 2; // YYYY-MM-DD: the last day the token works (Swedish time)
+  repeated TokenGrant grants = 3;
+}
+
+message CreateApiTokenResponse {
+  string token_id = 1;
+  string secret = 2;
+}
+
+message ApiToken {
+  string id = 1;
+  string name = 2;
+  repeated TokenGrant grants = 3;
+  string created_at = 4;
+  string expires_at = 5; // RFC 3339: the moment it stops working
+  optional string last_used_at = 6;
+  optional string revoked_at = 7;
+}
+
+message ListApiTokensRequest {}
+
+message ListApiTokensResponse {
+  repeated ApiToken tokens = 1;
+}
+
+message RevokeApiTokenRequest {
+  string token_id = 1;
+}
+
+message RevokeApiTokenResponse {}

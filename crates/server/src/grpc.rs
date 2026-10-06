@@ -1,7 +1,7 @@
 //! `doris.auth.v1.AuthService`: maps gRPC calls onto `doris_identity`, and
 //! carries the session in an HttpOnly cookie.
 
-use doris_identity::domain::{DomainError, Role, User};
+use doris_identity::domain::{DomainError, Grant, Role, Scope, User};
 use doris_identity::{Auth, Error, SESSION_TTL};
 use doris_proto::auth::v1 as pb;
 use doris_proto::auth::v1::auth_service_server::AuthService;
@@ -240,6 +240,81 @@ impl AuthService for AuthApi {
             .collect();
         Ok(Response::new(pb::ListInvitationsResponse { invitations }))
     }
+
+    async fn create_api_token(
+        &self,
+        request: Request<pb::CreateApiTokenRequest>,
+    ) -> Result<Response<pb::CreateApiTokenResponse>, Status> {
+        let user = self.user(&request).await?;
+        let req = request.into_inner();
+        let now = Timestamp::now();
+        let expires_at = token_expiry(&req.expires_on, now)?;
+        let mut grants = Vec::with_capacity(req.grants.len());
+        for grant in &req.grants {
+            let company_id: Uuid = grant
+                .company_id
+                .parse()
+                .map_err(|_| Status::not_found("company_not_found"))?;
+            // Only the user's own companies: membership has one source.
+            doris_company::get_company(&self.pool, company_id, user.id)
+                .await
+                .map_err(crate::company::status)?;
+            let scopes = grant
+                .scopes
+                .iter()
+                .map(|s| Scope::parse(s))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| Status::invalid_argument("invalid_token_grants"))?;
+            grants.push(Grant { company_id, scopes });
+        }
+        let (token_id, secret) = doris_identity::create_api_token(
+            &self.pool, user.id, &req.name, expires_at, grants, now,
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::CreateApiTokenResponse {
+            token_id: token_id.to_string(),
+            secret,
+        }))
+    }
+
+    async fn list_api_tokens(
+        &self,
+        request: Request<pb::ListApiTokensRequest>,
+    ) -> Result<Response<pb::ListApiTokensResponse>, Status> {
+        let user = self.user(&request).await?;
+        let tokens = doris_identity::list_api_tokens(&self.pool, user.id)
+            .await
+            .map_err(status)?
+            .into_iter()
+            .map(|t| pb::ApiToken {
+                id: t.id.to_string(),
+                name: t.name,
+                grants: t.grants.iter().map(grant_message).collect(),
+                created_at: t.created_at,
+                expires_at: t.expires_at.to_string(),
+                last_used_at: t.last_used_at.map(|at| at.to_string()),
+                revoked_at: t.revoked_at,
+            })
+            .collect();
+        Ok(Response::new(pb::ListApiTokensResponse { tokens }))
+    }
+
+    async fn revoke_api_token(
+        &self,
+        request: Request<pb::RevokeApiTokenRequest>,
+    ) -> Result<Response<pb::RevokeApiTokenResponse>, Status> {
+        let user = self.user(&request).await?;
+        let token_id: Uuid = request
+            .get_ref()
+            .token_id
+            .parse()
+            .map_err(|_| Status::not_found("api_token_not_found"))?;
+        doris_identity::revoke_api_token(&self.pool, user.id, token_id)
+            .await
+            .map_err(status)?;
+        Ok(Response::new(pb::RevokeApiTokenResponse {}))
+    }
 }
 
 /// The signed-in user, or `Unauthenticated`. Shared by every service.
@@ -260,6 +335,33 @@ pub(crate) async fn session_user(
         .await
         .map_err(status)?
         .ok_or_else(not_signed_in)
+}
+
+fn grant_message(grant: &Grant) -> pb::TokenGrant {
+    pb::TokenGrant {
+        company_id: grant.company_id.to_string(),
+        scopes: grant.scopes.iter().map(|s| s.as_str().to_owned()).collect(),
+    }
+}
+
+/// When a token whose last day is `raw` (`YYYY-MM-DD`) stops working:
+/// midnight in Sweden after that day. The day is today at the earliest and
+/// 366 days off at most.
+fn token_expiry(raw: &str, now: Timestamp) -> Result<Timestamp, Status> {
+    use jiff::ToSpan;
+    let invalid = || Status::invalid_argument("invalid_token_expiry");
+    let last_day: Date = raw.parse().map_err(|_| invalid())?;
+    let today = today_in_sweden(now);
+    let latest = today.checked_add(366.days()).map_err(|_| invalid())?;
+    if last_day < today || last_day > latest {
+        return Err(invalid());
+    }
+    let sweden = TimeZone::get("Europe/Stockholm").expect("bundled tz database");
+    let midnight = last_day.tomorrow().map_err(|_| invalid())?;
+    Ok(midnight
+        .to_zoned(sweden)
+        .map_err(|_| invalid())?
+        .timestamp())
 }
 
 fn user_message(user: &User) -> pb::User {
@@ -409,8 +511,35 @@ fn today_in_sweden(ts: Timestamp) -> Date {
 
 #[cfg(test)]
 mod tests {
-    use super::today_in_sweden;
+    use super::{today_in_sweden, token_expiry};
     use jiff::civil::date;
+
+    #[test]
+    fn a_token_ends_at_midnight_in_sweden_after_its_last_day() {
+        let at = |s: &str| -> jiff::Timestamp { s.parse().unwrap() };
+        let now = at("2026-10-06T10:00:00Z");
+        // The last day today: the rest of today, until midnight in Sweden (summer time).
+        assert_eq!(
+            token_expiry("2026-10-06", now).unwrap(),
+            at("2026-10-06T22:00:00Z")
+        );
+        // In winter time, midnight is 23:00Z.
+        assert_eq!(
+            token_expiry("2026-12-01", now).unwrap(),
+            at("2026-12-01T23:00:00Z")
+        );
+        // The day before summer time starts ends at 23:00Z too.
+        assert_eq!(
+            token_expiry("2027-03-27", now).unwrap(),
+            at("2027-03-27T23:00:00Z")
+        );
+        // Today counts in Sweden: at 23:30Z on the 6th it is already the 7th.
+        assert!(token_expiry("2026-10-06", at("2026-10-06T23:30:00Z")).is_err());
+        assert!(token_expiry("2027-10-07", now).is_ok());
+        assert!(token_expiry("2027-10-08", now).is_err());
+        assert!(token_expiry("2026-10-05", now).is_err());
+        assert!(token_expiry("i morgon", now).is_err());
+    }
 
     #[test]
     fn today_is_the_date_in_sweden() {
