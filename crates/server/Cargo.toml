@@ -17,6 +17,7 @@ doris-identity.workspace = true
 doris-invoicing.workspace = true
 doris-ledger.workspace = true
 doris-payroll.workspace = true
+doris-vat.workspace = true
 doris-proto = { workspace = true, features = ["server"] }
 http.workspace = true
 reqwest.workspace = true

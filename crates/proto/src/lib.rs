@@ -29,3 +29,9 @@ pub mod payroll {
         tonic::include_proto!("doris.payroll.v1");
     }
 }
+
+pub mod vat {
+    pub mod v1 {
+        tonic::include_proto!("doris.vat.v1");
+    }
+}

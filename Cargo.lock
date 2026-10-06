@@ -955,6 +955,7 @@ dependencies = [
  "doris-ledger",
  "doris-payroll",
  "doris-proto",
+ "doris-vat",
  "http",
  "http-body-util",
  "hyper-util",
