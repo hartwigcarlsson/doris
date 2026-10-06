@@ -347,6 +347,9 @@ fn finish_status(err: Error) -> Status {
 pub(crate) fn status(err: Error) -> Status {
     match err {
         Error::Domain(DomainError::NotAdmin) => Status::permission_denied("not_admin"),
+        Error::Domain(DomainError::NotTokenOwner) | Error::ApiTokenNotFound => {
+            Status::not_found("api_token_not_found")
+        }
         Error::Domain(err) => Status::invalid_argument(domain_code(err)),
         Error::AlreadyExists => Status::already_exists("already_exists"),
         Error::InvitationNotFound => Status::not_found("invitation_not_found"),

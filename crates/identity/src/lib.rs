@@ -3,6 +3,7 @@
 //! Every write runs in one IMMEDIATE transaction: load state, decide, append,
 //! project. A UNIQUE violation in a projection rolls the whole write back.
 
+mod api_token;
 pub mod domain;
 mod projections;
 mod queries;
@@ -21,6 +22,10 @@ use serde::de::DeserializeOwned;
 use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
+pub use api_token::{
+    API_TOKEN_PREFIX, ApiTokenSummary, TokenAccess, create_api_token, list_api_tokens,
+    revoke_api_token, token_user, touch_api_token,
+};
 pub use projections::rebuild_projections;
 pub use queries::{
     InvitationSummary, PasskeySummary, bootstrap_required, invitation_email, list_invitations,
@@ -31,6 +36,7 @@ pub use webauthn::{Auth, CEREMONY_TTL};
 
 const USER_STREAM: &str = "user-";
 const INVITATION_STREAM: &str = "invitation-";
+const API_TOKEN_STREAM: &str = "api-token-";
 const SCHEMA_VERSION: i64 = 1;
 
 #[derive(Debug, thiserror::Error)]
@@ -43,6 +49,8 @@ pub enum Error {
     InvitationNotFound,
     #[error("user not found")]
     UserNotFound,
+    #[error("api token not found")]
+    ApiTokenNotFound,
     #[error("ceremony not found")]
     CeremonyNotFound,
     #[error("ceremony expired")]
