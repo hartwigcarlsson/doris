@@ -133,6 +133,7 @@ fn AccountRow(
         number,
         name: current,
         active,
+        ..
     } = account;
     let editing = RwSignal::new(false);
     let name = RwSignal::new(current.clone());

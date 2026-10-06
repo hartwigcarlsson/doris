@@ -59,6 +59,7 @@ impl LedgerService for LedgerApi {
                 number: a.number.get().into(),
                 name: a.name.as_str().to_owned(),
                 active: a.active,
+                vat_box: a.vat_box.map_or(0, |b| b.get().into()),
             })
             .collect();
         Ok(Response::new(pb::ListAccountsResponse { accounts }))
@@ -98,6 +99,19 @@ impl LedgerService for LedgerApi {
             .await
             .map_err(status)?;
         Ok(Response::new(pb::SetAccountActiveResponse {}))
+    }
+
+    async fn set_account_vat_box(
+        &self,
+        request: Request<pb::SetAccountVatBoxRequest>,
+    ) -> Result<Response<pb::SetAccountVatBoxResponse>, Status> {
+        let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
+        let req = request.into_inner();
+        let vat_box = (req.vat_box != 0).then_some(req.vat_box);
+        doris_ledger::set_account_vat_box(&self.pool, company, user, req.number, vat_box)
+            .await
+            .map_err(status)?;
+        Ok(Response::new(pb::SetAccountVatBoxResponse {}))
     }
 
     async fn list_fiscal_years(
