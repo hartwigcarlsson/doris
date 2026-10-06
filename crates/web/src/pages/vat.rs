@@ -43,6 +43,14 @@ pub fn vat_status_label(status: vpb::VatStatus) -> &'static str {
     }
 }
 
+pub fn vat_status_variant(status: vpb::VatStatus) -> BadgeVariant {
+    match status {
+        vpb::VatStatus::Changed => BadgeVariant::Destructive,
+        vpb::VatStatus::Submitted => BadgeVariant::Secondary,
+        _ => BadgeVariant::Outline,
+    }
+}
+
 pub fn box_amount(kr: i64, vat_box: u32) -> String {
     // Whole kronor, grouped as everywhere else.
     let grouped = amount(kr * 100).trim_end_matches(",00").to_owned();
@@ -65,6 +73,8 @@ pub fn Vat() -> impl IntoView {
     // The year's answer and the (company, year) it is for.
     let loaded = RwSignal::new(None::<(String, String, vpb::ListVatReturnsResponse)>);
     let kind = RwSignal::new(String::new());
+    // A SetVatPeriod call is in flight.
+    let saving = RwSignal::new(false);
 
     let load = move || {
         let (company_id, start) = (companies.active.get_untracked(), year.get_untracked());
@@ -106,13 +116,16 @@ pub fn Vat() -> impl IntoView {
             return;
         }
         error.set(None);
+        saving.set(true);
         spawn_local(async move {
             let request = vpb::SetVatPeriodRequest {
                 company_id,
                 fiscal_year_start: start,
                 kind: kind_of(&chosen) as i32,
             };
-            match vat_api().set_vat_period(request).await {
+            let result = vat_api().set_vat_period(request).await;
+            saving.set(false);
+            match result {
                 Ok(_) => load(),
                 Err(status) => {
                     error.set(Some(describe(&status)));
@@ -129,7 +142,7 @@ pub fn Vat() -> impl IntoView {
             </PageHeader>
             <ErrorAlert message=error />
             <Card title="Redovisningsperiod" narrow=true>
-                <Select label="Redovisningsperiod" id="vat_period_kind" hide_label=true value=kind disabled=Signal::derive(move || loaded.get().is_some_and(|(_, _, r)| r.locked))>
+                <Select label="Redovisningsperiod" id="vat_period_kind" hide_label=true value=kind disabled=Signal::derive(move || saving.get() || loaded.get().is_none_or(|(_, _, r)| r.locked))>
                     <option class=SELECT_OPTION value="monthly">"Månad"</option>
                     <option class=SELECT_OPTION value="quarterly">"Kvartal"</option>
                     <option class=SELECT_OPTION value="yearly">"Helår"</option>
@@ -151,11 +164,10 @@ pub fn Vat() -> impl IntoView {
                 <tbody class=TABLE_BODY>
                     {move || loaded.get().map(|(_, _, r)| r.periods.into_iter().map(|p| {
                         let status = p.status();
-                        let variant = if status == vpb::VatStatus::Changed { BadgeVariant::Destructive } else if status == vpb::VatStatus::Submitted { BadgeVariant::Secondary } else { BadgeVariant::Outline };
                         view! {
                             <tr class=TABLE_ROW>
                                 <td class=TABLE_CELL><a class="underline-offset-4 hover:underline" href=format!("/vat/{}", p.period)>{p.label.clone()}</a></td>
-                                <td class=TABLE_CELL><Badge variant=variant>{vat_status_label(status)}</Badge></td>
+                                <td class=TABLE_CELL><Badge variant=vat_status_variant(status)>{vat_status_label(status)}</Badge></td>
                                 <td class=TABLE_CELL>{if p.due_date.is_empty() { "Se Skatteverket".to_owned() } else { p.due_date.clone() }}</td>
                                 <td class=TABLE_AMOUNT_CELL>{whole_kronor(p.vat_due * 100)}</td>
                             </tr>
@@ -181,5 +193,14 @@ mod tests {
         assert_eq!(box_amount(24_610, 48), "−24\u{a0}610");
         assert_eq!(box_amount(0, 10), "–");
         assert_eq!(box_amount(-1_500, 42), "-1\u{a0}500");
+    }
+
+    #[test]
+    fn a_changed_period_stands_out_and_a_submitted_one_recedes() {
+        assert!(vat_status_variant(vpb::VatStatus::Changed) == BadgeVariant::Destructive);
+        assert!(vat_status_variant(vpb::VatStatus::Submitted) == BadgeVariant::Secondary);
+        for status in [vpb::VatStatus::InProgress, vpb::VatStatus::ToSubmit] {
+            assert!(vat_status_variant(status) == BadgeVariant::Outline);
+        }
     }
 }

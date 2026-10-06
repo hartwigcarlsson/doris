@@ -92,8 +92,7 @@ const iso = (daysFromToday: number) => {
 // have ended are then on the to-do list; these tests want an empty one.
 async function notVatRegistered(page: Page, app: string) {
   await page.goto(`${app}/vat`);
-  // Let the page load first, or its answer overwrites the choice.
-  await expect(page.getByRole("link", { name: /januari–mars/ })).toBeVisible();
+  // selectOption waits until the select is enabled: the year has loaded.
   await page.getByLabel("Redovisningsperiod").selectOption("not_registered");
   await expect(page.getByRole("row")).toHaveCount(1); // only the header: no periods
 }

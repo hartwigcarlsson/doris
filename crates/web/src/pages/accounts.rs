@@ -20,6 +20,12 @@ pub fn vat_box_text(n: u32) -> String {
     }
 }
 
+/// Whether the account may have a box: the server refuses one on the
+/// momsavräkning's own accounts, 2650 and 3740.
+pub fn takes_vat_box(number: u32) -> bool {
+    !matches!(number, 2650 | 3740)
+}
+
 #[component]
 pub fn Accounts() -> impl IntoView {
     let companies = expect_context::<Companies>();
@@ -126,6 +132,7 @@ pub fn Accounts() -> impl IntoView {
                     </For>
                 </tbody>
             </Table></TableCard>
+            <p class="text-xs/relaxed text-muted-foreground">"En ändrad momsruta gäller även perioder som redan är deklarerade."</p>
         </div>
     }
 }
@@ -146,25 +153,33 @@ fn AccountRow(
         vat_box,
     } = account;
     let chosen = RwSignal::new(vat_box.to_string());
-    Effect::new(move |previous: Option<String>| {
+    // The box the server has: a refused choice goes back to it, and that
+    // (like the first run) saves nothing.
+    let saved = StoredValue::new(vat_box.to_string());
+    Effect::new(move |_| {
         let value = chosen.get();
-        // Only a change by the user, not the first run.
-        if previous.is_some_and(|p| p != value) {
-            error.set(None);
-            let vat_box = value.parse().unwrap_or(0);
-            spawn_local(async move {
-                let request = lpb::SetAccountVatBoxRequest {
-                    company_id: company_id.get_value(),
-                    number,
-                    vat_box,
-                };
-                match ledger_api().set_account_vat_box(request).await {
-                    Ok(_) => changed.run(()),
-                    Err(status) => error.set(Some(describe(&status))),
-                }
-            });
+        if value == saved.get_value() {
+            return;
         }
-        value
+        error.set(None);
+        let vat_box = value.parse().unwrap_or(0);
+        spawn_local(async move {
+            let request = lpb::SetAccountVatBoxRequest {
+                company_id: company_id.get_value(),
+                number,
+                vat_box,
+            };
+            match ledger_api().set_account_vat_box(request).await {
+                Ok(_) => {
+                    saved.set_value(value);
+                    changed.run(());
+                }
+                Err(status) => {
+                    error.set(Some(describe(&status)));
+                    chosen.set(saved.get_value());
+                }
+            }
+        });
     });
     let editing = RwSignal::new(false);
     let name = RwSignal::new(current.clone());
@@ -228,7 +243,7 @@ fn AccountRow(
                         on:change=move |ev| chosen.set(event_target_value(&ev))
                     >
                         <option class=SELECT_OPTION value="0">"–"</option>
-                        {crate::vat_form::SECTIONS.iter().flat_map(|s| s.rows).filter(|r| r.vat_box != 49).map(|r| view! {
+                        {crate::vat_form::SECTIONS.iter().flat_map(|s| s.rows).filter(|r| r.vat_box != 49 && takes_vat_box(number)).map(|r| view! {
                             <option class=SELECT_OPTION value=r.vat_box.to_string()>{vat_box_text(r.vat_box)}</option>
                         }).collect_view()}
                     </select>
@@ -266,5 +281,13 @@ mod tests {
         );
         assert_eq!(vat_box_text(48), "48 Ingående moms att dra av");
         assert_eq!(vat_box_text(0), "–");
+    }
+
+    #[test]
+    fn the_settlement_accounts_take_no_box() {
+        assert!(!takes_vat_box(2650));
+        assert!(!takes_vat_box(3740));
+        assert!(takes_vat_box(2611));
+        assert!(takes_vat_box(3001));
     }
 }

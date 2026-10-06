@@ -6,7 +6,7 @@ use crate::api::{vat_api, vpb};
 use crate::attachments::save_as;
 use crate::errors::describe;
 use crate::format::amount;
-use crate::pages::vat::{box_amount, vat_status_label};
+use crate::pages::vat::{box_amount, vat_status_label, vat_status_variant};
 use crate::task::spawn_local;
 use crate::ui::{Badge, Button, ErrorAlert, PageHeader, Variant};
 use crate::vat_form::{SECTIONS, Section};
@@ -100,12 +100,15 @@ pub fn VatReturnPage() -> impl IntoView {
         spawn_local(async move {
             let result = vat_api()
                 .mark_vat_return_submitted(vpb::MarkVatReturnSubmittedRequest {
-                    company_id,
+                    company_id: company_id.clone(),
                     period: period.get_value(),
                     fingerprint,
                 })
                 .await;
             marking.set(false);
+            if company_id != companies.active.get_untracked() {
+                return;
+            }
             match result {
                 Ok(r) => {
                     let r = r.into_inner();
@@ -174,7 +177,7 @@ fn Declaration(declaration: vpb::VatReturn) -> impl IntoView {
     view! {
         <div class="grid gap-3">
             <div class="flex flex-wrap items-center gap-2 text-xs/relaxed">
-                <Badge>{vat_status_label(status)}</Badge>
+                <Badge variant=vat_status_variant(status)>{vat_status_label(status)}</Badge>
                 <span class="text-muted-foreground">{format!("Organisationsnummer {} · Momsregistreringsnummer {} · Deklarationsdag {} · Period i filen {}",
                     declaration.org_nr, declaration.vat_number,
                     if summary.due_date.is_empty() { "se Skatteverket".to_owned() } else { summary.due_date.clone() },
