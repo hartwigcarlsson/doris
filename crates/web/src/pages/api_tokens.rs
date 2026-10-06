@@ -13,6 +13,7 @@ use crate::ui::{
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
+use std::collections::HashMap;
 
 /// The form's areas in order: what reading and (if any) writing grant.
 type Area = (
@@ -139,19 +140,19 @@ pub fn ApiTokens() -> impl IntoView {
                         <th class=TABLE_HEADER_CELL>"Giltig till"</th>
                         <th class=TABLE_HEADER_CELL>"Senast använd"</th>
                         <th class=TABLE_HEADER_CELL>"Status"</th>
-                        <th class=TABLE_HEADER_CELL></th>
+                        <th class=TABLE_HEADER_CELL><span class="sr-only">"Åtgärder"</span></th>
                     </tr>
                 </thead>
                 <tbody class=TABLE_BODY>
                     <For each=move || tokens.get() key=|t| (t.id.clone(), t.revoked_at.clone()) let(token)>
                         {
                             let status = status_of(&token, &now_utc());
-                            let names = company_names(&token.grants);
+                            let grants = token.grants.clone();
                             let row = token.clone();
                             view! {
                                 <tr class=TABLE_ROW>
                                     <td class=TABLE_CELL>{token.name.clone()}</td>
-                                    <td class=TABLE_CELL>{names}</td>
+                                    <td class=TABLE_CELL>{move || company_names(&grants)}</td>
                                     <td class=TABLE_CELL>{date(&token.expires_at).to_owned()}</td>
                                     <td class=TABLE_CELL>
                                         {token.last_used_at.as_deref().map_or("Aldrig".to_owned(), |at| date(at).to_owned())}
@@ -185,56 +186,40 @@ pub fn ApiTokens() -> impl IntoView {
     }
 }
 
-/// One company's boxes in the form: (read, write) per area.
-#[derive(Clone)]
-struct CompanyBoxes {
-    id: String,
-    name: String,
-    boxes: Vec<(RwSignal<bool>, RwSignal<bool>)>,
-}
+/// A company's (read, write) boxes in `AREAS` order.
+type Boxes = Vec<(RwSignal<bool>, RwSignal<bool>)>;
 
 #[component]
 pub fn NewApiToken() -> impl IntoView {
     let companies = expect_context::<Companies>();
     let name = RwSignal::new(String::new());
     let last_day = RwSignal::new(plus_days(&today(), 90).unwrap_or_default());
-    let rows = RwSignal::new(Vec::<CompanyBoxes>::new());
+    // Each company's boxes are made by its row in the form, so they live as
+    // long as the row; submit looks them up here for the companies listed now.
+    let boxes_of = StoredValue::new(HashMap::<String, Boxes>::new());
     let secret = RwSignal::new(None::<String>);
     let error = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
-
-    Effect::new(move |_| {
-        let list = companies.list.get();
-        rows.set(
-            list.into_iter()
-                .map(|c| CompanyBoxes {
-                    id: c.id,
-                    name: c.name,
-                    boxes: AREAS
-                        .iter()
-                        .map(|_| (RwSignal::new(false), RwSignal::new(false)))
-                        .collect(),
-                })
-                .collect(),
-        );
-    });
 
     let submit = move |ev: SubmitEvent| {
         ev.prevent_default();
         busy.set(true);
         error.set(None);
-        let grants = rows
-            .get_untracked()
-            .iter()
-            .filter_map(|row| {
-                let boxes: Vec<_> = row
-                    .boxes
-                    .iter()
-                    .map(|(r, w)| (r.get_untracked(), w.get_untracked()))
-                    .collect();
-                grant(&row.id, &boxes)
-            })
-            .collect();
+        let grants = boxes_of.with_value(|map| {
+            companies
+                .list
+                .get_untracked()
+                .iter()
+                .filter_map(|c| {
+                    let boxes: Vec<_> = map
+                        .get(&c.id)?
+                        .iter()
+                        .map(|(r, w)| (r.get_untracked(), w.get_untracked()))
+                        .collect();
+                    grant(&c.id, &boxes)
+                })
+                .collect()
+        });
         spawn_local(async move {
             let request = pb::CreateApiTokenRequest {
                 name: name.get_untracked(),
@@ -271,11 +256,16 @@ pub fn NewApiToken() -> impl IntoView {
                                 <Field label="Namn" id="token_name" placeholder="t.ex. doris-cli på laptopen" value=name />
                                 <Field label="Giltig till och med" id="token_last_day" kind="date" value=last_day hint=Signal::derive(|| Some("Högst ett år.")) />
                             </div>
-                            <For each=move || rows.get() key=|row| row.id.clone() let(row)>
+                            <For each=move || companies.list.get() key=|c| c.id.clone() let(company)>
+                                {
+                                    let boxes: Boxes = AREAS.iter().map(|_| (RwSignal::new(false), RwSignal::new(false))).collect();
+                                    boxes_of.update_value(|map| { map.insert(company.id.clone(), boxes.clone()); });
+                                    let row = company;
+                                    view! {
                                 <fieldset class="grid gap-2 rounded-md border border-border p-3">
                                     <legend class="px-1 text-xs/relaxed font-medium">{row.name.clone()}</legend>
                                     <div class="grid gap-2 sm:grid-cols-2">
-                                        {AREAS.iter().zip(row.boxes.clone()).map(|((read_label, read, write), (r, w))| {
+                                        {AREAS.iter().zip(boxes).map(|((read_label, read, write), (r, w))| {
                                             Effect::new(move |_| if w.get() { r.set(true) });
                                             view! {
                                                 <Checkbox label=read_label.to_string() id=format!("{}-{read}", row.id) checked=r />
@@ -289,6 +279,8 @@ pub fn NewApiToken() -> impl IntoView {
                                         }).collect_view()}
                                     </div>
                                 </fieldset>
+                                    }
+                                }
                             </For>
                             <p class="text-xs/relaxed text-muted-foreground">
                                 "Läsa lön ger också AGI-filen, som innehåller de anställdas personnummer."
