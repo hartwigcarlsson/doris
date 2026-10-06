@@ -120,6 +120,13 @@ AccountVatBoxSet { number: AccountNumber, vat_box: Option<VatBox> },
 - `Account` får `vat_box: Option<VatBox>`: den senaste händelsen om det
   finns någon, annars `default_vat_box`. Befintliga företag behöver ingen
   migrering.
+- Standardrutorna skrivs in i historiken som `VatBoxesRecorded { boxes }`
+  (ett konto som inte står med har ingen ruta): direkt efter `ChartSeeded`
+  för ett nytt företag, och för en kontoplan seedad tidigare vid dess
+  första skrivning därefter, i användarens transaktion. Sedan läses ingen
+  ruta ur koden, så en ändrad standardkarta flyttar inga konton bakåt i
+  tiden. Ett konto som läggs till efteråt får sin standardruta som en egen
+  `AccountVatBoxSet`.
 - `set_account_vat_box(chart, number, vat_box)`: kontot måste finnas
   (`AccountNotFound`). En ruta på 2650 eller 3740, som avräkningen själv
   bokför på, ger `InvalidVatBox`; att ta bort rutan går alltid. Samma ruta
