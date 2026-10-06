@@ -44,8 +44,13 @@ fn classify(service: &str, method: &str) -> Option<Access> {
 
         (
             "doris.ledger.v1.LedgerService",
-            "ListAccounts" | "ListFiscalYears" | "ListVouchers" | "GetAttachment"
-            | "GetTrialBalance" | "GetAccountLedger" | "GetFinancialStatements"
+            "ListAccounts"
+            | "ListFiscalYears"
+            | "ListVouchers"
+            | "GetAttachment"
+            | "GetTrialBalance"
+            | "GetAccountLedger"
+            | "GetFinancialStatements"
             | "GetOpeningBalances",
         ) => Company(LedgerRead),
         (
@@ -57,16 +62,28 @@ fn classify(service: &str, method: &str) -> Option<Access> {
 
         (
             "doris.invoicing.v1.InvoicingService",
-            "ListCustomers" | "ListSuppliers" | "ListSupplierInvoices"
-            | "GetSupplierInvoiceAttachment" | "ListCustomerInvoices"
+            "ListCustomers"
+            | "ListSuppliers"
+            | "ListSupplierInvoices"
+            | "GetSupplierInvoiceAttachment"
+            | "ListCustomerInvoices"
             | "GetCustomerInvoiceAttachment",
         ) => Company(InvoicingRead),
         (
             "doris.invoicing.v1.InvoicingService",
-            "AddCustomer" | "UpdateCustomer" | "SetCustomerActive" | "AddSupplier"
-            | "UpdateSupplier" | "SetSupplierActive" | "RegisterSupplierInvoice"
-            | "PaySupplierInvoice" | "CancelSupplierInvoice" | "ReverseSupplierInvoicePayment"
-            | "RegisterCustomerInvoice" | "PayCustomerInvoice" | "CancelCustomerInvoice"
+            "AddCustomer"
+            | "UpdateCustomer"
+            | "SetCustomerActive"
+            | "AddSupplier"
+            | "UpdateSupplier"
+            | "SetSupplierActive"
+            | "RegisterSupplierInvoice"
+            | "PaySupplierInvoice"
+            | "CancelSupplierInvoice"
+            | "ReverseSupplierInvoicePayment"
+            | "RegisterCustomerInvoice"
+            | "PayCustomerInvoice"
+            | "CancelCustomerInvoice"
             | "ReverseCustomerInvoicePayment",
         ) => Company(InvoicingWrite),
 
@@ -78,9 +95,8 @@ fn classify(service: &str, method: &str) -> Option<Access> {
         (
             "doris.payroll.v1.PayrollService",
             "AddEmployee" | "UpdateEmployee" | "DeactivateEmployee" | "SetEmployeeTax"
-            | "CreatePayrollRun" | "UpdatePayrollRun" | "FinalizePayrollRun"
-            | "ReopenPayrollRun" | "BookPayrollRun" | "UnbookPayrollRun" | "SetAgiContact"
-            | "MarkAgiSubmitted",
+            | "CreatePayrollRun" | "UpdatePayrollRun" | "FinalizePayrollRun" | "ReopenPayrollRun"
+            | "BookPayrollRun" | "UnbookPayrollRun" | "SetAgiContact" | "MarkAgiSubmitted",
         ) => Company(PayrollWrite),
 
         ("doris.vat.v1.VatService", "ListVatReturns" | "GetVatReturn" | "ExportVatFile") => {
@@ -119,7 +135,12 @@ mod tests {
         proto
             .lines()
             .filter_map(|l| l.trim().strip_prefix("rpc "))
-            .map(|rest| (service.clone(), rest.split('(').next().unwrap().trim().to_owned()))
+            .map(|rest| {
+                (
+                    service.clone(),
+                    rest.split('(').next().unwrap().trim().to_owned(),
+                )
+            })
             .collect()
     }
 
@@ -131,7 +152,11 @@ mod tests {
             .iter()
             .filter(|(service, method)| classify(service, method).is_none())
             .collect();
-        assert_eq!(missing, Vec::<&(String, String)>::new(), "add these to `classify`");
+        assert_eq!(
+            missing,
+            Vec::<&(String, String)>::new(),
+            "add these to `classify`"
+        );
     }
 
     #[test]
@@ -139,13 +164,34 @@ mod tests {
         use Access::*;
         use Scope::*;
         for (path, expected) in [
-            ("/doris.ledger.v1.LedgerService/RecordVoucher", Company(LedgerWrite)),
-            ("/doris.ledger.v1.LedgerService/ListVouchers", Company(LedgerRead)),
-            ("/doris.payroll.v1.PayrollService/ExportAgiFile", Company(PayrollRead)),
-            ("/doris.payroll.v1.PayrollService/BookPayrollRun", Company(PayrollWrite)),
-            ("/doris.invoicing.v1.InvoicingService/PaySupplierInvoice", Company(InvoicingWrite)),
-            ("/doris.vat.v1.VatService/MarkVatReturnSubmitted", Company(VatWrite)),
-            ("/doris.company.v1.CompanyService/GetCompany", Company(CompanyRead)),
+            (
+                "/doris.ledger.v1.LedgerService/RecordVoucher",
+                Company(LedgerWrite),
+            ),
+            (
+                "/doris.ledger.v1.LedgerService/ListVouchers",
+                Company(LedgerRead),
+            ),
+            (
+                "/doris.payroll.v1.PayrollService/ExportAgiFile",
+                Company(PayrollRead),
+            ),
+            (
+                "/doris.payroll.v1.PayrollService/BookPayrollRun",
+                Company(PayrollWrite),
+            ),
+            (
+                "/doris.invoicing.v1.InvoicingService/PaySupplierInvoice",
+                Company(InvoicingWrite),
+            ),
+            (
+                "/doris.vat.v1.VatService/MarkVatReturnSubmitted",
+                Company(VatWrite),
+            ),
+            (
+                "/doris.company.v1.CompanyService/GetCompany",
+                Company(CompanyRead),
+            ),
             ("/doris.company.v1.CompanyService/ListCompanies", Owner),
             ("/doris.auth.v1.AuthService/GetStatus", Owner),
             ("/doris.auth.v1.AuthService/CreateApiToken", SessionOnly),

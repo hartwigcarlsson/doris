@@ -218,6 +218,17 @@ async fn an_admin_revokes_any_token_and_others_see_none() {
     );
 }
 
+type Row = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+);
+
 #[tokio::test]
 async fn api_tokens_rebuild_from_the_log() {
     let pool = db().await;
@@ -244,16 +255,7 @@ async fn api_tokens_rebuild_from_the_log() {
     .unwrap();
     revoke_api_token(&pool, bo, first).await.unwrap();
     let snapshot = || async {
-        let rows: Vec<(
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            i64,
-            Option<String>,
-        )> = sqlx::query_as("SELECT * FROM api_tokens ORDER BY token_id")
+        let rows: Vec<Row> = sqlx::query_as("SELECT * FROM api_tokens ORDER BY token_id")
             .fetch_all(&pool)
             .await
             .unwrap();

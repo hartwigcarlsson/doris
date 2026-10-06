@@ -243,8 +243,16 @@ fn sale(company: &str) -> lpb::RecordVoucherRequest {
         date: "2026-01-15".into(),
         text: "Försäljning".into(),
         lines: vec![
-            lpb::VoucherLine { account: 1930, debit: 100, credit: 0 },
-            lpb::VoucherLine { account: 3001, debit: 0, credit: 100 },
+            lpb::VoucherLine {
+                account: 1930,
+                debit: 100,
+                credit: 0,
+            },
+            lpb::VoucherLine {
+                account: 3001,
+                debit: 0,
+                credit: 100,
+            },
         ],
         attachments: vec![],
     }
@@ -266,11 +274,23 @@ async fn a_read_token_lists_but_does_not_book_and_a_write_token_books_with_its_i
     let writer = api_token(&server, &anna, &[(&id, &["ledger:read", "ledger:write"])]).await;
     let mut ledger = server.ledger();
 
-    ledger.list_vouchers(bearer(vouchers(&id), &reader)).await.unwrap();
-    let refused = ledger.record_voucher(bearer(sale(&id), &reader)).await.unwrap_err();
-    ledger.record_voucher(bearer(sale(&id), &writer)).await.unwrap();
+    ledger
+        .list_vouchers(bearer(vouchers(&id), &reader))
+        .await
+        .unwrap();
+    let refused = ledger
+        .record_voucher(bearer(sale(&id), &reader))
+        .await
+        .unwrap_err();
+    ledger
+        .record_voucher(bearer(sale(&id), &writer))
+        .await
+        .unwrap();
 
-    assert_eq!(code_of(refused), (Code::PermissionDenied, "missing_scope".into()));
+    assert_eq!(
+        code_of(refused),
+        (Code::PermissionDenied, "missing_scope".into())
+    );
     let token_id = server
         .grpc()
         .list_api_tokens(authed(pb::ListApiTokensRequest {}, &anna))
@@ -299,13 +319,27 @@ async fn scopes_are_per_company() {
     let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
     let a = company(&server, &anna, "556016-0680").await;
     let b = company(&server, &anna, "556036-0793").await;
-    let token = api_token(&server, &anna, &[(&a, &["ledger:write"]), (&b, &["ledger:read"])]).await;
+    let token = api_token(
+        &server,
+        &anna,
+        &[(&a, &["ledger:write"]), (&b, &["ledger:read"])],
+    )
+    .await;
     let mut ledger = server.ledger();
 
-    ledger.record_voucher(bearer(sale(&a), &token)).await.unwrap();
-    let in_b = ledger.record_voucher(bearer(sale(&b), &token)).await.unwrap_err();
+    ledger
+        .record_voucher(bearer(sale(&a), &token))
+        .await
+        .unwrap();
+    let in_b = ledger
+        .record_voucher(bearer(sale(&b), &token))
+        .await
+        .unwrap_err();
 
-    assert_eq!(code_of(in_b), (Code::PermissionDenied, "missing_scope".into()));
+    assert_eq!(
+        code_of(in_b),
+        (Code::PermissionDenied, "missing_scope".into())
+    );
 }
 
 #[tokio::test]
@@ -316,7 +350,11 @@ async fn a_company_outside_the_grants_does_not_exist_for_the_token() {
     let other = company(&server, &anna, "556036-0793").await;
     let token = api_token(&server, &anna, &[(&granted, &["ledger:read"])]).await;
 
-    let err = server.ledger().list_vouchers(bearer(vouchers(&other), &token)).await.unwrap_err();
+    let err = server
+        .ledger()
+        .list_vouchers(bearer(vouchers(&other), &token))
+        .await
+        .unwrap_err();
     let listed = server
         .companies()
         .list_companies(bearer(cpb::ListCompaniesRequest {}, &token))
@@ -326,7 +364,10 @@ async fn a_company_outside_the_grants_does_not_exist_for_the_token() {
         .companies;
 
     assert_eq!(code_of(err), (Code::NotFound, "company_not_found".into()));
-    assert_eq!(listed.into_iter().map(|c| c.id).collect::<Vec<_>>(), [granted]);
+    assert_eq!(
+        listed.into_iter().map(|c| c.id).collect::<Vec<_>>(),
+        [granted]
+    );
 }
 
 #[tokio::test]
@@ -369,7 +410,12 @@ async fn expired_revoked_and_malformed_tokens_are_not_signed_in_even_with_a_cook
         .clone();
     server
         .grpc()
-        .revoke_api_token(authed(pb::RevokeApiTokenRequest { token_id: revoked_id }, &anna))
+        .revoke_api_token(authed(
+            pb::RevokeApiTokenRequest {
+                token_id: revoked_id,
+            },
+            &anna,
+        ))
         .await
         .unwrap();
 
@@ -377,10 +423,16 @@ async fn expired_revoked_and_malformed_tokens_are_not_signed_in_even_with_a_cook
         let mut request = bearer(vouchers(&id), secret);
         request.metadata_mut().insert(
             "cookie",
-            format!("{}={anna}", doris_server::SESSION_COOKIE).parse().unwrap(),
+            format!("{}={anna}", doris_server::SESSION_COOKIE)
+                .parse()
+                .unwrap(),
         );
         let err = server.ledger().list_vouchers(request).await.unwrap_err();
-        assert_eq!(code_of(err), (Code::Unauthenticated, "not_signed_in".into()), "{secret}");
+        assert_eq!(
+            code_of(err),
+            (Code::Unauthenticated, "not_signed_in".into()),
+            "{secret}"
+        );
     }
 }
 
@@ -393,12 +445,20 @@ async fn a_token_cannot_manage_tokens_invite_or_create_companies_but_knows_its_o
     let mut auth = server.grpc();
 
     let errors = [
-        auth.create_api_token(bearer(create("Ny", in_days(1), vec![grant(&id, &["ledger:read"])]), &token))
-            .await
-            .unwrap_err(),
-        auth.create_invitation(bearer(pb::CreateInvitationRequest { email: "bo@example.se".into() }, &token))
-            .await
-            .unwrap_err(),
+        auth.create_api_token(bearer(
+            create("Ny", in_days(1), vec![grant(&id, &["ledger:read"])]),
+            &token,
+        ))
+        .await
+        .unwrap_err(),
+        auth.create_invitation(bearer(
+            pb::CreateInvitationRequest {
+                email: "bo@example.se".into(),
+            },
+            &token,
+        ))
+        .await
+        .unwrap_err(),
         server
             .companies()
             .create_company(bearer(
@@ -416,16 +476,28 @@ async fn a_token_cannot_manage_tokens_invite_or_create_companies_but_knows_its_o
             .await
             .unwrap_err(),
     ];
-    let status = auth.get_status(bearer(pb::GetStatusRequest {}, &token)).await.unwrap().into_inner();
+    let status = auth
+        .get_status(bearer(pb::GetStatusRequest {}, &token))
+        .await
+        .unwrap()
+        .into_inner();
     let company = server
         .companies()
-        .get_company(bearer(cpb::GetCompanyRequest { company_id: id.clone() }, &token))
+        .get_company(bearer(
+            cpb::GetCompanyRequest {
+                company_id: id.clone(),
+            },
+            &token,
+        ))
         .await
         .unwrap()
         .into_inner();
 
     for err in errors {
-        assert_eq!(code_of(err), (Code::PermissionDenied, "token_not_allowed".into()));
+        assert_eq!(
+            code_of(err),
+            (Code::PermissionDenied, "token_not_allowed".into())
+        );
     }
     assert_eq!(status.current_user.unwrap().email, "anna@example.se");
     assert_eq!(company.id, id);
@@ -440,7 +512,9 @@ async fn the_bearer_scheme_is_case_insensitive_and_spaces_are_ignored() {
 
     for header in [format!("bearer {token}"), format!("BEARER  {token} ")] {
         let mut request = tonic::Request::new(vouchers(&id));
-        request.metadata_mut().insert("authorization", header.parse().unwrap());
+        request
+            .metadata_mut()
+            .insert("authorization", header.parse().unwrap());
         server.ledger().list_vouchers(request).await.unwrap();
     }
 }
@@ -451,25 +525,61 @@ async fn each_service_checks_the_area() {
     let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
     let id = company(&server, &anna, "556016-0680").await;
     let ledger_only = api_token(&server, &anna, &[(&id, &["ledger:read"])]).await;
-    let all = api_token(&server, &anna, &[(&id, &["payroll:read", "invoicing:read", "vat:read"])]).await;
-    let employees = || ppb::ListEmployeesRequest { company_id: id.clone() };
-    let customers = || ipb::ListCustomersRequest { company_id: id.clone() };
+    let all = api_token(
+        &server,
+        &anna,
+        &[(&id, &["payroll:read", "invoicing:read", "vat:read"])],
+    )
+    .await;
+    let employees = || ppb::ListEmployeesRequest {
+        company_id: id.clone(),
+    };
+    let customers = || ipb::ListCustomersRequest {
+        company_id: id.clone(),
+    };
     let returns = || vpb::ListVatReturnsRequest {
         company_id: id.clone(),
         fiscal_year_start: "2026-01-01".into(),
     };
 
     let refused = [
-        server.payroll().list_employees(bearer(employees(), &ledger_only)).await.unwrap_err(),
-        server.invoicing().list_customers(bearer(customers(), &ledger_only)).await.unwrap_err(),
-        server.vat().list_vat_returns(bearer(returns(), &ledger_only)).await.unwrap_err(),
+        server
+            .payroll()
+            .list_employees(bearer(employees(), &ledger_only))
+            .await
+            .unwrap_err(),
+        server
+            .invoicing()
+            .list_customers(bearer(customers(), &ledger_only))
+            .await
+            .unwrap_err(),
+        server
+            .vat()
+            .list_vat_returns(bearer(returns(), &ledger_only))
+            .await
+            .unwrap_err(),
     ];
     for err in refused {
-        assert_eq!(code_of(err), (Code::PermissionDenied, "missing_scope".into()));
+        assert_eq!(
+            code_of(err),
+            (Code::PermissionDenied, "missing_scope".into())
+        );
     }
-    server.payroll().list_employees(bearer(employees(), &all)).await.unwrap();
-    server.invoicing().list_customers(bearer(customers(), &all)).await.unwrap();
-    server.vat().list_vat_returns(bearer(returns(), &all)).await.unwrap();
+    server
+        .payroll()
+        .list_employees(bearer(employees(), &all))
+        .await
+        .unwrap();
+    server
+        .invoicing()
+        .list_customers(bearer(customers(), &all))
+        .await
+        .unwrap();
+    server
+        .vat()
+        .list_vat_returns(bearer(returns(), &all))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -485,11 +595,21 @@ async fn a_token_sends_large_underlag_through_the_gate() {
     };
     let mut request = sale(&id);
     request.attachments = vec![
-        lpb::NewAttachment { file_name: "a.pdf".into(), data: pdf(10 << 20) },
-        lpb::NewAttachment { file_name: "b.pdf".into(), data: pdf((10 << 20) - 1) },
+        lpb::NewAttachment {
+            file_name: "a.pdf".into(),
+            data: pdf(10 << 20),
+        },
+        lpb::NewAttachment {
+            file_name: "b.pdf".into(),
+            data: pdf((10 << 20) - 1),
+        },
     ];
 
-    server.ledger().record_voucher(bearer(request, &token)).await.unwrap();
+    server
+        .ledger()
+        .record_voucher(bearer(request, &token))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -501,7 +621,12 @@ async fn another_authorization_scheme_does_not_hide_the_session() {
         .metadata_mut()
         .insert("authorization", "Basic eDp5".parse().unwrap());
 
-    let status = server.grpc().get_status(request).await.unwrap().into_inner();
+    let status = server
+        .grpc()
+        .get_status(request)
+        .await
+        .unwrap()
+        .into_inner();
 
     assert!(status.current_user.is_some());
 }
@@ -525,7 +650,11 @@ async fn a_call_with_a_token_records_its_last_use() {
     };
     assert_eq!(last_used().await, None);
 
-    server.ledger().list_vouchers(bearer(vouchers(&id), &token)).await.unwrap();
+    server
+        .ledger()
+        .list_vouchers(bearer(vouchers(&id), &token))
+        .await
+        .unwrap();
 
     assert!(last_used().await.is_some());
 }
