@@ -1,5 +1,6 @@
 //! The Doris server: gRPC-Web API and the embedded frontend on one port.
 
+mod access;
 pub mod assets;
 pub mod bolagsverket;
 mod company;
