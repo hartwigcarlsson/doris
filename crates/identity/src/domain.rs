@@ -37,6 +37,8 @@ pub enum DomainError {
     InvalidTokenGrants,
     #[error("only the owner or an admin may revoke a token")]
     NotTokenOwner,
+    #[error("api token is revoked")]
+    TokenRevoked,
 }
 
 /// Normalized (trimmed, lowercase) email address.
@@ -469,6 +471,12 @@ pub enum ApiTokenEvent {
     ApiTokenRevoked {
         revoked_by: Uuid,
     },
+    /// The owner replaced its name, expiry and grants; the secret stays.
+    ApiTokenChanged {
+        name: String,
+        expires_at: Timestamp,
+        grants: Vec<Grant>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -507,6 +515,18 @@ impl ApiToken {
                     });
                 }
                 (ApiTokenEvent::ApiTokenRevoked { .. }, Some(token)) => token.revoked = true,
+                (
+                    ApiTokenEvent::ApiTokenChanged {
+                        name,
+                        expires_at,
+                        grants,
+                    },
+                    Some(token),
+                ) => {
+                    token.name = name.clone();
+                    token.expires_at = *expires_at;
+                    token.grants = grants.clone();
+                }
                 (_, None) => {}
             }
         }
@@ -522,24 +542,94 @@ pub struct NewApiToken {
     pub grants: Vec<Grant>,
 }
 
+/// A token's name, expiry and grants, as created or changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TokenChange {
+    pub name: String,
+    pub expires_at: Timestamp,
+    pub grants: Vec<Grant>,
+}
+
+/// What a passkey is asked to confirm about an API token.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum TokenRequest {
+    Create { change: TokenChange },
+    Change { token_id: Uuid, change: TokenChange },
+}
+
+impl TokenRequest {
+    pub fn change(&self) -> &TokenChange {
+        match self {
+            TokenRequest::Create { change } | TokenRequest::Change { change, .. } => change,
+        }
+    }
+}
+
+/// The change with its name trimmed and grants normalized, if it is valid
+/// at `now`.
+fn validated(change: TokenChange, now: Timestamp) -> Result<TokenChange, DomainError> {
+    let name = bounded_text(&change.name, 100).ok_or(DomainError::InvalidTokenName)?;
+    if change.expires_at <= now || change.expires_at > now + MAX_TOKEN_LIFETIME {
+        return Err(DomainError::InvalidTokenExpiry);
+    }
+    Ok(TokenChange {
+        name,
+        expires_at: change.expires_at,
+        grants: normalized(change.grants)?,
+    })
+}
+
 pub fn create_api_token(
     owner: &User,
     cmd: NewApiToken,
     token_hash: String,
     now: Timestamp,
 ) -> Result<ApiTokenEvent, DomainError> {
-    let name = bounded_text(&cmd.name, 100).ok_or(DomainError::InvalidTokenName)?;
-    if cmd.expires_at <= now || cmd.expires_at > now + MAX_TOKEN_LIFETIME {
-        return Err(DomainError::InvalidTokenExpiry);
-    }
+    let valid = validated(
+        TokenChange {
+            name: cmd.name,
+            expires_at: cmd.expires_at,
+            grants: cmd.grants,
+        },
+        now,
+    )?;
     Ok(ApiTokenEvent::ApiTokenCreated {
         token_id: cmd.token_id,
         user_id: owner.id,
-        name,
+        name: valid.name,
         token_hash,
-        expires_at: cmd.expires_at,
-        grants: normalized(cmd.grants)?,
+        expires_at: valid.expires_at,
+        grants: valid.grants,
     })
+}
+
+/// Only the owner changes a token, and never a revoked one. A change that
+/// changes nothing yields no events.
+pub fn change_api_token(
+    token: &ApiToken,
+    actor: &User,
+    change: TokenChange,
+    now: Timestamp,
+) -> Result<Vec<ApiTokenEvent>, DomainError> {
+    if token.user_id != actor.id {
+        return Err(DomainError::NotTokenOwner);
+    }
+    if token.revoked {
+        return Err(DomainError::TokenRevoked);
+    }
+    let valid = validated(change, now)?;
+    if valid.name == token.name
+        && valid.expires_at == token.expires_at
+        && valid.grants == token.grants
+    {
+        return Ok(vec![]);
+    }
+    Ok(vec![ApiTokenEvent::ApiTokenChanged {
+        name: valid.name,
+        expires_at: valid.expires_at,
+        grants: valid.grants,
+    }])
 }
 
 /// Companies in id order, each once; scopes sorted, each once.

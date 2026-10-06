@@ -505,6 +505,9 @@ pub(crate) fn status(err: Error) -> Status {
         Error::Domain(DomainError::NotTokenOwner) | Error::ApiTokenNotFound => {
             Status::not_found("api_token_not_found")
         }
+        Error::Domain(DomainError::TokenRevoked) => {
+            Status::failed_precondition("api_token_revoked")
+        }
         Error::Domain(err) => Status::invalid_argument(domain_code(err)),
         Error::AlreadyExists => Status::already_exists("already_exists"),
         Error::InvitationNotFound => Status::not_found("invitation_not_found"),
@@ -540,6 +543,7 @@ fn domain_code(err: DomainError) -> &'static str {
         DomainError::InvalidTokenExpiry => "invalid_token_expiry",
         DomainError::InvalidTokenGrants => "invalid_token_grants",
         DomainError::NotTokenOwner => "api_token_not_found",
+        DomainError::TokenRevoked => "api_token_revoked",
     }
 }
 

@@ -148,6 +148,9 @@ async fn apply_api_token(
                 .execute(&mut *conn)
                 .await?;
         }
+        ApiTokenEvent::ApiTokenChanged { .. } => {
+            // Projected in the next commit.
+        }
     }
     Ok(())
 }
