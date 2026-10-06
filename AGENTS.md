@@ -356,8 +356,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   company and a chosen räkenskapsår (kept in `?fy=`; by default the year
   that contains today). It adds no RPC: it sends `GetCompany`,
   `ListFiscalYears`, `GetTrialBalance`, `ListVouchers`,
-  `ListSupplierInvoices`, `ListCustomerInvoices`, `ListPayrollRuns` and
-  `ListAgiMonths`, and `src/overview.rs` works everything out in pure
+  `ListSupplierInvoices`, `ListCustomerInvoices`, `ListPayrollRuns`,
+  `ListAgiMonths` and `ListVatReturns`, and `src/overview.rs` works everything out in pure
   functions: key figures (operating income 3000–3999, operating costs
   4000–7999, class 8 only in the result, cash 1900–1999), income and costs per month, the year's progress and the
   "Att göra" rules. Each call is its own task, so a slow one holds nothing

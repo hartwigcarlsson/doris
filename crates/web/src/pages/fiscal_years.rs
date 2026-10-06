@@ -3,7 +3,7 @@
 //! work.
 
 use crate::active_company::Companies;
-use crate::api::{invoicing_api, ipb, ledger_api, lpb};
+use crate::api::{invoicing_api, ipb, ledger_api, lpb, vat_api, vpb};
 use crate::errors::describe;
 use crate::fiscal_year::{closable, reopenable, use_fiscal_years};
 use crate::format::today;
@@ -61,6 +61,33 @@ pub fn FiscalYears() -> impl IntoView {
                 .set(supplier_unpaid.unwrap_or(false) || customer_unpaid.unwrap_or(false));
         });
     });
+    // Declarations to submit, or changed, in any listed year.
+    let vat_open = RwSignal::new(false);
+    Effect::new(move |_| {
+        let list = years.get();
+        let company_id = companies.active.get_untracked();
+        vat_open.set(false);
+        if company_id.is_empty() || list.is_empty() {
+            return;
+        }
+        spawn_local(async move {
+            let mut open = false;
+            for year in &list {
+                let request = vpb::ListVatReturnsRequest {
+                    company_id: company_id.clone(),
+                    fiscal_year_start: year.start.clone(),
+                };
+                if let Ok(response) = vat_api().list_vat_returns(request).await {
+                    open |= response.into_inner().periods.iter().any(|p| {
+                        matches!(p.status(), vpb::VatStatus::ToSubmit | vpb::VatStatus::Changed)
+                    });
+                }
+            }
+            if company_id == companies.active.get_untracked() {
+                vat_open.set(open);
+            }
+        });
+    });
 
     view! {
         <div class="grid gap-6">
@@ -71,6 +98,11 @@ pub fn FiscalYears() -> impl IntoView {
             {move || unpaid_under_cash.get().then(|| view! {
                 <p class="text-xs/relaxed text-muted-foreground">
                     "Det finns obetalda kund- eller leverantörsfakturor. Med kontantmetoden ska de bokföras vid räkenskapsårets slut (BFL 5 kap. 2 §). Doris gör inte det än."
+                </p>
+            })}
+            {move || vat_open.get().then(|| view! {
+                <p class="text-xs/relaxed text-muted-foreground">
+                    "Det finns momsdeklarationer som inte är inlämnade eller som har ändrats. Lämna dem innan räkenskapsåret stängs."
                 </p>
             })}
             {move || done.get().map(|text| view! { <p role="status" class="text-xs/relaxed">{text}</p> })}

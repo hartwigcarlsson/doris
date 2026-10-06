@@ -1,7 +1,7 @@
 //! The overview's figures, worked out from what the existing RPCs return.
 //! Pure: the page passes in the messages and today's date.
 
-use crate::api::{ipb, lpb, ppb};
+use crate::api::{ipb, lpb, ppb, vpb};
 use crate::format::{amount, day_number, plus_days};
 
 /// The year's key figures, in öre. A profit is a positive `result`.
@@ -224,6 +224,7 @@ pub struct TodoInput<'a> {
     pub customer_invoices: &'a [ipb::CustomerInvoice],
     pub payroll_runs: &'a [ppb::PayrollRun],
     pub agi_months: &'a [ppb::AgiMonthSummary],
+    pub vat_periods: &'a [vpb::VatPeriodSummary],
 }
 
 /// "1 faktura" or "2 fakturor".
@@ -400,6 +401,33 @@ pub fn todo_list(input: &TodoInput, today: &str) -> Vec<Todo> {
             },
             action: "Visa deklarationerna",
             href: "/agi".into(),
+        });
+    }
+
+    // A changed declaration first, then each period to submit, oldest first.
+    let mut vat: Vec<&vpb::VatPeriodSummary> = input
+        .vat_periods
+        .iter()
+        .filter(|p| matches!(p.status(), vpb::VatStatus::ToSubmit | vpb::VatStatus::Changed))
+        .collect();
+    vat.sort_by_key(|p| (p.status() != vpb::VatStatus::Changed, p.period.clone()));
+    for p in vat {
+        let changed = p.status() == vpb::VatStatus::Changed;
+        let late = !p.due_date.is_empty() && p.due_date.as_str() < today;
+        list.push(Todo {
+            urgent: changed || late,
+            title: if changed {
+                format!("Momsdeklarationen för {} är ändrad", p.label)
+            } else {
+                format!("Momsdeklarationen för {} ska lämnas", p.label)
+            },
+            detail: match (changed, p.due_date.is_empty()) {
+                (true, _) => "Lämna en ny deklaration för perioden".into(),
+                (false, true) => "Se Skatteverket för deklarationsdagen".into(),
+                (false, false) => format!("Senast {}", p.due_date),
+            },
+            action: "Öppna deklarationen",
+            href: format!("/vat/{}", p.period),
         });
     }
 
@@ -800,7 +828,49 @@ mod tests {
             customer_invoices: &[],
             payroll_runs: &[],
             agi_months: &[],
+            vat_periods: &[],
         }
+    }
+
+    fn vat(period: &str, label: &str, status: vpb::VatStatus, due: &str) -> vpb::VatPeriodSummary {
+        vpb::VatPeriodSummary { period: period.into(), label: label.into(), status: status as i32, due_date: due.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn vat_periods_to_submit_and_changed_ones_are_listed_with_their_due_date() {
+        let periods = [
+            vat("202606", "april–juni 2026", vpb::VatStatus::Submitted, "2026-08-17"),
+            vat("202609", "juli–september 2026", vpb::VatStatus::ToSubmit, "2026-11-12"),
+            vat("202603", "januari–mars 2026", vpb::VatStatus::Changed, "2026-05-12"),
+            vat("202612", "oktober–december 2026", vpb::VatStatus::InProgress, "2027-02-12"),
+        ];
+        let list = todos(TodoInput { vat_periods: &periods, ..empty() });
+        assert_eq!(
+            list,
+            [
+                Todo {
+                    urgent: true,
+                    title: "Momsdeklarationen för januari–mars 2026 är ändrad".into(),
+                    detail: "Lämna en ny deklaration för perioden".into(),
+                    action: "Öppna deklarationen",
+                    href: "/vat/202603".into(),
+                },
+                Todo {
+                    urgent: false,
+                    title: "Momsdeklarationen för juli–september 2026 ska lämnas".into(),
+                    detail: "Senast 2026-11-12".into(),
+                    action: "Öppna deklarationen",
+                    href: "/vat/202609".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_overdue_vat_period_is_urgent() {
+        let periods = [vat("202606", "april–juni 2026", vpb::VatStatus::ToSubmit, "2026-08-17")];
+        let list = todos(TodoInput { vat_periods: &periods, ..empty() });
+        assert!(list[0].urgent);
     }
 
     #[test]
@@ -1001,6 +1071,7 @@ mod tests {
             customer_invoices: &customers,
             payroll_runs: &runs,
             agi_months: &months,
+            vat_periods: &[],
         });
         let hrefs: Vec<_> = list.iter().map(|t| t.href.as_str()).collect();
         assert_eq!(
