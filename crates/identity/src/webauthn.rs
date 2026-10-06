@@ -1,11 +1,11 @@
-//! WebAuthn ceremonies: registering with a passkey, adding passkeys and
-//! logging in. Ceremony state is kept server-side, is single use and expires
+//! WebAuthn ceremonies: registering with a passkey, adding passkeys, logging
+//! in and confirming an API token request. Ceremony state is kept server-side, is single use and expires
 //! after [`CEREMONY_TTL`].
 
-use crate::domain::{DisplayName, Email, Passkey, User};
+use crate::domain::{DisplayName, Email, Passkey, TokenRequest, User};
 use crate::{
-    Error, Result, add_passkey, check_registration, create_session, find_user_by_email, get_user,
-    record_passkey_use, register,
+    Error, Result, add_passkey, check_api_token_change, check_new_api_token, check_registration,
+    create_session, find_user_by_email, get_user, record_passkey_use, register,
 };
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -47,6 +47,12 @@ enum Ceremony {
     Login {
         user_id: Option<Uuid>,
         state: Option<PasskeyAuthentication>,
+    },
+    /// Confirms exactly this create or change of an API token.
+    ApiToken {
+        user_id: Uuid,
+        request: TokenRequest,
+        state: PasskeyAuthentication,
     },
 }
 
@@ -265,19 +271,108 @@ impl Auth {
         else {
             return Err(Error::LoginFailed);
         };
-        let result = self
-            .webauthn
-            .finish_passkey_authentication(credential, &state)
-            .map_err(|_| Error::LoginFailed)?;
-        let user = get_user(&self.pool, user_id)
+        let user = self
+            .verified_use(user_id, credential, &state)
             .await?
             .ok_or(Error::LoginFailed)?;
-        let used_id = credential_id(result.cred_id());
-        let stored = user
+        let session = create_session(&self.pool, user_id, now).await?;
+        Ok((user, session))
+    }
+
+    /// Checks every rule for the token request, then asks the browser for
+    /// an assertion from one of the user's own passkeys. Nothing changes
+    /// until [`Auth::finish_api_token`]; company membership is the caller's
+    /// to check.
+    pub async fn begin_api_token(
+        &self,
+        user_id: Uuid,
+        request: TokenRequest,
+        now: Timestamp,
+    ) -> Result<(Uuid, RequestChallengeResponse)> {
+        match &request {
+            TokenRequest::Create { change } => {
+                check_new_api_token(&self.pool, user_id, change, now).await?
+            }
+            TokenRequest::Change { token_id, change } => {
+                check_api_token_change(&self.pool, user_id, *token_id, change, now).await?
+            }
+        }
+        let (options, state) = self.start_user_authentication(user_id).await?;
+        let ceremony = Ceremony::ApiToken {
+            user_id,
+            request,
+            state,
+        };
+        Ok((self.start(&ceremony, now).await?, options))
+    }
+
+    /// Verifies the assertion and records the passkey's use. Returns the
+    /// request the passkey confirmed, for the caller to carry out. A
+    /// ceremony another user began looks like one that doesn't exist.
+    pub async fn finish_api_token(
+        &self,
+        user_id: Uuid,
+        ceremony_id: Uuid,
+        credential: &PublicKeyCredential,
+        now: Timestamp,
+    ) -> Result<TokenRequest> {
+        let Ceremony::ApiToken {
+            user_id: owner,
+            request,
+            state,
+        } = self.take(ceremony_id, now).await?
+        else {
+            return Err(Error::CeremonyNotFound);
+        };
+        if owner != user_id {
+            return Err(Error::CeremonyNotFound);
+        }
+        self.verified_use(user_id, credential, &state)
+            .await?
+            .ok_or(Error::CredentialRejected)?;
+        Ok(request)
+    }
+
+    /// An authentication challenge for one user's own passkeys.
+    async fn start_user_authentication(
+        &self,
+        user_id: Uuid,
+    ) -> Result<(RequestChallengeResponse, PasskeyAuthentication)> {
+        let user = get_user(&self.pool, user_id)
+            .await?
+            .ok_or(Error::UserNotFound)?;
+        let passkeys = user
             .passkeys
             .iter()
-            .find(|p| p.credential_id == used_id)
-            .ok_or(Error::LoginFailed)?;
+            .map(webauthn_passkey)
+            .collect::<Result<Vec<_>>>()?;
+        if passkeys.is_empty() {
+            return Err(Error::CredentialRejected);
+        }
+        Ok(self.webauthn.start_passkey_authentication(&passkeys)?)
+    }
+
+    /// Verifies an assertion against the user's own passkeys and records
+    /// the use with its updated counter. `None` when it doesn't verify.
+    async fn verified_use(
+        &self,
+        user_id: Uuid,
+        credential: &PublicKeyCredential,
+        state: &PasskeyAuthentication,
+    ) -> Result<Option<User>> {
+        let Ok(result) = self
+            .webauthn
+            .finish_passkey_authentication(credential, state)
+        else {
+            return Ok(None);
+        };
+        let Some(user) = get_user(&self.pool, user_id).await? else {
+            return Ok(None);
+        };
+        let used_id = credential_id(result.cred_id());
+        let Some(stored) = user.passkeys.iter().find(|p| p.credential_id == used_id) else {
+            return Ok(None);
+        };
         let mut passkey = webauthn_passkey(stored)?;
         passkey.update_credential(&result);
         record_passkey_use(
@@ -287,8 +382,7 @@ impl Auth {
             serde_json::to_value(&passkey)?,
         )
         .await?;
-        let session = create_session(&self.pool, user_id, now).await?;
-        Ok((user, session))
+        Ok(Some(user))
     }
 
     async fn start(&self, ceremony: &Ceremony, now: Timestamp) -> Result<Uuid> {

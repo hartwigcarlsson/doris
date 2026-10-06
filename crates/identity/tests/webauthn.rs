@@ -1,6 +1,6 @@
-use doris_identity::domain::{DomainError, Role, User};
+use doris_identity::domain::{DomainError, Grant, Role, Scope, TokenChange, TokenRequest, User};
 use doris_identity::{Auth, CEREMONY_TTL, Error, create_invitation, get_user, session_user};
-use jiff::Timestamp;
+use jiff::{SignedDuration, Timestamp};
 use sqlx::SqlitePool;
 use url::Url;
 use webauthn_authenticator_rs::WebauthnAuthenticator;
@@ -458,4 +458,187 @@ async fn an_add_passkey_ceremony_belongs_to_the_user_who_started_it() {
             .len(),
         1
     );
+}
+
+fn new_token() -> TokenRequest {
+    TokenRequest::Create {
+        change: TokenChange {
+            name: "Agent".into(),
+            expires_at: now() + SignedDuration::from_hours(24),
+            grants: vec![Grant {
+                company_id: uuid::Uuid::new_v4(),
+                scopes: vec![Scope::LedgerRead],
+            }],
+        },
+    }
+}
+
+async fn ceremonies(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM webauthn_ceremonies")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn passkey_uses(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE event_type = 'PasskeyUsed'")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_passkey_confirms_a_token_request() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+
+    let (ceremony, options) = auth
+        .begin_api_token(anna.id, new_token(), now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let confirmed = auth
+        .finish_api_token(anna.id, ceremony, &assertion, now())
+        .await
+        .unwrap();
+
+    assert!(matches!(&confirmed, TokenRequest::Create { change } if change.name == "Agent"));
+    assert_eq!(
+        passkey_uses(&pool).await,
+        1,
+        "the use (and counter) is recorded"
+    );
+    assert_eq!(ceremonies(&pool).await, 0);
+}
+
+#[tokio::test]
+async fn a_token_request_is_refused_before_the_authenticator_is_asked() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let mut bad = new_token();
+    if let TokenRequest::Create { change } = &mut bad {
+        change.name = " ".into();
+    }
+
+    let err = auth.begin_api_token(anna.id, bad, now()).await.unwrap_err();
+    let someone_elses = auth
+        .begin_api_token(
+            anna.id,
+            TokenRequest::Change {
+                token_id: uuid::Uuid::new_v4(),
+                change: new_token().change().clone(),
+            },
+            now(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, Error::Domain(DomainError::InvalidTokenName)),
+        "{err:?}"
+    );
+    assert!(
+        matches!(someone_elses, Error::ApiTokenNotFound),
+        "{someone_elses:?}"
+    );
+    assert_eq!(ceremonies(&pool).await, 0);
+}
+
+#[tokio::test]
+async fn only_the_users_own_passkey_confirms_their_token_request() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let mut bos = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    sign_up(&auth, &mut bos, "bo@example.se", Some(&invitation)).await;
+
+    let (ceremony, _) = auth
+        .begin_api_token(anna.id, new_token(), now())
+        .await
+        .unwrap();
+    let (_, bos_options) = auth.begin_login("bo@example.se", now()).await.unwrap();
+    let bos_assertion = bos.do_authentication(origin(), bos_options).unwrap();
+    let err = auth
+        .finish_api_token(anna.id, ceremony, &bos_assertion, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::CredentialRejected), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_token_ceremony_is_finished_once_by_the_user_who_began_it_within_five_minutes() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let (bo, _) = sign_up(
+        &auth,
+        &mut authenticator(),
+        "bo@example.se",
+        Some(&invitation),
+    )
+    .await;
+
+    // Finished by someone else: gone, as if it never was.
+    let (ceremony, options) = auth
+        .begin_api_token(anna.id, new_token(), now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let by_bo = auth
+        .finish_api_token(bo.id, ceremony, &assertion, now())
+        .await
+        .unwrap_err();
+    let again = auth
+        .finish_api_token(anna.id, ceremony, &assertion, now())
+        .await
+        .unwrap_err();
+
+    // Finished too late.
+    let (late, options) = auth
+        .begin_api_token(anna.id, new_token(), now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let expired = auth
+        .finish_api_token(anna.id, late, &assertion, now() + CEREMONY_TTL)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(by_bo, Error::CeremonyNotFound), "{by_bo:?}");
+    assert!(matches!(again, Error::CeremonyNotFound), "{again:?}");
+    assert!(matches!(expired, Error::CeremonyExpired), "{expired:?}");
+}
+
+#[tokio::test]
+async fn logging_in_still_fails_the_same_way_for_a_wrong_passkey() {
+    // finish_login now shares the assertion check with token ceremonies.
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let mut bos = authenticator();
+    sign_up(&auth, &mut bos, "bo@example.se", Some(&invitation)).await;
+    let (_, token_options) = auth
+        .begin_api_token(anna.id, new_token(), now())
+        .await
+        .unwrap();
+    let annas_assertion = annas.do_authentication(origin(), token_options).unwrap();
+    let (bos_login, _) = auth.begin_login("bo@example.se", now()).await.unwrap();
+
+    let err = auth
+        .finish_login(bos_login, &annas_assertion, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::LoginFailed), "{err:?}");
 }

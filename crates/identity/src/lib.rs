@@ -59,6 +59,10 @@ pub enum Error {
     /// Deliberately vague: never reveals whether the email exists.
     #[error("login failed")]
     LoginFailed,
+    /// A passkey assertion that doesn't verify against the user's own
+    /// passkeys, outside login (where every failure is `LoginFailed`).
+    #[error("passkey not accepted")]
+    CredentialRejected,
     #[error(transparent)]
     Webauthn(#[from] webauthn_rs::prelude::WebauthnError),
     #[error(transparent)]

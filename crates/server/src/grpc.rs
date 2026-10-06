@@ -516,6 +516,7 @@ pub(crate) fn status(err: Error) -> Status {
             Status::failed_precondition("ceremony_expired")
         }
         Error::LoginFailed => Status::unauthenticated("login_failed"),
+        Error::CredentialRejected => Status::invalid_argument("credential_rejected"),
         Error::Webauthn(err) => {
             tracing::error!("webauthn: {err}");
             Status::internal("internal")
