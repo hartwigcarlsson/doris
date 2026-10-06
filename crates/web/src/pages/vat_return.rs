@@ -16,7 +16,10 @@ use leptos_router::hooks::use_params_map;
 #[component]
 pub fn VatReturnPage() -> impl IntoView {
     let companies = expect_context::<Companies>();
-    let period = use_params_map().read_untracked().get("period").unwrap_or_default();
+    let period = use_params_map()
+        .read_untracked()
+        .get("period")
+        .unwrap_or_default();
     let period = StoredValue::new(period);
     let error = RwSignal::new(None::<String>);
     let declaration = RwSignal::new(None::<(String, vpb::VatReturn)>);
@@ -31,7 +34,12 @@ pub fn VatReturnPage() -> impl IntoView {
             return;
         }
         spawn_local(async move {
-            let result = vat_api().get_vat_return(vpb::VatReturnRef { company_id: company_id.clone(), period: period.get_value() }).await;
+            let result = vat_api()
+                .get_vat_return(vpb::VatReturnRef {
+                    company_id: company_id.clone(),
+                    period: period.get_value(),
+                })
+                .await;
             if company_id != companies.active.get_untracked() {
                 return;
             }
@@ -56,9 +64,16 @@ pub fn VatReturnPage() -> impl IntoView {
 
     let download = move |_| {
         error.set(None);
-        let Some((company_id, _)) = declaration.get_untracked() else { return };
+        let Some((company_id, _)) = declaration.get_untracked() else {
+            return;
+        };
         spawn_local(async move {
-            let result = vat_api().export_vat_file(vpb::VatReturnRef { company_id: company_id.clone(), period: period.get_value() }).await;
+            let result = vat_api()
+                .export_vat_file(vpb::VatReturnRef {
+                    company_id: company_id.clone(),
+                    period: period.get_value(),
+                })
+                .await;
             if company_id != companies.active.get_untracked() {
                 return;
             }
@@ -76,13 +91,19 @@ pub fn VatReturnPage() -> impl IntoView {
         if marking.get_untracked() {
             return;
         }
-        let Some((company_id, shown)) = declaration.get_untracked() else { return };
+        let Some((company_id, shown)) = declaration.get_untracked() else {
+            return;
+        };
         marking.set(true);
         error.set(None);
         let fingerprint = downloaded.get_untracked().unwrap_or(shown.fingerprint);
         spawn_local(async move {
             let result = vat_api()
-                .mark_vat_return_submitted(vpb::MarkVatReturnSubmittedRequest { company_id, period: period.get_value(), fingerprint })
+                .mark_vat_return_submitted(vpb::MarkVatReturnSubmittedRequest {
+                    company_id,
+                    period: period.get_value(),
+                    fingerprint,
+                })
                 .await;
             marking.set(false);
             match result {
@@ -92,7 +113,10 @@ pub fn VatReturnPage() -> impl IntoView {
                     booked.set(Some(if r.voucher_number == 0 {
                         "Inlämnad. Det fanns inget att bokföra.".into()
                     } else {
-                        format!("Inlämnad. Momsavräkningen bokfördes som verifikation {}.", r.voucher_number)
+                        format!(
+                            "Inlämnad. Momsavräkningen bokfördes som verifikation {}.",
+                            r.voucher_number
+                        )
                     }));
                     load();
                 }
@@ -137,9 +161,15 @@ fn Declaration(declaration: vpb::VatReturn) -> impl IntoView {
     let rounding = summary.vat_due * 100 - declaration.booked_vat;
     let boxes = StoredValue::new(declaration.boxes.clone());
     let column = move |right: bool| {
-        SECTIONS.iter().filter(move |s| s.right == right).map(move |s| view! {
-            <FormSection section=s boxes=boxes vat_due=summary.vat_due />
-        }).collect_view()
+        SECTIONS
+            .iter()
+            .filter(move |s| s.right == right)
+            .map(move |s| {
+                view! {
+                    <FormSection section=s boxes=boxes vat_due=summary.vat_due />
+                }
+            })
+            .collect_view()
     };
     view! {
         <div class="grid gap-3">
@@ -175,7 +205,11 @@ fn Declaration(declaration: vpb::VatReturn) -> impl IntoView {
 }
 
 #[component]
-fn FormSection(section: &'static Section, boxes: StoredValue<Vec<vpb::VatBoxAmount>>, vat_due: i64) -> impl IntoView {
+fn FormSection(
+    section: &'static Section,
+    boxes: StoredValue<Vec<vpb::VatBoxAmount>>,
+    vat_due: i64,
+) -> impl IntoView {
     view! {
         <section class="overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10">
             <h2 class="border-b bg-muted px-3 py-2 text-xs font-medium">{format!("{}. {}", section.letter, section.title)}</h2>

@@ -168,8 +168,12 @@ fn message(code: &str) -> &'static str {
         "invalid_vat_box" => "Välj en ruta som finns på momsdeklarationen.",
         "invalid_vat_period" => "Den redovisningsperioden finns inte.",
         "vat_period_not_ended" => "Perioden har inte tagit slut än.",
-        "vat_period_locked" => "Redovisningsperioden kan inte ändras när en deklaration för året är inlämnad.",
-        "vat_return_outdated" => "Bokföringen har ändrats sedan deklarationen visades. Ladda om sidan och kontrollera den igen.",
+        "vat_period_locked" => {
+            "Redovisningsperioden kan inte ändras när en deklaration för året är inlämnad."
+        }
+        "vat_return_outdated" => {
+            "Bokföringen har ändrats sedan deklarationen visades. Ladda om sidan och kontrollera den igen."
+        }
         "vat_return_unchanged" => "Perioden är redan inlämnad och har inte ändrats.",
         "vat_not_registered" => "Företaget är inte momsregistrerat det räkenskapsåret.",
         _ => "Något gick fel. Försök igen.",

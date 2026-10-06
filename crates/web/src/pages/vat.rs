@@ -8,7 +8,10 @@ use crate::fiscal_year::{FiscalYearSelect, keep_year_in_url, use_fiscal_years};
 use crate::format::amount;
 use crate::overview::whole_kronor;
 use crate::task::spawn_local;
-use crate::ui::{Badge, BadgeVariant, Card, ErrorAlert, PageHeader, SELECT_OPTION, Select, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard};
+use crate::ui::{
+    Badge, BadgeVariant, Card, ErrorAlert, PageHeader, SELECT_OPTION, Select, TABLE_AMOUNT_CELL,
+    TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
+};
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
 
@@ -70,7 +73,10 @@ pub fn Vat() -> impl IntoView {
         }
         spawn_local(async move {
             let result = vat_api()
-                .list_vat_returns(vpb::ListVatReturnsRequest { company_id: company_id.clone(), fiscal_year_start: start.clone() })
+                .list_vat_returns(vpb::ListVatReturnsRequest {
+                    company_id: company_id.clone(),
+                    fiscal_year_start: start.clone(),
+                })
                 .await;
             if company_id != companies.active.get_untracked() || start != year.get_untracked() {
                 return;
@@ -93,13 +99,19 @@ pub fn Vat() -> impl IntoView {
     // A change of the select (not the value loaded into it) is saved.
     Effect::new(move |_| {
         let chosen = kind.get();
-        let Some((company_id, start, response)) = loaded.get_untracked() else { return };
+        let Some((company_id, start, response)) = loaded.get_untracked() else {
+            return;
+        };
         if chosen.is_empty() || chosen == kind_value(response.kind()) {
             return;
         }
         error.set(None);
         spawn_local(async move {
-            let request = vpb::SetVatPeriodRequest { company_id, fiscal_year_start: start, kind: kind_of(&chosen) as i32 };
+            let request = vpb::SetVatPeriodRequest {
+                company_id,
+                fiscal_year_start: start,
+                kind: kind_of(&chosen) as i32,
+            };
             match vat_api().set_vat_period(request).await {
                 Ok(_) => load(),
                 Err(status) => {

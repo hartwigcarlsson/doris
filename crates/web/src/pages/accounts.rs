@@ -6,8 +6,8 @@ use crate::errors::describe;
 use crate::task::spawn_local;
 use crate::ui::{
     Badge, BadgeVariant, Button, Card, Checkbox, ErrorAlert, Field, Icon, IconName, PageHeader,
-    SELECT, SELECT_OPTION, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW,
-    Table, TableCard, TextInput, Variant,
+    SELECT, SELECT_OPTION, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table,
+    TableCard, TextInput, Variant,
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
@@ -260,7 +260,10 @@ mod tests {
 
     #[test]
     fn a_box_reads_as_its_number_and_the_forms_text() {
-        assert_eq!(vat_box_text(5), "05 Momspliktig försäljning som inte ingår i ruta 06, 07 eller 08");
+        assert_eq!(
+            vat_box_text(5),
+            "05 Momspliktig försäljning som inte ingår i ruta 06, 07 eller 08"
+        );
         assert_eq!(vat_box_text(48), "48 Ingående moms att dra av");
         assert_eq!(vat_box_text(0), "–");
     }

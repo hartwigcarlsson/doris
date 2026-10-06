@@ -79,7 +79,10 @@ pub fn FiscalYears() -> impl IntoView {
                 };
                 if let Ok(response) = vat_api().list_vat_returns(request).await {
                     open |= response.into_inner().periods.iter().any(|p| {
-                        matches!(p.status(), vpb::VatStatus::ToSubmit | vpb::VatStatus::Changed)
+                        matches!(
+                            p.status(),
+                            vpb::VatStatus::ToSubmit | vpb::VatStatus::Changed
+                        )
                     });
                 }
             }

@@ -3,7 +3,6 @@
 //! Skatteverket, and the settlement voucher booked when a period is marked
 //! submitted.
 
-
 pub mod domain;
 pub mod eskd;
 pub mod period;
@@ -64,10 +63,17 @@ fn vat_stream(company_id: Uuid) -> String {
 
 /// Membership, the company, its VAT state, the stream's version and its
 /// recorded events (for who submitted what, and when).
-async fn load(conn: &mut SqliteConnection, company_id: Uuid, actor: Uuid) -> Result<(Company, Vat, i64, Vec<RecordedEvent>)> {
+async fn load(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    actor: Uuid,
+) -> Result<(Company, Vat, i64, Vec<RecordedEvent>)> {
     let company = doris_company::get_company_in(conn, company_id, actor).await?;
     let recorded = doris_eventstore::load(conn, &vat_stream(company_id)).await?;
-    let events = recorded.iter().map(|e| e.decode::<VatEvent>()).collect::<Result<Vec<_>, _>>()?;
+    let events = recorded
+        .iter()
+        .map(|e| e.decode::<VatEvent>())
+        .collect::<Result<Vec<_>, _>>()?;
     let version = doris_eventstore::stream_version(conn, &vat_stream(company_id)).await?;
     Ok((company, Vat::from_events(&events), version, recorded))
 }
@@ -77,16 +83,26 @@ async fn load(conn: &mut SqliteConnection, company_id: Uuid, actor: Uuid) -> Res
 fn fiscal_year(company: &Company, start: Date) -> Result<FiscalYear> {
     let year = company.first_fiscal_year.containing(start);
     if year.start != start {
-        return Err(doris_ledger::Error::Domain(doris_ledger::domain::DomainError::FiscalYearNotFound).into());
+        return Err(doris_ledger::Error::Domain(
+            doris_ledger::domain::DomainError::FiscalYearNotFound,
+        )
+        .into());
     }
     Ok(year)
 }
 
 /// The periods of `year`, the first starting after the year before's last
 /// (`period::periods_after`).
-fn year_periods(company: &Company, vat: &Vat, year: FiscalYear, kind: VatPeriodKind) -> Vec<VatPeriod> {
+fn year_periods(
+    company: &Company,
+    vat: &Vat,
+    year: FiscalYear,
+    kind: VatPeriodKind,
+) -> Vec<VatPeriod> {
     let previous = (year.start > company.first_fiscal_year.start).then(|| {
-        let before = company.first_fiscal_year.containing(year.start.yesterday().expect("far from the date limits"));
+        let before = company
+            .first_fiscal_year
+            .containing(year.start.yesterday().expect("far from the date limits"));
         (before, vat.kind(before.start))
     });
     period::periods_after(year, kind, previous)
@@ -106,21 +122,59 @@ fn resolve(company: &Company, vat: &Vat, period_end: Date) -> Result<(VatPeriodK
     Ok((kind, period))
 }
 
-async fn totals_in(conn: &mut SqliteConnection, company_id: Uuid, vat: &Vat, period: VatPeriod) -> Result<Vec<VatAccountTotal>> {
-    Ok(doris_ledger::vat_box_totals_in(conn, company_id, period.start, period.end, &vat.vouchers()).await?)
+async fn totals_in(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    vat: &Vat,
+    period: VatPeriod,
+) -> Result<Vec<VatAccountTotal>> {
+    Ok(
+        doris_ledger::vat_box_totals_in(
+            conn,
+            company_id,
+            period.start,
+            period.end,
+            &vat.vouchers(),
+        )
+        .await?,
+    )
 }
 
-async fn append(conn: &mut SqliteConnection, company_id: Uuid, expected_version: i64, events: &[VatEvent], actor: Uuid) -> Result<()> {
+async fn append(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    expected_version: i64,
+    events: &[VatEvent],
+    actor: Uuid,
+) -> Result<()> {
     if events.is_empty() {
         return Ok(());
     }
-    let new_events = events.iter().map(|e| NewEvent::from_tagged(e, SCHEMA_VERSION)).collect::<Result<Vec<_>, _>>()?;
-    let metadata = Metadata { actor: Some(actor.to_string()) };
-    doris_eventstore::append(conn, &vat_stream(company_id), expected_version, &new_events, &metadata).await?;
+    let new_events = events
+        .iter()
+        .map(|e| NewEvent::from_tagged(e, SCHEMA_VERSION))
+        .collect::<Result<Vec<_>, _>>()?;
+    let metadata = Metadata {
+        actor: Some(actor.to_string()),
+    };
+    doris_eventstore::append(
+        conn,
+        &vat_stream(company_id),
+        expected_version,
+        &new_events,
+        &metadata,
+    )
+    .await?;
     Ok(())
 }
 
-pub async fn set_vat_period(pool: &SqlitePool, company_id: Uuid, actor: Uuid, fiscal_year_start: Date, kind: VatPeriodKind) -> Result<()> {
+pub async fn set_vat_period(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    kind: VatPeriodKind,
+) -> Result<()> {
     let mut tx = doris_eventstore::begin(pool).await?;
     let (company, vat, version, _) = load(&mut tx, company_id, actor).await?;
     let year = fiscal_year(&company, fiscal_year_start)?;
@@ -147,7 +201,15 @@ pub struct VatYear {
     pub periods: Vec<PeriodSummary>,
 }
 
-async fn summary(conn: &mut SqliteConnection, company_id: Uuid, vat: &Vat, kind: VatPeriodKind, period: VatPeriod, today: Date, corrected: &HashSet<VoucherRef>) -> Result<(PeriodSummary, Vec<VatAccountTotal>, Vec<AccountSaldo>)> {
+async fn summary(
+    conn: &mut SqliteConnection,
+    company_id: Uuid,
+    vat: &Vat,
+    kind: VatPeriodKind,
+    period: VatPeriod,
+    today: Date,
+    corrected: &HashSet<VoucherRef>,
+) -> Result<(PeriodSummary, Vec<VatAccountTotal>, Vec<AccountSaldo>)> {
     let totals = totals_in(conn, company_id, vat, period).await?;
     let accounts = domain::saldos(&totals);
     let summary = PeriodSummary {
@@ -161,7 +223,13 @@ async fn summary(conn: &mut SqliteConnection, company_id: Uuid, vat: &Vat, kind:
 
 // ponytail: one ledger query per period (at most 13 a year); one grouped
 // query when that shows.
-pub async fn list_vat_returns(pool: &SqlitePool, company_id: Uuid, actor: Uuid, fiscal_year_start: Date, today: Date) -> Result<VatYear> {
+pub async fn list_vat_returns(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    today: Date,
+) -> Result<VatYear> {
     let mut conn = pool.acquire().await?;
     let (company, vat, _, _) = load(&mut conn, company_id, actor).await?;
     let year = fiscal_year(&company, fiscal_year_start)?;
@@ -169,9 +237,17 @@ pub async fn list_vat_returns(pool: &SqlitePool, company_id: Uuid, actor: Uuid, 
     let corrected = doris_ledger::corrected_vouchers_in(&mut conn, company_id).await?;
     let mut periods = Vec::new();
     for period in year_periods(&company, &vat, year, kind) {
-        periods.push(summary(&mut conn, company_id, &vat, kind, period, today, &corrected).await?.0);
+        periods.push(
+            summary(&mut conn, company_id, &vat, kind, period, today, &corrected)
+                .await?
+                .0,
+        );
     }
-    Ok(VatYear { kind, locked: domain::is_locked(&vat, year), periods })
+    Ok(VatYear {
+        kind,
+        locked: domain::is_locked(&vat, year),
+        periods,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -197,12 +273,19 @@ pub struct VatReturnView {
     pub submissions: Vec<SubmissionRecord>,
 }
 
-pub async fn get_vat_return(pool: &SqlitePool, company_id: Uuid, actor: Uuid, period_end: Date, today: Date) -> Result<VatReturnView> {
+pub async fn get_vat_return(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    period_end: Date,
+    today: Date,
+) -> Result<VatReturnView> {
     let mut conn = pool.acquire().await?;
     let (company, vat, _, recorded) = load(&mut conn, company_id, actor).await?;
     let (kind, period) = resolve(&company, &vat, period_end)?;
     let corrected = doris_ledger::corrected_vouchers_in(&mut conn, company_id).await?;
-    let (summary, totals, accounts) = summary(&mut conn, company_id, &vat, kind, period, today, &corrected).await?;
+    let (summary, totals, accounts) =
+        summary(&mut conn, company_id, &vat, kind, period, today, &corrected).await?;
     let mut submissions = Vec::new();
     for event in &recorded {
         if let VatEvent::VatReturnSubmitted(submission) = event.decode::<VatEvent>()?
@@ -230,7 +313,13 @@ pub async fn get_vat_return(pool: &SqlitePool, company_id: Uuid, actor: Uuid, pe
 }
 
 /// The file to upload, its name, and the fingerprint of what it declares.
-pub async fn export_vat_file(pool: &SqlitePool, company_id: Uuid, actor: Uuid, period_end: Date, today: Date) -> Result<(String, String, String)> {
+pub async fn export_vat_file(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    period_end: Date,
+    today: Date,
+) -> Result<(String, String, String)> {
     let mut conn = pool.acquire().await?;
     let (company, vat, _, _) = load(&mut conn, company_id, actor).await?;
     let (_, period) = resolve(&company, &vat, period_end)?;
@@ -239,7 +328,11 @@ pub async fn export_vat_file(pool: &SqlitePool, company_id: Uuid, actor: Uuid, p
     }
     let accounts = domain::saldos(&totals_in(&mut conn, company_id, &vat, period).await?);
     let xml = eskd::eskd_xml(&company.org_nr, period, &domain::boxes(&accounts));
-    Ok((eskd::file_name(&company.org_nr, period), xml, domain::fingerprint(period.end, &accounts)))
+    Ok((
+        eskd::file_name(&company.org_nr, period),
+        xml,
+        domain::fingerprint(period.end, &accounts),
+    ))
 }
 
 /// Records the period as submitted and books its settlement voucher (dated
@@ -259,18 +352,28 @@ pub async fn mark_vat_return_submitted(
     let (kind, period) = resolve(&company, &vat, period_end)?;
     let accounts = domain::saldos(&totals_in(&mut tx, company_id, &vat, period).await?);
     let corrected = doris_ledger::corrected_vouchers_in(&mut tx, company_id).await?;
-    let domain::Prepared { lines, mut submission } =
-        domain::submit(&vat, period, kind, today, accounts, fingerprint, &corrected)?;
+    let domain::Prepared {
+        lines,
+        mut submission,
+    } = domain::submit(&vat, period, kind, today, accounts, fingerprint, &corrected)?;
     if !lines.is_empty() {
         let cmd = doris_ledger::domain::RecordVoucher {
             date: period.end,
             text: format!("Momsavräkning {}", period.label()),
             lines,
         };
-        submission.voucher = Some(doris_ledger::record_voucher_in(&mut tx, company_id, actor, cmd, today).await?);
+        submission.voucher =
+            Some(doris_ledger::record_voucher_in(&mut tx, company_id, actor, cmd, today).await?);
     }
     let voucher = submission.voucher;
-    append(&mut tx, company_id, version, &[VatEvent::VatReturnSubmitted(submission)], actor).await?;
+    append(
+        &mut tx,
+        company_id,
+        version,
+        &[VatEvent::VatReturnSubmitted(submission)],
+        actor,
+    )
+    .await?;
     tx.commit().await?;
     Ok(voucher)
 }

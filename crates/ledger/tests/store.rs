@@ -10,7 +10,8 @@ use doris_ledger::{
     financial_statements, get_attachment, link_attachment_in, list_accounts, list_fiscal_years,
     list_vouchers, opening_balances, rebuild_projections, record_voucher, record_voucher_in,
     record_voucher_with_attachments, rename_account, reopen_fiscal_year, set_account_active,
-    set_account_vat_box, set_opening_balances, store_attachment_in, trial_balance, vat_box_totals_in,
+    set_account_vat_box, set_opening_balances, store_attachment_in, trial_balance,
+    vat_box_totals_in,
 };
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -1789,7 +1790,10 @@ fn voucher(date: &str, text: &str, lines: &[(u32, i64, i64)]) -> RecordVoucher {
     RecordVoucher {
         date: d(date),
         text: text.into(),
-        lines: lines.iter().map(|&(a, dr, cr)| VoucherLine::new(a, dr, cr).unwrap()).collect(),
+        lines: lines
+            .iter()
+            .map(|&(a, dr, cr)| VoucherLine::new(a, dr, cr).unwrap())
+            .collect(),
     }
 }
 
@@ -1800,21 +1804,92 @@ async fn vat_totals_sum_a_periods_boxed_accounts_and_leave_out_what_is_excluded(
     let id = company(&pool, anna).await;
     let today = d(TODAY);
     // A sale with 25 % VAT, a purchase with input VAT, and a sale outside the period.
-    record_voucher(&pool, id, anna, voucher("2025-02-10", "Sale", &[(1930, 12_500, 0), (3001, 0, 10_000), (2611, 0, 2_500)]), today).await.unwrap();
-    record_voucher(&pool, id, anna, voucher("2025-03-31", "Buy", &[(4010, 800, 0), (2640, 200, 0), (1930, 0, 1_000)]), today).await.unwrap();
-    record_voucher(&pool, id, anna, voucher("2025-04-01", "Later", &[(1930, 125, 0), (3001, 0, 100), (2611, 0, 25)]), today).await.unwrap();
+    record_voucher(
+        &pool,
+        id,
+        anna,
+        voucher(
+            "2025-02-10",
+            "Sale",
+            &[(1930, 12_500, 0), (3001, 0, 10_000), (2611, 0, 2_500)],
+        ),
+        today,
+    )
+    .await
+    .unwrap();
+    record_voucher(
+        &pool,
+        id,
+        anna,
+        voucher(
+            "2025-03-31",
+            "Buy",
+            &[(4010, 800, 0), (2640, 200, 0), (1930, 0, 1_000)],
+        ),
+        today,
+    )
+    .await
+    .unwrap();
+    record_voucher(
+        &pool,
+        id,
+        anna,
+        voucher(
+            "2025-04-01",
+            "Later",
+            &[(1930, 125, 0), (3001, 0, 100), (2611, 0, 25)],
+        ),
+        today,
+    )
+    .await
+    .unwrap();
     // A settlement to exclude, and its correction.
-    let settled = record_voucher(&pool, id, anna, voucher("2025-03-31", "Momsavräkning", &[(2611, 2_500, 0), (2640, 0, 200), (2650, 0, 2_300)]), today).await.unwrap();
-    correct_voucher(&pool, id, anna, settled.fiscal_year_start, settled.number, d("2025-03-31"), today).await.unwrap();
+    let settled = record_voucher(
+        &pool,
+        id,
+        anna,
+        voucher(
+            "2025-03-31",
+            "Momsavräkning",
+            &[(2611, 2_500, 0), (2640, 0, 200), (2650, 0, 2_300)],
+        ),
+        today,
+    )
+    .await
+    .unwrap();
+    correct_voucher(
+        &pool,
+        id,
+        anna,
+        settled.fiscal_year_start,
+        settled.number,
+        d("2025-03-31"),
+        today,
+    )
+    .await
+    .unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
-    let totals = vat_box_totals_in(&mut conn, id, d("2025-01-01"), d("2025-03-31"), &[settled]).await.unwrap();
-    let got: Vec<(u16, u8, i64)> = totals.iter().map(|t| (t.number, t.vat_box.get(), t.saldo)).collect();
-    assert_eq!(got, [(2611, 10, -2_500), (2640, 48, 200), (3001, 5, -10_000)]);
-    assert_eq!(totals[0].name, "Utgående moms på försäljning inom Sverige, 25 %");
+    let totals = vat_box_totals_in(&mut conn, id, d("2025-01-01"), d("2025-03-31"), &[settled])
+        .await
+        .unwrap();
+    let got: Vec<(u16, u8, i64)> = totals
+        .iter()
+        .map(|t| (t.number, t.vat_box.get(), t.saldo))
+        .collect();
+    assert_eq!(
+        got,
+        [(2611, 10, -2_500), (2640, 48, 200), (3001, 5, -10_000)]
+    );
+    assert_eq!(
+        totals[0].name,
+        "Utgående moms på försäljning inom Sverige, 25 %"
+    );
 
     // Without the exclusion the settlement and its correction cancel each
     // other on 2611 and 2640; 2650 has no box.
-    let all = vat_box_totals_in(&mut conn, id, d("2025-01-01"), d("2025-03-31"), &[]).await.unwrap();
+    let all = vat_box_totals_in(&mut conn, id, d("2025-01-01"), d("2025-03-31"), &[])
+        .await
+        .unwrap();
     assert_eq!(all.len(), 3);
 }

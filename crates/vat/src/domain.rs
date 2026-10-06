@@ -1,14 +1,14 @@
 //! Pure VAT rules: boxes, the settlement voucher, status and decisions.
 
+use crate::period::{VatPeriod, VatPeriodKind};
+use doris_company::domain::FiscalYear;
 use doris_ledger::VatAccountTotal;
+use doris_ledger::VoucherRef;
+use doris_ledger::domain::VoucherLine;
 use doris_ledger::vat_box::{Side, VatBox};
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use crate::period::{VatPeriod, VatPeriodKind};
-use doris_company::domain::FiscalYear;
-use doris_ledger::VoucherRef;
-use doris_ledger::domain::VoucherLine;
 use std::collections::{BTreeMap, HashSet};
 
 /// An account's saldo (debit − credit, öre) over a period, with its box.
@@ -41,7 +41,11 @@ const OUTPUT_VAT: [u8; 9] = [10, 11, 12, 30, 31, 32, 60, 61, 62];
 pub fn saldos(totals: &[VatAccountTotal]) -> Vec<AccountSaldo> {
     totals
         .iter()
-        .map(|t| AccountSaldo { account: t.number, vat_box: t.vat_box, saldo: t.saldo })
+        .map(|t| AccountSaldo {
+            account: t.number,
+            vat_box: t.vat_box,
+            saldo: t.saldo,
+        })
         .collect()
 }
 
@@ -67,7 +71,10 @@ pub fn boxes(accounts: &[AccountSaldo]) -> Boxes {
         .map(|(b, o)| (b, o / 100))
         .filter(|(_, kr)| *kr != 0)
         .collect();
-    let mut boxes = Boxes { amounts, vat_due: 0 };
+    let mut boxes = Boxes {
+        amounts,
+        vat_due: 0,
+    };
     boxes.vat_due = OUTPUT_VAT.iter().map(|&n| boxes.get(n)).sum::<i64>() - boxes.get(48);
     boxes
 }
@@ -85,7 +92,10 @@ pub fn booked_vat(accounts: &[AccountSaldo]) -> i64 {
 /// submitted is refused when the books changed after it was shown.
 pub fn fingerprint(period_end: Date, accounts: &[AccountSaldo]) -> String {
     let json = serde_json::to_vec(&(period_end, accounts)).expect("plain data serializes");
-    Sha256::digest(json).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(json)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -148,7 +158,10 @@ impl Vat {
 
     pub fn apply(&mut self, event: &VatEvent) {
         match event {
-            VatEvent::VatPeriodSet { fiscal_year_start, kind } => {
+            VatEvent::VatPeriodSet {
+                fiscal_year_start,
+                kind,
+            } => {
                 self.kinds.insert(*fiscal_year_start, *kind);
             }
             VatEvent::VatReturnSubmitted(submission) => self.submissions.push(submission.clone()),
@@ -157,7 +170,10 @@ impl Vat {
 
     /// Quarterly until set.
     pub fn kind(&self, fiscal_year_start: Date) -> VatPeriodKind {
-        self.kinds.get(&fiscal_year_start).copied().unwrap_or_default()
+        self.kinds
+            .get(&fiscal_year_start)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Every settlement voucher Doris has booked.
@@ -166,7 +182,10 @@ impl Vat {
     }
 
     pub fn submissions_for(&self, period_end: Date) -> Vec<&Submission> {
-        self.submissions.iter().filter(|s| s.period_end == period_end).collect()
+        self.submissions
+            .iter()
+            .filter(|s| s.period_end == period_end)
+            .collect()
     }
 }
 
@@ -188,7 +207,11 @@ pub struct Settlement {
 
 /// `amount` öre on `account`: a debit when positive, a credit when negative.
 fn line(account: u16, amount: i64) -> VoucherLine {
-    let (debit, credit) = if amount > 0 { (amount, 0) } else { (0, -amount) };
+    let (debit, credit) = if amount > 0 {
+        (amount, 0)
+    } else {
+        (0, -amount)
+    };
     VoucherLine::new(account.into(), debit, credit).expect("settlement accounts are valid")
 }
 
@@ -215,12 +238,20 @@ pub fn settlement(accounts: &[AccountSaldo], boxes: &Boxes, earlier: &[&Submissi
     if rest != 0 {
         lines.push(line(3740, -rest));
     }
-    Settlement { lines, settled: open.into_iter().collect(), vat_due }
+    Settlement {
+        lines,
+        settled: open.into_iter().collect(),
+        vat_due,
+    }
 }
 
 /// The period's submissions whose voucher has not been corrected: what
 /// the books still hold as settled.
-pub fn standing<'a>(vat: &'a Vat, period_end: Date, corrected: &HashSet<VoucherRef>) -> Vec<&'a Submission> {
+pub fn standing<'a>(
+    vat: &'a Vat,
+    period_end: Date,
+    corrected: &HashSet<VoucherRef>,
+) -> Vec<&'a Submission> {
     vat.submissions_for(period_end)
         .into_iter()
         .filter(|s| !s.voucher.is_some_and(|v| corrected.contains(&v)))
@@ -242,7 +273,11 @@ pub fn status(
     let Some(latest) = vat.submissions_for(period.end).last().copied() else {
         return VatStatus::ToSubmit;
     };
-    let left = settlement(accounts, &boxes(accounts), &standing(vat, period.end, corrected));
+    let left = settlement(
+        accounts,
+        &boxes(accounts),
+        &standing(vat, period.end, corrected),
+    );
     if latest.accounts == accounts && left.lines.is_empty() {
         VatStatus::Submitted
     } else {
@@ -259,14 +294,21 @@ pub fn is_locked(vat: &Vat, fiscal_year: FiscalYear) -> bool {
 
 /// Setting the kind it already has yields no events. Once a period of the
 /// year is submitted, its kind stays.
-pub fn set_vat_period(vat: &Vat, fiscal_year: FiscalYear, kind: VatPeriodKind) -> Result<Vec<VatEvent>, DomainError> {
+pub fn set_vat_period(
+    vat: &Vat,
+    fiscal_year: FiscalYear,
+    kind: VatPeriodKind,
+) -> Result<Vec<VatEvent>, DomainError> {
     if vat.kind(fiscal_year.start) == kind {
         return Ok(vec![]);
     }
     if is_locked(vat, fiscal_year) {
         return Err(DomainError::VatPeriodLocked);
     }
-    Ok(vec![VatEvent::VatPeriodSet { fiscal_year_start: fiscal_year.start, kind }])
+    Ok(vec![VatEvent::VatPeriodSet {
+        fiscal_year_start: fiscal_year.start,
+        kind,
+    }])
 }
 
 /// The settlement to book and the submission to record once it has its
@@ -299,7 +341,11 @@ pub fn submit(
         return Err(DomainError::VatReturnUnchanged);
     }
     let boxes = boxes(&accounts);
-    let Settlement { lines, settled, vat_due } = settlement(&accounts, &boxes, &standing(vat, period.end, corrected));
+    let Settlement {
+        lines,
+        settled,
+        vat_due,
+    } = settlement(&accounts, &boxes, &standing(vat, period.end, corrected));
     Ok(Prepared {
         lines,
         submission: Submission {

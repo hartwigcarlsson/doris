@@ -5,7 +5,10 @@ use doris_vat::eskd::{eskd_xml, file_name, vat_number};
 use doris_vat::period::VatPeriod;
 
 fn q3() -> VatPeriod {
-    VatPeriod { start: "2026-07-01".parse().unwrap(), end: "2026-09-30".parse().unwrap() }
+    VatPeriod {
+        start: "2026-07-01".parse().unwrap(),
+        end: "2026-09-30".parse().unwrap(),
+    }
 }
 
 fn org() -> OrgNr {
@@ -16,7 +19,14 @@ fn org() -> OrgNr {
 fn the_file_lists_boxes_that_are_not_zero_in_skatteverkets_order_and_always_49() {
     let b = |n: u32| VatBox::parse(n).unwrap();
     let boxes = Boxes {
-        amounts: vec![(b(5), 412_300), (b(10), 95_000), (b(21), 4_800), (b(30), 1_200), (b(48), 25_810), (b(42), -1_500)],
+        amounts: vec![
+            (b(5), 412_300),
+            (b(10), 95_000),
+            (b(21), 4_800),
+            (b(30), 1_200),
+            (b(48), 25_810),
+            (b(42), -1_500),
+        ],
         vat_due: 70_390,
     };
     assert_eq!(

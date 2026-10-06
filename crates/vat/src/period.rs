@@ -25,8 +25,18 @@ pub struct VatPeriod {
 }
 
 const MONTHS: [&str; 12] = [
-    "januari", "februari", "mars", "april", "maj", "juni", "juli", "augusti", "september",
-    "oktober", "november", "december",
+    "januari",
+    "februari",
+    "mars",
+    "april",
+    "maj",
+    "juni",
+    "juli",
+    "augusti",
+    "september",
+    "oktober",
+    "november",
+    "december",
 ];
 
 fn add_months(day: Date, months: i64) -> Date {
@@ -49,7 +59,13 @@ impl VatPeriod {
         } else if start.year() == end.year() {
             format!("{}–{} {}", name(start), name(end), end.year())
         } else {
-            format!("{} {}–{} {}", name(start), start.year(), name(end), end.year())
+            format!(
+                "{} {}–{} {}",
+                name(start),
+                start.year(),
+                name(end),
+                end.year()
+            )
         }
     }
 }
@@ -67,14 +83,23 @@ pub fn periods(fiscal_year: FiscalYear, kind: VatPeriodKind) -> Vec<VatPeriod> {
     match kind {
         VatPeriodKind::Monthly => months
             .into_iter()
-            .map(|m| VatPeriod { start: m, end: m.last_of_month() })
+            .map(|m| VatPeriod {
+                start: m,
+                end: m.last_of_month(),
+            })
             .collect(),
         VatPeriodKind::Quarterly => months
             .into_iter()
             .filter(|m| m.month() % 3 == 0)
-            .map(|m| VatPeriod { start: add_months(m, -2), end: m.last_of_month() })
+            .map(|m| VatPeriod {
+                start: add_months(m, -2),
+                end: m.last_of_month(),
+            })
             .collect(),
-        VatPeriodKind::Yearly => vec![VatPeriod { start: fiscal_year.start, end: fiscal_year.end }],
+        VatPeriodKind::Yearly => vec![VatPeriod {
+            start: fiscal_year.start,
+            end: fiscal_year.end,
+        }],
         VatPeriodKind::NotRegistered => vec![],
     }
 }
@@ -83,7 +108,11 @@ pub fn periods(fiscal_year: FiscalYear, kind: VatPeriodKind) -> Vec<VatPeriod> {
 /// kind) is known: the first period starts the day after the year before's
 /// last period, so a change of kind in a broken year neither declares a
 /// month twice nor skips one. Unregistered years before change nothing.
-pub fn periods_after(fiscal_year: FiscalYear, kind: VatPeriodKind, previous: Option<(FiscalYear, VatPeriodKind)>) -> Vec<VatPeriod> {
+pub fn periods_after(
+    fiscal_year: FiscalYear,
+    kind: VatPeriodKind,
+    previous: Option<(FiscalYear, VatPeriodKind)>,
+) -> Vec<VatPeriod> {
     let mut list = periods(fiscal_year, kind);
     let last_before = previous.and_then(|(year, kind)| periods(year, kind).last().copied());
     if let (Some(first), Some(before)) = (list.first_mut(), last_before) {
@@ -102,7 +131,11 @@ pub fn due_date(period: VatPeriod, kind: VatPeriodKind) -> Option<Date> {
         return None;
     }
     let month = add_months(period.end.first_of_month(), 2);
-    let day = if matches!(month.month(), 1 | 8) { 17 } else { 12 };
+    let day = if matches!(month.month(), 1 | 8) {
+        17
+    } else {
+        12
+    };
     let mut due = date(month.year(), month.month(), day);
     while !is_workday(due) {
         due = due.tomorrow().expect("far from the date limits");

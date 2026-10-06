@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 /// Every box an account can be in, in the order of Skatteverket's file.
 /// 49 is computed and is never an account's.
 pub const BOXES: [u8; 28] = [
-    5, 6, 7, 8, 20, 21, 22, 23, 24, 50, 35, 36, 37, 38, 39, 40, 41, 42, 10, 11, 12, 30, 31, 32,
-    60, 61, 62, 48,
+    5, 6, 7, 8, 20, 21, 22, 23, 24, 50, 35, 36, 37, 38, 39, 40, 41, 42, 10, 11, 12, 30, 31, 32, 60,
+    61, 62, 48,
 ];
 
 /// A box on the momsdeklaration, stored as its number.

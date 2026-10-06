@@ -3,7 +3,9 @@
 //! `crate::overview`; this file loads and draws.
 
 use crate::active_company::Companies;
-use crate::api::{company_api, cpb, invoicing_api, ipb, ledger_api, lpb, payroll_api, ppb, vat_api, vpb};
+use crate::api::{
+    company_api, cpb, invoicing_api, ipb, ledger_api, lpb, payroll_api, ppb, vat_api, vpb,
+};
 use crate::errors::describe;
 use crate::fiscal_year::{FiscalYearSelect, keep_year_in_url};
 use crate::format::{accounting_method_label, amount, legal_form_label, today};

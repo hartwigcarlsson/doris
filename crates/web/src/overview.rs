@@ -408,7 +408,12 @@ pub fn todo_list(input: &TodoInput, today: &str) -> Vec<Todo> {
     let mut vat: Vec<&vpb::VatPeriodSummary> = input
         .vat_periods
         .iter()
-        .filter(|p| matches!(p.status(), vpb::VatStatus::ToSubmit | vpb::VatStatus::Changed))
+        .filter(|p| {
+            matches!(
+                p.status(),
+                vpb::VatStatus::ToSubmit | vpb::VatStatus::Changed
+            )
+        })
         .collect();
     vat.sort_by_key(|p| (p.status() != vpb::VatStatus::Changed, p.period.clone()));
     for p in vat {
@@ -833,18 +838,47 @@ mod tests {
     }
 
     fn vat(period: &str, label: &str, status: vpb::VatStatus, due: &str) -> vpb::VatPeriodSummary {
-        vpb::VatPeriodSummary { period: period.into(), label: label.into(), status: status as i32, due_date: due.into(), ..Default::default() }
+        vpb::VatPeriodSummary {
+            period: period.into(),
+            label: label.into(),
+            status: status as i32,
+            due_date: due.into(),
+            ..Default::default()
+        }
     }
 
     #[test]
     fn vat_periods_to_submit_and_changed_ones_are_listed_with_their_due_date() {
         let periods = [
-            vat("202606", "april–juni 2026", vpb::VatStatus::Submitted, "2026-08-17"),
-            vat("202609", "juli–september 2026", vpb::VatStatus::ToSubmit, "2026-11-12"),
-            vat("202603", "januari–mars 2026", vpb::VatStatus::Changed, "2026-05-12"),
-            vat("202612", "oktober–december 2026", vpb::VatStatus::InProgress, "2027-02-12"),
+            vat(
+                "202606",
+                "april–juni 2026",
+                vpb::VatStatus::Submitted,
+                "2026-08-17",
+            ),
+            vat(
+                "202609",
+                "juli–september 2026",
+                vpb::VatStatus::ToSubmit,
+                "2026-11-12",
+            ),
+            vat(
+                "202603",
+                "januari–mars 2026",
+                vpb::VatStatus::Changed,
+                "2026-05-12",
+            ),
+            vat(
+                "202612",
+                "oktober–december 2026",
+                vpb::VatStatus::InProgress,
+                "2027-02-12",
+            ),
         ];
-        let list = todos(TodoInput { vat_periods: &periods, ..empty() });
+        let list = todos(TodoInput {
+            vat_periods: &periods,
+            ..empty()
+        });
         assert_eq!(
             list,
             [
@@ -868,8 +902,16 @@ mod tests {
 
     #[test]
     fn an_overdue_vat_period_is_urgent() {
-        let periods = [vat("202606", "april–juni 2026", vpb::VatStatus::ToSubmit, "2026-08-17")];
-        let list = todos(TodoInput { vat_periods: &periods, ..empty() });
+        let periods = [vat(
+            "202606",
+            "april–juni 2026",
+            vpb::VatStatus::ToSubmit,
+            "2026-08-17",
+        )];
+        let list = todos(TodoInput {
+            vat_periods: &periods,
+            ..empty()
+        });
         assert!(list[0].urgent);
     }
 
