@@ -58,10 +58,7 @@ pub fn Passkeys() -> impl IntoView {
                     </For>
                 </ul>
             </Card>
-            <Card title="Lägg till passkey" narrow=true>
-                <p class="mb-4 text-xs/relaxed text-muted-foreground">
-                    "Du bekräftar med en passkey du redan har, sedan skapar du den nya."
-                </p>
+            <Card title="Lägg till passkey" description="Du bekräftar med en passkey du redan har, sedan skapar du den nya." narrow=true>
                 <form class="grid gap-4" novalidate on:submit=submit>
                     <Field label="Passkeyns namn" id="passkey_name" placeholder="t.ex. iPhone" value=name />
                     <ErrorAlert message=error />

@@ -764,7 +764,7 @@ async fn a_registration_ceremony_cannot_be_continued() {
         .continue_add_passkey(anna.id, ceremony, &assertion, now())
         .await
         .unwrap();
-    let (other, options) = auth
+    let (_, options) = auth
         .begin_add_passkey(anna.id, "Surfplatta", now())
         .await
         .unwrap();
@@ -776,5 +776,34 @@ async fn a_registration_ceremony_cannot_be_continued() {
         .unwrap_err();
 
     assert!(matches!(err, Error::CeremonyNotFound), "{err:?}");
-    let _ = other;
+}
+
+#[tokio::test]
+async fn a_passkey_cannot_be_added_by_skipping_the_confirmation() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (unconfirmed, _) = auth
+        .begin_add_passkey(anna.id, "Telefon", now())
+        .await
+        .unwrap();
+    // A real registration credential, from a second, confirmed ceremony.
+    let (_, options) = confirm_add_passkey(&auth, anna.id, &mut annas, "Surfplatta").await;
+    let credential = authenticator().do_registration(origin(), options).unwrap();
+
+    let err = auth
+        .finish_add_passkey(anna.id, unconfirmed, &credential, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::CeremonyNotFound), "{err:?}");
+    assert_eq!(
+        get_user(&pool, anna.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .passkeys
+            .len(),
+        1
+    );
 }
