@@ -63,7 +63,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   together, as for member names and who recorded a voucher), never with
   SQL against its projections.
 - Operational data is **not** events and may be purged. That covers sessions
-  and WebAuthn ceremony state.
+  and WebAuthn ceremony state, and `api_token_usage` (when a token was last
+  used).
 - Voucher numbers run 1..=n per company and fiscal year without gaps (BFL
   5 kap.). The number is decided inside the write transaction
   (`last_number + 1`), never by the client and never ahead of time; the
