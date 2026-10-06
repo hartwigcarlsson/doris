@@ -136,8 +136,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   is in, and a year's first period starts the day after the year before's
   last period, so a change of kind in a broken year neither repeats nor
   skips a month) and `VatReturnSubmitted` with what was declared. An
-  account's box is `AccountVatBoxSet` in the chart (BAS default in
-  `crates/ledger/src/vat_box.rs`, read from the chart's events). The boxes
+  account's box is `AccountVatBoxSet` in the chart. The BAS defaults
+  (`crates/ledger/src/vat_box.rs`) go into the history as
+  `VatBoxesRecorded`: with the seed, or for a chart seeded before that, at
+  its first write since. After that no box is read from the code; an
+  account added later gets its default as an `AccountVatBoxSet`. The boxes
   come from `doris_ledger::vat_box_totals_in`, leaving out Doris' own
   settlement vouchers and their corrections; öre are struck off per box and
   box 49 is computed from the rounded boxes. Marking a period submitted

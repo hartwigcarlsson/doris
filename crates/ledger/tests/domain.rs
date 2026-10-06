@@ -1111,3 +1111,100 @@ fn a_box_is_set_once_and_never_on_2650_or_3740() {
         Err(DomainError::AccountNotFound)
     );
 }
+
+fn vat_box(account: &Chart, number: u32) -> Option<u8> {
+    account.get(n(number)).unwrap().vat_box.map(VatBox::get)
+}
+
+#[test]
+fn recorded_boxes_replace_the_built_in_ones() {
+    // 3106 has box 05 by default; leaving it out of the record means none.
+    let chart = Chart::from_events(&[
+        seed_chart(),
+        ChartEvent::VatBoxesRecorded {
+            boxes: vec![
+                (n(2611), VatBox::parse(10).unwrap()),
+                (n(3004), VatBox::parse(5).unwrap()),
+            ],
+        },
+    ]);
+    assert_eq!(vat_box(&chart, 2611), Some(10));
+    assert_eq!(vat_box(&chart, 3004), Some(5));
+    assert_eq!(vat_box(&chart, 3106), None);
+    assert!(chart.vat_boxes_recorded());
+    assert!(!seeded().vat_boxes_recorded());
+}
+
+#[test]
+fn recording_lists_every_account_with_a_box_as_it_is_now() {
+    let mut chart = seeded();
+    chart.apply(&ChartEvent::AccountVatBoxSet {
+        number: n(3004),
+        vat_box: VatBox::parse(5).ok(),
+    });
+    chart.apply(&ChartEvent::AccountVatBoxSet {
+        number: n(2611),
+        vat_box: None,
+    });
+    let ChartEvent::VatBoxesRecorded { boxes } = record_vat_boxes(&chart) else {
+        panic!("not a record");
+    };
+    assert!(boxes.contains(&(n(3004), VatBox::parse(5).unwrap())));
+    assert!(boxes.contains(&(n(3001), VatBox::parse(5).unwrap())));
+    assert!(!boxes.iter().any(|(a, _)| *a == n(2611)));
+    let recorded = Chart::from_events(&[
+        seed_chart(),
+        ChartEvent::AccountVatBoxSet {
+            number: n(3004),
+            vat_box: VatBox::parse(5).ok(),
+        },
+        ChartEvent::AccountVatBoxSet {
+            number: n(2611),
+            vat_box: None,
+        },
+        ChartEvent::VatBoxesRecorded { boxes },
+    ]);
+    let before: Vec<_> = chart.accounts().map(|a| (a.number, a.vat_box)).collect();
+    let after: Vec<_> = recorded.accounts().map(|a| (a.number, a.vat_box)).collect();
+    assert_eq!(before, after, "recording changes no box");
+}
+
+#[test]
+fn an_account_added_after_the_record_gets_its_box_as_its_own_event() {
+    let chart = Chart::from_events(&[seed_chart(), record_vat_boxes(&seeded())]);
+    assert_eq!(
+        add_account(&chart, n(4536), name("Tjänster EU, 12 %")).unwrap(),
+        [
+            ChartEvent::AccountAdded {
+                number: n(4536),
+                name: name("Tjänster EU, 12 %")
+            },
+            ChartEvent::AccountVatBoxSet {
+                number: n(4536),
+                vat_box: VatBox::parse(21).ok()
+            },
+        ]
+    );
+    // An account without a BAS box gets just the AccountAdded, and no box
+    // even if the built-in map later gives it one.
+    assert_eq!(
+        add_account(&chart, n(1931), name("Sparkonto"))
+            .unwrap()
+            .len(),
+        1
+    );
+    let mut added = chart.clone();
+    added.apply(&ChartEvent::AccountAdded {
+        number: n(4537),
+        name: name("x"),
+    });
+    assert_eq!(vat_box(&added, 4537), None);
+    // Before any record, an added account still reads the built-in box.
+    let mut old = seeded();
+    old.apply(&ChartEvent::AccountAdded {
+        number: n(4536),
+        name: name("x"),
+    });
+    assert_eq!(vat_box(&old, 4536), Some(21));
+    assert_eq!(add_account(&seeded(), n(4536), name("x")).unwrap().len(), 1);
+}

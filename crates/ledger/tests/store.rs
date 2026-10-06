@@ -93,6 +93,7 @@ async fn the_first_change_seeds_the_chart_in_the_same_transaction() {
         events_of(&pool, "accounts-").await,
         [
             "ChartSeeded",
+            "VatBoxesRecorded",
             "AccountAdded",
             "AccountRenamed",
             "AccountDeactivated"
@@ -294,7 +295,7 @@ async fn a_rolled_back_transaction_uses_no_number() {
 
     assert_eq!(abandoned.number, 1);
     assert_eq!(kept.number, 1);
-    assert!(events_of(&pool, "accounts-").await == ["ChartSeeded"]);
+    assert!(events_of(&pool, "accounts-").await == ["ChartSeeded", "VatBoxesRecorded"]);
 }
 
 #[tokio::test]
@@ -307,7 +308,10 @@ async fn the_first_voucher_seeds_the_chart_it_is_checked_against() {
         .await
         .unwrap();
 
-    assert_eq!(events_of(&pool, "accounts-").await, ["ChartSeeded"]);
+    assert_eq!(
+        events_of(&pool, "accounts-").await,
+        ["ChartSeeded", "VatBoxesRecorded"]
+    );
 }
 
 #[tokio::test]
@@ -1769,7 +1773,12 @@ async fn an_accounts_box_is_listed_set_and_cleared() {
     assert_eq!((boxed(&after, 3004), boxed(&after, 2611)), (Some(5), None));
     assert_eq!(
         events_of(&pool, "accounts-").await,
-        ["ChartSeeded", "AccountVatBoxSet", "AccountVatBoxSet"]
+        [
+            "ChartSeeded",
+            "VatBoxesRecorded",
+            "AccountVatBoxSet",
+            "AccountVatBoxSet"
+        ]
     );
 
     let refused = set_account_vat_box(&pool, id, anna, 2650, Some(48)).await;
@@ -1892,4 +1901,91 @@ async fn vat_totals_sum_a_periods_boxed_accounts_and_leave_out_what_is_excluded(
         .await
         .unwrap();
     assert_eq!(all.len(), 3);
+}
+
+#[tokio::test]
+async fn a_new_chart_records_its_boxes_with_the_seed() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    record_voucher(&pool, id, anna, sale("2025-01-15", 100), d(TODAY))
+        .await
+        .unwrap();
+    assert_eq!(
+        events_of(&pool, "accounts-").await,
+        ["ChartSeeded", "VatBoxesRecorded"]
+    );
+    add_account(&pool, id, anna, 4536, "Tjänster EU, 12 %")
+        .await
+        .unwrap();
+    let accounts = list_accounts(&pool, id, anna).await.unwrap();
+    let boxed = |n: u16| {
+        accounts
+            .iter()
+            .find(|a| a.number.get() == n)
+            .unwrap()
+            .vat_box
+            .map(VatBox::get)
+    };
+    assert_eq!(
+        (boxed(2611), boxed(4536), boxed(1930)),
+        (Some(10), Some(21), None)
+    );
+    assert_eq!(
+        events_of(&pool, "accounts-").await,
+        [
+            "ChartSeeded",
+            "VatBoxesRecorded",
+            "AccountAdded",
+            "AccountVatBoxSet"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_chart_from_before_records_its_boxes_at_the_next_write_once() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    // A chart seeded by an earlier version: just the ChartSeeded, and a box
+    // the user chose.
+    {
+        let mut tx = doris_eventstore::begin(&pool).await.unwrap();
+        let events = [
+            doris_ledger::domain::seed_chart(),
+            doris_ledger::domain::ChartEvent::AccountVatBoxSet {
+                number: AccountNumber::parse(3004).unwrap(),
+                vat_box: VatBox::parse(5).ok(),
+            },
+        ]
+        .iter()
+        .map(|e| doris_eventstore::NewEvent::from_tagged(e, 1).unwrap())
+        .collect::<Vec<_>>();
+        let metadata = doris_eventstore::Metadata {
+            actor: Some(anna.to_string()),
+        };
+        doris_eventstore::append(&mut tx, &format!("accounts-{id}"), 0, &events, &metadata)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+    let before = list_accounts(&pool, id, anna).await.unwrap();
+    record_voucher(&pool, id, anna, sale("2025-01-15", 100), d(TODAY))
+        .await
+        .unwrap();
+    record_voucher(&pool, id, anna, sale("2025-01-16", 100), d(TODAY))
+        .await
+        .unwrap();
+    assert_eq!(
+        events_of(&pool, "accounts-").await,
+        ["ChartSeeded", "AccountVatBoxSet", "VatBoxesRecorded"]
+    );
+    let after = list_accounts(&pool, id, anna).await.unwrap();
+    assert_eq!(before, after, "recording changes no box");
+    let box_3004 = after
+        .iter()
+        .find(|a| a.number.get() == 3004)
+        .unwrap()
+        .vat_box;
+    assert_eq!(box_3004.map(VatBox::get), Some(5));
 }

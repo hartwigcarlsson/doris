@@ -45,7 +45,7 @@ async fn apply_chart(
             set_active(conn, company_id, number.get(), true).await?
         }
         // The box is read from the chart's events, not projected.
-        ChartEvent::AccountVatBoxSet { .. } => {}
+        ChartEvent::AccountVatBoxSet { .. } | ChartEvent::VatBoxesRecorded { .. } => {}
     }
     Ok(())
 }

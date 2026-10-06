@@ -180,14 +180,25 @@ pub(crate) async fn chart_in(conn: &mut SqliteConnection, company_id: Uuid) -> R
 }
 
 /// The company's chart. A company that has none yet gets the built-in BAS
-/// selection appended first, in the caller's transaction.
+/// selection appended first, and a chart whose momsrutor aren't in its
+/// history yet gets them recorded (`VatBoxesRecorded`): with the seed, or
+/// for a chart seeded before that, at its first write since. Both in the
+/// caller's transaction.
 async fn seeded_chart(conn: &mut SqliteConnection, company_id: Uuid, actor: Uuid) -> Result<Chart> {
     let stream = accounts_stream(company_id);
-    if doris_eventstore::stream_version(conn, &stream).await? == 0 {
+    let mut version = doris_eventstore::stream_version(conn, &stream).await?;
+    if version == 0 {
         let seed = domain::seed_chart();
         append(conn, &stream, 0, std::slice::from_ref(&seed), actor).await?;
+        version = 1;
     }
-    chart_in(conn, company_id).await
+    let mut chart = chart_in(conn, company_id).await?;
+    if !chart.vat_boxes_recorded() {
+        let record = domain::record_vat_boxes(&chart);
+        append(conn, &stream, version, std::slice::from_ref(&record), actor).await?;
+        chart.apply(&record);
+    }
+    Ok(chart)
 }
 
 /// Appends events and updates projections within the caller's transaction.

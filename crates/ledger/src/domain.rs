@@ -149,6 +149,13 @@ pub enum ChartEvent {
         number: AccountNumber,
         vat_box: Option<VatBox>,
     },
+    /// Every account's box from now on, spelled out so the history reads
+    /// the same even after the built-in boxes change: an account not listed
+    /// has none. Accounts added afterwards get theirs as an
+    /// `AccountVatBoxSet`.
+    VatBoxesRecorded {
+        boxes: Vec<(AccountNumber, VatBox)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,6 +171,9 @@ pub struct Account {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Chart {
     accounts: BTreeMap<AccountNumber, Account>,
+    /// The boxes are in the history (`VatBoxesRecorded`), not read from the
+    /// built-in map.
+    vat_boxes_recorded: bool,
 }
 
 impl Chart {
@@ -191,13 +201,19 @@ impl Chart {
                 }
             }
             ChartEvent::AccountAdded { number, name } => {
+                // Once recorded, its box follows as its own event.
+                let vat_box = if self.vat_boxes_recorded {
+                    None
+                } else {
+                    default_vat_box(number.get())
+                };
                 self.accounts.insert(
                     number,
                     Account {
                         number,
                         name,
                         active: true,
-                        vat_box: default_vat_box(number.get()),
+                        vat_box,
                     },
                 );
             }
@@ -213,7 +229,20 @@ impl Chart {
                     account.vat_box = vat_box;
                 }
             }
+            ChartEvent::VatBoxesRecorded { boxes } => {
+                for account in self.accounts.values_mut() {
+                    account.vat_box = boxes
+                        .iter()
+                        .find(|(number, _)| *number == account.number)
+                        .map(|&(_, vat_box)| vat_box);
+                }
+                self.vat_boxes_recorded = true;
+            }
         }
+    }
+
+    pub fn vat_boxes_recorded(&self) -> bool {
+        self.vat_boxes_recorded
     }
 
     fn set_active(&mut self, number: AccountNumber, active: bool) {
@@ -245,6 +274,19 @@ pub fn seed_chart() -> ChartEvent {
     }
 }
 
+/// Records every account's box as it is now (see
+/// `ChartEvent::VatBoxesRecorded`).
+pub fn record_vat_boxes(chart: &Chart) -> ChartEvent {
+    ChartEvent::VatBoxesRecorded {
+        boxes: chart
+            .accounts()
+            .filter_map(|a| Some((a.number, a.vat_box?)))
+            .collect(),
+    }
+}
+
+/// Once the boxes are recorded, an account with a BAS box gets it as an
+/// `AccountVatBoxSet` of its own.
 pub fn add_account(
     chart: &Chart,
     number: AccountNumber,
@@ -253,7 +295,16 @@ pub fn add_account(
     if chart.get(number).is_some() {
         return Err(DomainError::AccountExists);
     }
-    Ok(vec![ChartEvent::AccountAdded { number, name }])
+    let mut events = vec![ChartEvent::AccountAdded { number, name }];
+    if chart.vat_boxes_recorded()
+        && let Some(vat_box) = default_vat_box(number.get())
+    {
+        events.push(ChartEvent::AccountVatBoxSet {
+            number,
+            vat_box: Some(vat_box),
+        });
+    }
+    Ok(events)
 }
 
 /// Renaming to the current name yields no events.
