@@ -267,6 +267,7 @@ pub fn NewApiToken() -> impl IntoView {
                                     <div class="grid gap-2 sm:grid-cols-2">
                                         {AREAS.iter().zip(boxes).map(|((read_label, read, write), (r, w))| {
                                             Effect::new(move |_| if w.get() { r.set(true) });
+                                            Effect::new(move |_| if !r.get() { w.set(false) });
                                             view! {
                                                 <Checkbox label=read_label.to_string() id=format!("{}-{read}", row.id) checked=r />
                                                 {match write {
