@@ -70,6 +70,8 @@ pub enum DomainError {
     DuplicateAttachment,
     #[error("no such underlag")]
     AttachmentNotFound,
+    #[error("no such box on the momsdeklaration, or not for this account")]
+    InvalidVatBox,
     /// A sum outgrew `i64`; no real ledger gets there.
     #[error("amount overflow")]
     Overflow,

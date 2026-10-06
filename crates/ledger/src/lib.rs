@@ -10,6 +10,7 @@ pub mod domain;
 mod projections;
 mod queries;
 pub mod statements;
+pub mod vat_box;
 
 use domain::{
     AccountName, AccountNumber, Attachment, Chart, ChartEvent, DomainError, Ledger, LedgerEvent,
