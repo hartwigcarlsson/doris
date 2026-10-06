@@ -229,12 +229,96 @@ async fn strangers_and_signed_out_callers_find_nothing() {
     let id = company(&server, &anna).await;
     // An invited user who is not a member of Anna's company.
     let bertil = server.invite(&anna, "bertil@example.se").await;
+    server
+        .ledger()
+        .record_voucher(authed(
+            lpb::RecordVoucherRequest {
+                company_id: id.clone(),
+                date: "2025-02-10".into(),
+                text: "Försäljning".into(),
+                lines: vec![
+                    line(1930, 125_000, 0),
+                    line(3001, 0, 100_000),
+                    line(2611, 0, 25_000),
+                ],
+                attachments: vec![],
+            },
+            &anna,
+        ))
+        .await
+        .unwrap();
     let mut api = server.vat();
+    let fingerprint = api
+        .get_vat_return(authed(r(&id, "202503"), &anna))
+        .await
+        .unwrap()
+        .into_inner()
+        .fingerprint;
+    let not_found = (Code::NotFound, "company_not_found".to_owned());
     let err = api
         .get_vat_return(authed(r(&id, "202503"), &bertil))
         .await
         .unwrap_err();
-    assert_eq!(code_of(err), (Code::NotFound, "company_not_found".into()));
+    assert_eq!(code_of(err), not_found);
+    let err = api
+        .list_vat_returns(authed(
+            pb::ListVatReturnsRequest {
+                company_id: id.clone(),
+                fiscal_year_start: "2025-01-01".into(),
+            },
+            &bertil,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(err), not_found);
+    let err = api
+        .export_vat_file(authed(r(&id, "202503"), &bertil))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(err), not_found);
+    let err = api
+        .set_vat_period(authed(
+            pb::SetVatPeriodRequest {
+                company_id: id.clone(),
+                fiscal_year_start: "2025-01-01".into(),
+                kind: pb::VatPeriodKind::Monthly as i32,
+            },
+            &bertil,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(err), not_found);
+    let err = api
+        .mark_vat_return_submitted(authed(mark(&id, "202503", &fingerprint), &bertil))
+        .await
+        .unwrap_err();
+    assert_eq!(code_of(err), not_found);
+    let vouchers = server
+        .ledger()
+        .list_vouchers(authed(
+            lpb::ListVouchersRequest {
+                company_id: id.clone(),
+                fiscal_year_start: "2025-01-01".into(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .vouchers;
+    assert_eq!(vouchers.len(), 1, "no settlement was booked");
+    let year = api
+        .list_vat_returns(authed(
+            pb::ListVatReturnsRequest {
+                company_id: id.clone(),
+                fiscal_year_start: "2025-01-01".into(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(year.kind(), pb::VatPeriodKind::Quarterly);
     let err = api
         .get_vat_return(Request::new(r(&id, "202503")))
         .await
