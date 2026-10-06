@@ -378,6 +378,10 @@ fn domain_code(err: DomainError) -> &'static str {
         DomainError::DuplicatePasskey => "duplicate_passkey",
         DomainError::UnknownPasskey => "unknown_passkey",
         DomainError::NotAdmin => "not_admin",
+        DomainError::InvalidTokenName => "invalid_token_name",
+        DomainError::InvalidTokenExpiry => "invalid_token_expiry",
+        DomainError::InvalidTokenGrants => "invalid_token_grants",
+        DomainError::NotTokenOwner => "api_token_not_found",
     }
 }
 
