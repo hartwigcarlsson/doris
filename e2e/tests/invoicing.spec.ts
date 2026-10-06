@@ -1,4 +1,4 @@
-import { addCompany, expect, register, test } from "./fixtures";
+import { addCompany, expect, goTo, register, test } from "./fixtures";
 import type { Locator } from "@playwright/test";
 
 // The Status cell: the row's buttons also say "Aktivera"/"Inaktivera".
@@ -7,7 +7,7 @@ const status = (row: Locator) => row.getByRole("cell").nth(4);
 test("customers are added, edited and deactivated", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
-  await page.getByRole("banner").getByRole("link", { name: "Kunder" }).click();
+  await goTo(page, "Kunder");
 
   await page.getByRole("button", { name: "Ny kund" }).click();
   await expect(page.getByLabel("Betalningsvillkor (dagar)")).toHaveValue("30");
@@ -39,7 +39,7 @@ test("customers are added, edited and deactivated", async ({ page, app }) => {
 test("suppliers are added with payment details, edited and deactivated", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
-  await page.getByRole("banner").getByRole("link", { name: "Leverantörer" }).click();
+  await goTo(page, "Leverantörer");
 
   await page.getByRole("button", { name: "Ny leverantör" }).click();
   await page.getByLabel("Namn", { exact: true }).fill("Lev AB");

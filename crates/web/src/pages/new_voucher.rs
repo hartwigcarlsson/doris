@@ -5,11 +5,11 @@ use crate::api::{ledger_api, lpb};
 use crate::attachments::{check_sizes, read_files, size_label};
 use crate::errors::{describe, describe_code};
 use crate::format::today;
-use crate::ui::{Button, Card, ErrorAlert, Field, FileInput, Variant};
+use crate::task::spawn_local;
+use crate::ui::{Button, ErrorAlert, Field, FileInput, PageHeader, Panel, Variant};
 use crate::voucher_lines::{LineRows, Lines};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 
 #[component]
 pub fn NewVoucher() -> impl IntoView {
@@ -120,8 +120,10 @@ pub fn NewVoucher() -> impl IntoView {
     };
 
     view! {
-        <Card title="Ny verifikation">
-            <form class="grid gap-4" data-wide novalidate on:submit=submit>
+        <div class="grid gap-6">
+        <PageHeader title="Ny verifikation" />
+        <Panel>
+            <form class="grid gap-4" novalidate on:submit=submit>
                 <ErrorAlert message=error />
                 {move || booked.get().map(|text| view! { <p role="status" class="text-xs/relaxed">{text}</p> })}
                 <div class="grid grid-cols-[10rem_1fr] gap-4">
@@ -168,10 +170,14 @@ pub fn NewVoucher() -> impl IntoView {
                     }}
                 </datalist>
                 <LineRows lines=lines list="accounts" />
+                // In its own row, so the grid does not stretch it across the card.
+                <div>
                 <Button disabled=Signal::derive(move || busy.get() || reading.get() > 0)>
                     "Bokför"
                 </Button>
+                </div>
             </form>
-        </Card>
+        </Panel>
+        </div>
     }
 }

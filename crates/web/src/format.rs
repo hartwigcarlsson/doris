@@ -96,9 +96,10 @@ pub fn today() -> String {
     )
 }
 
-/// `date` (`YYYY-MM-DD`) plus `days`, or `None` if it isn't a date. Howard
-/// Hinnant's civil-day arithmetic, so no date library goes into the wasm.
-pub fn plus_days(date: &str, days: i64) -> Option<String> {
+/// Days from 1970-01-01 to `date` (`YYYY-MM-DD`), or `None` if it isn't a
+/// date. Howard Hinnant's civil-day arithmetic, so no date library goes
+/// into the wasm.
+pub fn day_number(date: &str) -> Option<i64> {
     let mut parts = date.splitn(3, '-').map(|p| p.parse::<i64>().ok());
     let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
     if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
@@ -109,7 +110,12 @@ pub fn plus_days(date: &str, days: i64) -> Option<String> {
     let yoe = y - era * 400;
     let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let z = era * 146_097 + doe + days;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+/// `date` (`YYYY-MM-DD`) plus `days`, or `None` if it isn't a date.
+pub fn plus_days(date: &str, days: i64) -> Option<String> {
+    let z = day_number(date)? + 719_468 + days;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
@@ -119,6 +125,28 @@ pub fn plus_days(date: &str, days: i64) -> Option<String> {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
     Some(format!("{y:04}-{m:02}-{d:02}"))
+}
+
+/// A UTC timestamp (`YYYY-MM-DDTHH:MM…Z`) as local `YYYY-MM-DD HH:MM`,
+/// `offset_minutes` east of UTC. "" if it isn't one.
+pub fn local_time(utc: &str, offset_minutes: i32) -> String {
+    let parsed = (|| {
+        let (date, time) = utc.split_once('T')?;
+        if !time.ends_with('Z') || time.as_bytes().get(2) != Some(&b':') {
+            return None;
+        }
+        let hour: i64 = time.get(..2)?.parse().ok()?;
+        let minute: i64 = time.get(3..5)?.parse().ok()?;
+        if hour > 23 || minute > 59 {
+            return None;
+        }
+        // Minutes since midnight in the local zone, and the days that shifts.
+        let minutes = hour * 60 + minute + i64::from(offset_minutes);
+        let date = plus_days(date, minutes.div_euclid(1440))?;
+        let minutes = minutes.rem_euclid(1440);
+        Some(format!("{date} {:02}:{:02}", minutes / 60, minutes % 60))
+    })();
+    parsed.unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -200,5 +228,67 @@ mod tests {
             assert!(!legal_form_label(form).is_empty());
         }
         assert!(!LEGAL_FORMS.contains(&cpb::LegalForm::Unspecified));
+    }
+
+    #[test]
+    fn day_numbers_count_from_1970() {
+        assert_eq!(day_number("1970-01-01"), Some(0));
+        assert_eq!(day_number("1970-01-02"), Some(1));
+        assert_eq!(day_number("2026-10-04"), Some(20_730));
+        assert_eq!(day_number("2026-13-01"), None);
+        assert_eq!(day_number("nonsense"), None);
+        assert_eq!(day_number(""), None);
+    }
+
+    #[test]
+    fn a_utc_time_is_shown_in_the_local_zone_without_seconds() {
+        assert_eq!(
+            local_time("2026-10-02T12:12:45.123Z", 120),
+            "2026-10-02 14:12"
+        );
+        assert_eq!(local_time("2026-10-02T12:12:45Z", 0), "2026-10-02 12:12");
+        assert_eq!(
+            local_time("2026-01-15T08:05:00.000Z", 60),
+            "2026-01-15 09:05"
+        );
+    }
+
+    #[test]
+    fn local_time_rolls_over_midnight_and_new_year() {
+        assert_eq!(
+            local_time("2026-10-02T23:30:00.000Z", 120),
+            "2026-10-03 01:30"
+        );
+        assert_eq!(
+            local_time("2026-12-31T23:30:00.000Z", 60),
+            "2027-01-01 00:30"
+        );
+        assert_eq!(
+            local_time("2027-01-01T00:30:00.000Z", -300),
+            "2026-12-31 19:30"
+        );
+        assert_eq!(
+            local_time("2028-02-28T23:59:00.000Z", 60),
+            "2028-02-29 00:59"
+        );
+        assert_eq!(
+            local_time("2026-03-01T00:00:00.000Z", -1),
+            "2026-02-28 23:59"
+        );
+    }
+
+    #[test]
+    fn a_time_that_is_not_one_is_empty() {
+        for raw in [
+            "",
+            "2026-10-02",
+            "nonsense",
+            "2026-10-02T25:00:00Z",
+            "2026-10-02T12:60:00Z",
+            "2026-13-02T12:00:00Z",
+            "2026-10-02 12:12",
+        ] {
+            assert_eq!(local_time(raw, 120), "", "{raw}");
+        }
     }
 }

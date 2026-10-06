@@ -7,12 +7,12 @@ use crate::api::{payroll_api, ppb};
 use crate::errors::describe;
 use crate::format::{amount, parse_amount, today};
 use crate::pages::payroll_runs::{RunLines, status_label, tax_setting_label};
+use crate::task::spawn_local;
 use crate::ui::{
-    Button, Checkbox, ErrorAlert, Field, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL,
-    TABLE_ROW, Table, TextInput, Variant,
+    Button, Checkbox, ErrorAlert, Field, PageHeader, TABLE_BODY, TABLE_CELL, TABLE_HEAD,
+    TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, TextInput, Variant,
 };
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map};
 
@@ -307,7 +307,7 @@ pub fn PayrollRunPage() -> impl IntoView {
                 <Field label="Utbetalningsdag" id="pay_date" value=pay_date kind="date" />
                 <Field label="Text" id="payroll_run_text" value=text placeholder="Lön {månad år}" />
             </div>
-            <Table>
+            <TableCard><Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
                         <th class=TABLE_HEADER_CELL>"Anställd"</th>
@@ -334,7 +334,7 @@ pub fn PayrollRunPage() -> impl IntoView {
                         </tr>
                     </For>
                 </tbody>
-            </Table>
+            </Table></TableCard>
             <div class="flex gap-2">
                 <Button variant=Variant::Ghost kind="button" disabled=busy on:click=preview_click>"Förhandsgranska"</Button>
                 <Button variant=Variant::Ghost kind="button" disabled=busy on:click=move |_| save(false)>"Spara"</Button>
@@ -397,10 +397,8 @@ pub fn PayrollRunPage() -> impl IntoView {
     };
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <h1 class="text-sm font-medium">
-                {move || run.with(|r| r.as_ref().map_or_else(|| "Ny lönekörning".to_owned(), |r| r.text.clone()))}
-            </h1>
+        <div class="grid gap-6">
+            <PageHeader title=Signal::derive(move || run.with(|r| r.as_ref().map_or_else(|| "Ny lönekörning".to_owned(), |r| r.text.clone()))) />
             <ErrorAlert message=error />
             {move || match run.get() {
                 Some(r) if r.status() != ppb::PayrollRunStatus::Open => locked(r).into_any(),

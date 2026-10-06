@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { addCompany, expect, register, test } from "./fixtures";
+import { addCompany, expect, goTo, register, test } from "./fixtures";
 
 // Last calendar year has always ended, so it can be closed.
 const last = new Date().getFullYear() - 1;
@@ -50,7 +50,7 @@ test("underlag are added later, even in a closed year, and only as PDF, JPEG or 
   await fillVoucher(page, app, `${last}-06-01`);
   await page.getByRole("button", { name: "Bokför" }).click();
   await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   const lastYear = page.getByRole("row", { name: new RegExp(`^${lastStart}`) });
   await lastYear.getByRole("button", { name: "Stäng år" }).click();
   await lastYear.getByRole("button", { name: "Bekräfta stängning" }).click();

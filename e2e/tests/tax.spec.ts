@@ -1,4 +1,4 @@
-import { addCompany, expect, register, test } from "./fixtures";
+import { addCompany, expect, goTo, register, test } from "./fixtures";
 import type { Page } from "@playwright/test";
 
 function today(): string {
@@ -8,7 +8,7 @@ function today(): string {
 }
 
 async function addEmployee(page: Page, name: string, personnummer: string, salary: string, tax: () => Promise<void>) {
-  await page.getByRole("banner").getByRole("link", { name: "Anställda" }).click();
+  await goTo(page, "Anställda");
   await page.getByLabel("Namn").fill(name);
   await page.getByLabel("Personnummer").fill(personnummer);
   await page.getByLabel("Månadslön (kr)").fill(salary);
@@ -31,7 +31,7 @@ test("a fixed percentage computes the tax, and a typed tax is manual", async ({ 
   await addEmployee(page, "Bo Ek", "19850709-9870", "30000", percent(page, "30"));
   await expect(page.getByRole("row", { name: /^Bo Ek/ })).toContainText("30 %");
 
-  await page.getByRole("banner").getByRole("link", { name: "Lönekörningar" }).click();
+  await goTo(page, "Lönekörningar");
   await page.getByRole("link", { name: "Ny lönekörning" }).click();
   await expect(page.getByLabel("Skatt, Bo Ek")).toHaveAttribute("placeholder", "30 %");
   await page.getByLabel("Utbetalningsdag").fill(today());
@@ -50,7 +50,7 @@ test("an employee without a setting needs a typed tax", async ({ page, app }) =>
   await addCompany(page, app, "5560160680", "Exempel AB");
   await addEmployee(page, "Åsa Öberg", "19800101-1231", "35000", none(page));
 
-  await page.getByRole("banner").getByRole("link", { name: "Lönekörningar" }).click();
+  await goTo(page, "Lönekörningar");
   await page.getByRole("link", { name: "Ny lönekörning" }).click();
   await page.getByLabel("Utbetalningsdag").fill(today());
   await page.getByRole("button", { name: "Förhandsgranska" }).click();

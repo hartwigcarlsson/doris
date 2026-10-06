@@ -6,10 +6,10 @@ use crate::api::{ipb, lpb};
 use crate::attachments::{read_files, size_label};
 use crate::errors::describe_code;
 use crate::format::parse_amount;
-use crate::ui::{Button, FileInput, SELECT, SELECT_OPTION, TextInput, Variant};
+use crate::task::spawn_local;
+use crate::ui::{BadgeVariant, Button, FileInput, SELECT, SELECT_OPTION, TextInput, Variant};
 use crate::voucher_lines::account_number;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use std::collections::BTreeMap;
 
 /// Obetald, Förfallen (unpaid past its due date), Betald or Makulerad.
@@ -19,6 +19,15 @@ pub fn status_label(status: &str, due_date: &str, today: &str) -> &'static str {
         "cancelled" => "Makulerad",
         _ if due_date < today => "Förfallen",
         _ => "Obetald",
+    }
+}
+
+/// How that status is drawn: overdue stands out, settled ones recede.
+pub fn status_badge(status: &str, due_date: &str, today: &str) -> BadgeVariant {
+    match status {
+        "paid" | "cancelled" => BadgeVariant::Outline,
+        _ if due_date < today => BadgeVariant::Destructive,
+        _ => BadgeVariant::Secondary,
     }
 }
 
@@ -235,6 +244,15 @@ mod tests {
             status_label("cancelled", "2026-03-31", "2026-04-01"),
             "Makulerad"
         );
+    }
+
+    #[test]
+    fn an_overdue_invoice_gets_the_destructive_badge() {
+        let badge = |status| status_badge(status, "2026-03-31", "2026-04-01");
+        assert!(badge("unpaid") == BadgeVariant::Destructive);
+        assert!(status_badge("unpaid", "2026-03-31", "2026-03-31") == BadgeVariant::Secondary);
+        assert!(badge("paid") == BadgeVariant::Outline);
+        assert!(badge("cancelled") == BadgeVariant::Outline);
     }
 
     #[test]

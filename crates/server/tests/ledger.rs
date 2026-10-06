@@ -197,8 +197,17 @@ async fn a_member_keeps_the_chart_and_books_and_corrects_vouchers() {
             corrects: 0,
             corrected_by: 2,
             attachments: vec![],
+            recorded_at: vouchers[0].recorded_at.clone(),
+            recorded_by_name: "Anna".into(),
         }
     );
+    // RFC 3339 in UTC, and nothing of the email.
+    assert!(
+        vouchers[0].recorded_at.ends_with('Z'),
+        "{}",
+        vouchers[0].recorded_at
+    );
+    assert!(!format!("{:?}", vouchers[0]).contains('@'));
     assert_eq!(
         (vouchers[1].corrects, vouchers[1].text.as_str()),
         (1, "Rättelse av ver 1")
@@ -1194,4 +1203,54 @@ async fn the_financial_statements_refuse_bad_input_and_non_members() {
         code_of(err),
         (Code::Unauthenticated, "not_signed_in".to_owned())
     );
+}
+
+#[tokio::test]
+async fn listed_vouchers_name_whoever_recorded_them() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let bo = server.invite_as(&anna, "bo@example.se", "Bo Ek").await;
+    let id = company(&server, &anna).await;
+    server
+        .companies()
+        .add_member(authed(
+            doris_proto::company::v1::AddMemberRequest {
+                company_id: id.clone(),
+                email: "bo@example.se".into(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap();
+    let mut api = server.ledger();
+    api.record_voucher(authed(sale(&id, 100), &anna))
+        .await
+        .unwrap();
+    api.record_voucher(authed(sale(&id, 200), &bo))
+        .await
+        .unwrap();
+    api.record_voucher(authed(sale(&id, 300), &bo))
+        .await
+        .unwrap();
+
+    let vouchers = api
+        .list_vouchers(authed(
+            pb::ListVouchersRequest {
+                company_id: id,
+                fiscal_year_start: "2026-01-01".into(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .vouchers;
+
+    let names: Vec<&str> = vouchers
+        .iter()
+        .map(|v| v.recorded_by_name.as_str())
+        .collect();
+    assert_eq!(names, ["Anna", "Bo Ek", "Bo Ek"]);
+    // The name is all of the person that leaves the server.
+    assert!(!format!("{vouchers:?}").contains("example.se"));
 }

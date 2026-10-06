@@ -2,10 +2,10 @@ use crate::api::{api, pb};
 use crate::errors::describe;
 use crate::format::date;
 use crate::passkey;
-use crate::ui::{Button, Card, ErrorAlert, Field};
+use crate::task::spawn_local;
+use crate::ui::{Button, Card, ErrorAlert, Field, PageHeader};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 
 #[component]
 pub fn Passkeys() -> impl IntoView {
@@ -42,7 +42,8 @@ pub fn Passkeys() -> impl IntoView {
 
     view! {
         <div class="grid gap-6">
-            <Card title="Dina passkeys" description="Lägg till fler enheter så att du inte blir utelåst.">
+            <PageHeader title="Passkeys" />
+            <Card title="Dina passkeys" description="Lägg till fler enheter så att du inte blir utelåst." narrow=true>
                 <ul class="grid gap-2">
                     <For each=move || passkeys.get() key=|p| p.credential_id.clone() let(passkey)>
                         <li class="flex justify-between gap-2">
@@ -57,7 +58,7 @@ pub fn Passkeys() -> impl IntoView {
                     </For>
                 </ul>
             </Card>
-            <Card title="Lägg till passkey">
+            <Card title="Lägg till passkey" narrow=true>
                 <form class="grid gap-4" novalidate on:submit=submit>
                     <Field label="Passkeyns namn" id="passkey_name" placeholder="t.ex. iPhone" value=name />
                     <ErrorAlert message=error />

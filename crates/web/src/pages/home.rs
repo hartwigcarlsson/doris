@@ -1,57 +1,732 @@
+//! The overview: the active company's key figures, what needs doing, and
+//! the chosen fiscal year at a glance. Every number comes from
+//! `crate::overview`; this file loads and draws.
+
 use crate::active_company::Companies;
-use crate::api::pb;
-use crate::app::Session;
-use crate::ui::Card;
+use crate::api::{company_api, cpb, invoicing_api, ipb, ledger_api, lpb, payroll_api, ppb};
+use crate::errors::describe;
+use crate::fiscal_year::{FiscalYearSelect, keep_year_in_url};
+use crate::format::{accounting_method_label, amount, legal_form_label, today};
+use crate::overview::{
+    KeyFigures, Todo, TodoInput, axis_in_thousands, axis_label, bar_height, by_month, default_year,
+    key_figures, month_label, progress, scale, todo_list, unpaid_supplier_invoices, whole_kronor,
+};
+use crate::task::spawn_local;
+use crate::ui::{
+    Badge, BadgeVariant, Card, Icon, IconName, LinkButton, PageHeader, Panel, TABLE_AMOUNT_CELL,
+    TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, Variant,
+};
 use leptos::prelude::*;
 use leptos_router::components::A;
+use leptos_router::hooks::use_query_map;
+
+/// `None` while loading; `Err` holds the Swedish message.
+type Loaded<T> = RwSignal<Option<Result<T, String>>>;
+
+/// A card on the overview: a `Panel` with its heading.
+#[component]
+fn OverviewCard(
+    title: &'static str,
+    #[prop(optional)] class: &'static str,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <Panel class=class>
+            <div class="grid gap-3">
+                <h2 class="text-sm font-medium">{title}</h2>
+                {children()}
+            </div>
+        </Panel>
+    }
+}
+
+/// "Laddar…", the error, or `view` of what arrived.
+fn pending<T: 'static>(
+    data: impl Fn() -> Option<Result<T, String>> + 'static,
+    view: impl Fn(T) -> AnyView + 'static,
+) -> impl Fn() -> AnyView {
+    move || match data() {
+        None => view! { <p class="text-muted-foreground">"Laddar…"</p> }.into_any(),
+        Some(Err(message)) => {
+            view! { <p role="alert" class="text-destructive">{message}</p> }.into_any()
+        }
+        Some(Ok(value)) => view(value),
+    }
+}
 
 #[component]
 pub fn Home() -> impl IntoView {
-    let session = expect_context::<Session>();
     let companies = expect_context::<Companies>();
-    let user = move || session.user.get().unwrap_or_default();
-    let role = move || match user().role() {
-        pb::Role::Admin => "administratör",
-        _ => "användare",
-    };
+    view! {
+        <Show when=move || !companies.active.get().is_empty() fallback=|| view! { <NoCompany /> }>
+            <Overview />
+        </Show>
+    }
+}
+
+/// The start page before the first company exists.
+#[component]
+fn NoCompany() -> impl IntoView {
+    let companies = expect_context::<Companies>();
     view! {
         <div class="grid gap-6">
-            <Card title="Välkommen">
-                <p>
-                    "Inloggad som " <strong>{move || user().display_name}</strong> " (" {move || user().email} "), " {role} "."
-                </p>
-            </Card>
-            <Card title="Aktivt företag">
-                {move || match companies.active_company() {
-                    Some(c) => {
-                        view! {
-                            <div class="grid gap-2">
-                                <p>
-                                    <strong>{c.name.clone()}</strong>
-                                    " "
-                                    <span class="text-muted-foreground">{c.org_nr.clone()}</span>
-                                </p>
-                                <A href=format!("/companies/{}", c.id) attr:class="font-medium underline-offset-4 hover:underline">
-                                    "Visa företaget"
-                                </A>
-                            </div>
-                        }
-                            .into_any()
-                    }
-                    None if companies.loaded.get() => {
-                        view! {
-                            <div class="grid gap-2">
-                                <p class="text-muted-foreground">"Du har inga företag än."</p>
-                                <A href="/companies/new" attr:class="font-medium underline-offset-4 hover:underline">
-                                    "Lägg till företag"
-                                </A>
-                            </div>
-                        }
-                            .into_any()
-                    }
-                    None => ().into_any(),
-                }}
-            </Card>
+            <PageHeader title="Översikt" />
+            <Show when=move || companies.loaded.get()>
+                <Card title="Aktivt företag" narrow=true>
+                    <div class="grid gap-2">
+                        <p class="text-muted-foreground">"Du har inga företag än."</p>
+                        <A href="/companies/new" attr:class="font-medium underline-offset-4 hover:underline">
+                            "Lägg till företag"
+                        </A>
+                    </div>
+                </Card>
+            </Show>
         </div>
+    }
+}
+
+#[component]
+fn Overview() -> impl IntoView {
+    let companies = expect_context::<Companies>();
+    let preferred = use_query_map()
+        .read_untracked()
+        .get("fy")
+        .unwrap_or_default();
+
+    let company: Loaded<cpb::Company> = RwSignal::new(None);
+    let years: Loaded<Vec<lpb::FiscalYear>> = RwSignal::new(None);
+    // The same years for the select, which wants a plain list.
+    let year_list = RwSignal::new(Vec::<lpb::FiscalYear>::new());
+    let year = RwSignal::new(String::new());
+    let balance: Loaded<Vec<lpb::TrialBalanceRow>> = RwSignal::new(None);
+    let vouchers: Loaded<Vec<lpb::Voucher>> = RwSignal::new(None);
+    // What "Att göra" reads; none of it depends on the year.
+    let supplier_invoices: Loaded<Vec<ipb::SupplierInvoice>> = RwSignal::new(None);
+    let customer_invoices: Loaded<Vec<ipb::CustomerInvoice>> = RwSignal::new(None);
+    let payroll_runs: Loaded<Vec<ppb::PayrollRun>> = RwSignal::new(None);
+    let agi_months: Loaded<Vec<ppb::AgiMonthSummary>> = RwSignal::new(None);
+    keep_year_in_url("/".into(), year);
+
+    // Per company. Every call is its own task, so a slow one holds nothing
+    // back. An answer for a company that is no longer the active one is
+    // stale and dropped; the signals of a page that is gone are disposed,
+    // and setting those does nothing.
+    Effect::new(move |_| {
+        let company_id = companies.active.get();
+        // Never leave the previous company's figures on screen.
+        company.set(None);
+        years.set(None);
+        year_list.set(Vec::new());
+        year.set(String::new());
+        balance.set(None);
+        vouchers.set(None);
+        supplier_invoices.set(None);
+        customer_invoices.set(None);
+        payroll_runs.set(None);
+        agi_months.set(None);
+        if company_id.is_empty() {
+            return;
+        }
+        let stale = {
+            let company_id = company_id.clone();
+            move || company_id != companies.active.get_untracked()
+        };
+        spawn_local({
+            let (company_id, stale) = (company_id.clone(), stale.clone());
+            async move {
+                let found = company_api()
+                    .get_company(cpb::GetCompanyRequest { company_id })
+                    .await;
+                if !stale() {
+                    company.set(Some(
+                        found.map(|r| r.into_inner()).map_err(|s| describe(&s)),
+                    ));
+                }
+            }
+        });
+        spawn_local({
+            let (company_id, stale, preferred) =
+                (company_id.clone(), stale.clone(), preferred.clone());
+            async move {
+                let listed = ledger_api()
+                    .list_fiscal_years(lpb::ListFiscalYearsRequest { company_id })
+                    .await;
+                if stale() {
+                    return;
+                }
+                match listed {
+                    Ok(response) => {
+                        let list = response.into_inner().fiscal_years;
+                        year_list.set(list.clone());
+                        year.set(default_year(&list, &preferred, &today()));
+                        years.set(Some(Ok(list)));
+                    }
+                    Err(status) => {
+                        // Without a year nothing is asked for it: the cards
+                        // that need one show why instead of loading forever.
+                        let message = describe(&status);
+                        balance.set(Some(Err(message.clone())));
+                        vouchers.set(Some(Err(message.clone())));
+                        years.set(Some(Err(message)));
+                    }
+                }
+            }
+        });
+        spawn_local({
+            let (company_id, stale) = (company_id.clone(), stale.clone());
+            async move {
+                let listed = invoicing_api()
+                    .list_supplier_invoices(ipb::ListSupplierInvoicesRequest { company_id })
+                    .await;
+                if !stale() {
+                    supplier_invoices.set(Some(
+                        listed
+                            .map(|r| r.into_inner().invoices)
+                            .map_err(|s| describe(&s)),
+                    ));
+                }
+            }
+        });
+        spawn_local({
+            let (company_id, stale) = (company_id.clone(), stale.clone());
+            async move {
+                let listed = invoicing_api()
+                    .list_customer_invoices(ipb::ListCustomerInvoicesRequest { company_id })
+                    .await;
+                if !stale() {
+                    customer_invoices.set(Some(
+                        listed
+                            .map(|r| r.into_inner().invoices)
+                            .map_err(|s| describe(&s)),
+                    ));
+                }
+            }
+        });
+        spawn_local({
+            let (company_id, stale) = (company_id.clone(), stale.clone());
+            async move {
+                let listed = payroll_api()
+                    .list_payroll_runs(ppb::ListPayrollRunsRequest { company_id })
+                    .await;
+                if !stale() {
+                    payroll_runs.set(Some(
+                        listed
+                            .map(|r| r.into_inner().payroll_runs)
+                            .map_err(|s| describe(&s)),
+                    ));
+                }
+            }
+        });
+        spawn_local(async move {
+            let listed = payroll_api()
+                .list_agi_months(ppb::ListAgiMonthsRequest { company_id })
+                .await;
+            if !stale() {
+                agi_months.set(Some(
+                    listed
+                        .map(|r| r.into_inner().months)
+                        .map_err(|s| describe(&s)),
+                ));
+            }
+        });
+    });
+
+    // Per year: the trial balance and the vouchers.
+    Effect::new(move |_| {
+        let start = year.get();
+        let company_id = companies.active.get_untracked();
+        if start.is_empty() || company_id.is_empty() {
+            return;
+        }
+        balance.set(None);
+        vouchers.set(None);
+        // Stale once the company or the year has changed. `try_`: the page
+        // may be gone by the time the answer comes, and its signals with it.
+        let stale = {
+            let (company_id, start) = (company_id.clone(), start.clone());
+            move || {
+                company_id != companies.active.get_untracked()
+                    || year.try_get_untracked().as_deref() != Some(start.as_str())
+            }
+        };
+        spawn_local({
+            let (company_id, start, stale) = (company_id.clone(), start.clone(), stale.clone());
+            async move {
+                let rows = ledger_api()
+                    .get_trial_balance(lpb::GetTrialBalanceRequest {
+                        company_id,
+                        fiscal_year_start: start,
+                    })
+                    .await;
+                if !stale() {
+                    balance.set(Some(
+                        rows.map(|r| r.into_inner().rows).map_err(|s| describe(&s)),
+                    ));
+                }
+            }
+        });
+        spawn_local(async move {
+            let listed = ledger_api()
+                .list_vouchers(lpb::ListVouchersRequest {
+                    company_id,
+                    fiscal_year_start: start,
+                })
+                .await;
+            if !stale() {
+                vouchers.set(Some(
+                    listed
+                        .map(|r| r.into_inner().vouchers)
+                        .map_err(|s| describe(&s)),
+                ));
+            }
+        });
+    });
+
+    // The name is known from the header's list before GetCompany answers.
+    let title = Signal::derive(move || match company.get() {
+        Some(Ok(c)) => c.name,
+        _ => companies
+            .active_company()
+            .map(|c| c.name)
+            .unwrap_or_default(),
+    });
+    let description = Signal::derive(move || match company.get() {
+        Some(Ok(c)) => format!(
+            "{} · {} · {}",
+            c.org_nr,
+            legal_form_label(c.legal_form()),
+            accounting_method_label(c.accounting_method())
+        ),
+        _ => String::new(),
+    });
+    let chosen = Signal::derive(move || {
+        year_list.with(|ys| ys.iter().find(|y| y.start == year.get()).cloned())
+    });
+
+    // "Att göra" needs all four lists: loading until the last one is in,
+    // and the first error if any call failed.
+    let todos = Signal::derive(move || {
+        let (s, c, r, m) = (
+            supplier_invoices.get()?,
+            customer_invoices.get()?,
+            payroll_runs.get()?,
+            agi_months.get()?,
+        );
+        Some((|| {
+            let (s, c, r, m) = (s?, c?, r?, m?);
+            Ok::<_, String>(todo_list(
+                &TodoInput {
+                    supplier_invoices: &s,
+                    customer_invoices: &c,
+                    payroll_runs: &r,
+                    agi_months: &m,
+                },
+                &today(),
+            ))
+        })())
+    });
+
+    view! {
+        <div class="grid gap-6">
+            <PageHeader title=title description=description>
+                <FiscalYearSelect years=year_list year=year />
+                <LinkButton href="/payroll-runs/new" variant=Variant::Outline>"Ny lönekörning"</LinkButton>
+                <LinkButton href="/supplier-invoices/new" variant=Variant::Outline>"Ny leverantörsfaktura"</LinkButton>
+                <LinkButton href="/customer-invoices/new" variant=Variant::Outline>"Ny kundfaktura"</LinkButton>
+                <LinkButton href="/vouchers/new" icon=IconName::Plus>"Ny verifikation"</LinkButton>
+            </PageHeader>
+            {move || match company.get() {
+                Some(Err(message)) => Some(view! { <p role="alert" class="text-destructive">{message}</p> }),
+                _ => None,
+            }}
+            <div class="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-4">
+                <KeyFigure
+                    title="Resultat hittills i år"
+                    note="Konto 3000–8989"
+                    balance=balance
+                    pick=|f| f.result
+                    also=|f| (f.other != 0).then(|| format!("varav finansiella poster m.m. {}", whole_kronor(f.other)))
+                />
+                <KeyFigure title="Rörelseintäkter" note="Konto 3000–3999" balance=balance pick=|f| f.income />
+                <KeyFigure title="Rörelsekostnader" note="Konto 4000–7999" balance=balance pick=|f| f.costs />
+                <KeyFigure title="Kassa och bank" note="Konto 1900–1999" balance=balance pick=|f| f.cash />
+            </div>
+            <div class="flex flex-wrap gap-4">
+                <TodoCard todos=todos />
+                <FiscalYearCard years=years chosen=chosen vouchers=vouchers />
+            </div>
+            <div class="flex flex-wrap gap-4">
+                <MonthChart chosen=chosen vouchers=vouchers />
+                <UnpaidCard invoices=supplier_invoices />
+            </div>
+            <LatestVouchers vouchers=vouchers />
+        </div>
+    }
+}
+
+/// One headline number from the trial balance.
+#[component]
+fn KeyFigure(
+    title: &'static str,
+    note: &'static str,
+    balance: Loaded<Vec<lpb::TrialBalanceRow>>,
+    pick: fn(KeyFigures) -> i64,
+    /// A line under the number, when there is something to add to it.
+    #[prop(optional)]
+    also: Option<fn(KeyFigures) -> Option<String>>,
+) -> impl IntoView {
+    view! {
+        <Panel>
+            <div class="grid gap-1">
+                <h2 class="text-xs/relaxed font-normal text-muted-foreground">{title}</h2>
+                {pending(
+                    move || balance.get(),
+                    move |rows| {
+                        let figures = key_figures(&rows);
+                        view! {
+                            <p class="text-2xl/8 font-semibold tracking-tight tabular-nums">
+                                {whole_kronor(pick(figures))}
+                            </p>
+                            {also.and_then(|line| line(figures)).map(|line| view! { <p>{line}</p> })}
+                        }
+                            .into_any()
+                    },
+                )}
+                <p class="text-muted-foreground">{note}</p>
+            </div>
+        </Panel>
+    }
+}
+
+/// The chosen year: open or closed, how far in, and what is booked.
+#[component]
+fn FiscalYearCard(
+    years: Loaded<Vec<lpb::FiscalYear>>,
+    chosen: Signal<Option<lpb::FiscalYear>>,
+    vouchers: Loaded<Vec<lpb::Voucher>>,
+) -> impl IntoView {
+    const ROW: &str = "flex justify-between gap-3 border-t py-2";
+    view! {
+        <OverviewCard title="Räkenskapsåret" class="min-w-0 flex-[1_1_280px]">
+            {pending(
+                move || years.get(),
+                move |list| {
+                    let Some(fiscal_year) = chosen.get() else {
+                        return view! { <p class="text-muted-foreground">"Inget räkenskapsår."</p> }
+                            .into_any();
+                    };
+                    let progress = progress(&fiscal_year.start, &fiscal_year.end, &today());
+                    // Years are newest first: the one before is listed next.
+                    let previous = list
+                        .iter()
+                        .position(|y| y.start == fiscal_year.start)
+                        .and_then(|i| list.get(i + 1))
+                        .cloned();
+                    view! {
+                        <div>
+                            {if fiscal_year.closed {
+                                view! { <Badge variant=BadgeVariant::Outline>"Stängt"</Badge> }.into_any()
+                            } else {
+                                view! { <Badge>"Öppet"</Badge> }.into_any()
+                            }}
+                        </div>
+                        {progress
+                            .map(|p| {
+                                let left = if p.left == 1 {
+                                    "1 dag kvar".to_owned()
+                                } else {
+                                    format!("{} dagar kvar", p.left)
+                                };
+                                view! {
+                                    <div class="grid gap-2">
+                                        <div
+                                            role="progressbar"
+                                            aria-label="Andel av året som har gått"
+                                            aria-valuemin="0"
+                                            aria-valuemax="100"
+                                            aria-valuenow=p.percent.to_string()
+                                            class="h-1.5 overflow-hidden rounded-full bg-muted"
+                                        >
+                                            <div class="h-full bg-chart-1" style=format!("width: {}%", p.percent)></div>
+                                        </div>
+                                        <div class="flex justify-between gap-2 text-muted-foreground">
+                                            <span>{format!("Dag {} av {}", p.day, p.days)}</span>
+                                            <span>{left}</span>
+                                        </div>
+                                    </div>
+                                }
+                            })}
+                        <dl>
+                            <div class=ROW>
+                                <dt class="text-muted-foreground">"Period"</dt>
+                                <dd class="tabular-nums">{format!("{} – {}", fiscal_year.start, fiscal_year.end)}</dd>
+                            </div>
+                            {move || match vouchers.get() {
+                                Some(Ok(list)) => {
+                                    let latest = list.iter().map(|v| v.date.clone()).max();
+                                    view! {
+                                        <div class=ROW>
+                                            <dt class="text-muted-foreground">"Verifikationer"</dt>
+                                            <dd class="tabular-nums">{list.len()}</dd>
+                                        </div>
+                                        <div class=ROW>
+                                            <dt class="text-muted-foreground">"Senast bokfört"</dt>
+                                            <dd class="tabular-nums">{latest.unwrap_or_else(|| "–".into())}</dd>
+                                        </div>
+                                    }
+                                        .into_any()
+                                }
+                                _ => ().into_any(),
+                            }}
+                            {previous
+                                .map(|p| {
+                                    view! {
+                                        <div class=ROW>
+                                            <dt class="text-muted-foreground">
+                                                {format!("Föregående år, {}", p.start.get(..4).unwrap_or_default())}
+                                            </dt>
+                                            <dd>{if p.closed { "Stängt" } else { "Öppet" }}</dd>
+                                        </div>
+                                    }
+                                })}
+                        </dl>
+                        <A href="/fiscal-years" attr:class="font-medium underline-offset-4 hover:underline">
+                            "Visa räkenskapsår"
+                        </A>
+                    }
+                        .into_any()
+                },
+            )}
+        </OverviewCard>
+    }
+}
+
+/// What needs doing, most pressing first.
+#[component]
+fn TodoCard(todos: Signal<Option<Result<Vec<Todo>, String>>>) -> impl IntoView {
+    view! {
+        <Panel class="min-w-0 flex-[2_1_480px] px-0 pb-1">
+            <div class="grid gap-3">
+                <div class="flex items-center gap-2 px-4">
+                    <h2 class="text-sm font-medium">"Att göra"</h2>
+                    {move || todos.get().and_then(Result::ok).filter(|l| !l.is_empty()).map(|l| view! { <Badge>{l.len()}</Badge> })}
+                </div>
+                {pending(move || todos.get(), |list: Vec<Todo>| {
+                    if list.is_empty() {
+                        return view! { <p class="px-4 pb-3 text-muted-foreground">"Inget att göra just nu."</p> }.into_any();
+                    }
+                    view! {
+                        <ul>
+                            {list
+                                .into_iter()
+                                .map(|item| {
+                                    let (round, icon) = if item.urgent {
+                                        ("bg-destructive/10 text-destructive dark:bg-destructive/20", IconName::CircleAlert)
+                                    } else {
+                                        ("bg-muted", IconName::Clock)
+                                    };
+                                    view! {
+                                        <li class="flex flex-wrap items-center gap-3 border-t px-4 py-3">
+                                            <span class=format!("flex size-7 shrink-0 items-center justify-center rounded-full {round}")>
+                                                <Icon name=icon />
+                                            </span>
+                                            <div class="min-w-0 flex-[1_1_240px]">
+                                                <p class="font-medium">{item.title}</p>
+                                                <p class="text-muted-foreground">{item.detail}</p>
+                                            </div>
+                                            <LinkButton href=item.href variant=Variant::Outline>{item.action}</LinkButton>
+                                        </li>
+                                    }
+                                })
+                                .collect_view()}
+                        </ul>
+                    }
+                        .into_any()
+                })}
+            </div>
+        </Panel>
+    }
+}
+
+/// The unpaid supplier invoices: how many, how much, and the next four.
+#[component]
+fn UnpaidCard(invoices: Loaded<Vec<ipb::SupplierInvoice>>) -> impl IntoView {
+    view! {
+        <OverviewCard title="Obetalda leverantörsfakturor" class="min-w-0 flex-[1_1_280px]">
+            {pending(move || invoices.get(), |list: Vec<ipb::SupplierInvoice>| {
+                let unpaid = unpaid_supplier_invoices(&list);
+                if unpaid.is_empty() {
+                    return view! { <p class="text-muted-foreground">"Inga obetalda leverantörsfakturor."</p> }.into_any();
+                }
+                let today = today();
+                let total: i64 = unpaid.iter().map(|i| i.total).sum();
+                let summary = format!(
+                    "{} {}, {} kr",
+                    unpaid.len(),
+                    if unpaid.len() == 1 { "faktura" } else { "fakturor" },
+                    amount(total)
+                );
+                view! {
+                    <p class="text-muted-foreground">{summary}</p>
+                    <ul>
+                        {unpaid
+                            .into_iter()
+                            .take(4)
+                            .map(|invoice| {
+                                let late = invoice.due_date < today;
+                                view! {
+                                    <li class="flex items-center justify-between gap-3 border-t py-2">
+                                        <div class="min-w-0">
+                                            <p class="truncate font-medium">{invoice.supplier_name.clone()}</p>
+                                            <p class="flex items-center gap-1.5 text-muted-foreground">
+                                                {format!("{} {}", if late { "Förföll" } else { "Förfaller" }, invoice.due_date)}
+                                                {late.then(|| view! { <Badge variant=BadgeVariant::Destructive>"Förfallen"</Badge> })}
+                                            </p>
+                                        </div>
+                                        <p class="whitespace-nowrap tabular-nums">{amount(invoice.total)}</p>
+                                    </li>
+                                }
+                            })
+                            .collect_view()}
+                    </ul>
+                    <A href="/supplier-invoices" attr:class="font-medium underline-offset-4 hover:underline">"Alla leverantörsfakturor"</A>
+                }
+                    .into_any()
+            })}
+        </OverviewCard>
+    }
+}
+
+/// The five vouchers with the highest numbers.
+#[component]
+fn LatestVouchers(vouchers: Loaded<Vec<lpb::Voucher>>) -> impl IntoView {
+    view! {
+        <OverviewCard title="Senaste verifikationer">
+            {pending(move || vouchers.get(), |mut list: Vec<lpb::Voucher>| {
+                if list.is_empty() {
+                    return view! { <p class="text-muted-foreground">"Inga verifikationer än."</p> }.into_any();
+                }
+                list.sort_by_key(|v| std::cmp::Reverse(v.number));
+                view! {
+                    <Table>
+                        <thead class=TABLE_HEAD>
+                            <tr class=TABLE_ROW>
+                                <th class=TABLE_HEADER_CELL>"Nr"</th>
+                                <th class=TABLE_HEADER_CELL>"Datum"</th>
+                                <th class=TABLE_HEADER_CELL>"Text"</th>
+                                <th class=format!("{TABLE_HEADER_CELL} text-right")>"Belopp"</th>
+                            </tr>
+                        </thead>
+                        <tbody class=TABLE_BODY>
+                            {list
+                                .into_iter()
+                                .take(5)
+                                .map(|v| {
+                                    let total: i64 = v.lines.iter().map(|l| l.debit).sum();
+                                    view! {
+                                        <tr class=TABLE_ROW>
+                                            <td class=format!("{TABLE_CELL} tabular-nums")>{v.number}</td>
+                                            <td class=format!("{TABLE_CELL} tabular-nums")>{v.date}</td>
+                                            <td class=TABLE_CELL>{v.text}</td>
+                                            <td class=TABLE_AMOUNT_CELL>{amount(total)}</td>
+                                        </tr>
+                                    }
+                                })
+                                .collect_view()}
+                        </tbody>
+                    </Table>
+                    <A href="/vouchers" attr:class="font-medium underline-offset-4 hover:underline">"Alla verifikationer"</A>
+                }
+                    .into_any()
+            })}
+        </OverviewCard>
+    }
+}
+
+/// The chart's plot height in pixels.
+const PLOT: u32 = 160;
+
+/// Income and costs per month, as two bars a month.
+#[component]
+fn MonthChart(
+    chosen: Signal<Option<lpb::FiscalYear>>,
+    vouchers: Loaded<Vec<lpb::Voucher>>,
+) -> impl IntoView {
+    // The axis counts thousands of kronor, or kronor while the largest
+    // month is under 2 000 kr and the half-way line would read "0".
+    let top = Signal::derive(move || match (chosen.get(), vouchers.get()) {
+        (Some(y), Some(Ok(list))) => scale(&by_month(&y.start, &y.end, &list)),
+        _ => 0,
+    });
+    let thousands = move || axis_in_thousands(top.get());
+    view! {
+        <Panel class="min-w-0 flex-[2_1_480px]">
+            <div class="grid gap-3">
+                <div class="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <h2 class="text-sm font-medium">"Intäkter och kostnader per månad"</h2>
+                        <p class="text-muted-foreground">{move || if thousands() { "Rörelsen, tusental kronor" } else { "Rörelsen, kronor" }}</p>
+                    </div>
+                    <ul class="flex gap-4">
+                        <li class="flex items-center gap-1.5"><span data-legend class="size-2 rounded-xs bg-chart-1"></span>"Intäkter"</li>
+                        <li class="flex items-center gap-1.5"><span data-legend class="size-2 rounded-xs bg-chart-2"></span>"Kostnader"</li>
+                    </ul>
+                </div>
+                {pending(move || vouchers.get(), move |list: Vec<lpb::Voucher>| {
+                    let Some(fiscal_year) = chosen.get() else {
+                        return ().into_any();
+                    };
+                    let months = by_month(&fiscal_year.start, &fiscal_year.end, &list);
+                    let top = scale(&months);
+                    let this_month = today().get(..7).unwrap_or_default().to_owned();
+                    // Gridlines at half and full scale.
+                    let label = move |ore: i64| axis_label(ore, top);
+                    let columns = format!("grid-template-columns: repeat({}, minmax(0, 1fr))", months.len().max(1));
+                    view! {
+                        <figure
+                            role="img"
+                            aria-label=format!("Intäkter och kostnader per månad, {} – {}", fiscal_year.start, fiscal_year.end)
+                            class="grid gap-1.5"
+                        >
+                            <div class="flex gap-2">
+                                <div class="relative w-10 text-right text-muted-foreground tabular-nums" style=format!("height: {PLOT}px")>
+                                    <span class="absolute right-0 bottom-0 translate-y-1/2 leading-none">"0"</span>
+                                    {(top > 0).then(|| view! {
+                                        <span class="absolute right-0 bottom-1/2 translate-y-1/2 leading-none">{label(top / 2)}</span>
+                                        <span class="absolute top-0 right-0 -translate-y-1/2 leading-none">{label(top)}</span>
+                                    })}
+                                </div>
+                                <div class="relative min-w-0 flex-1 border-b" style=format!("height: {PLOT}px")>
+                                    <div class="absolute inset-x-0 top-0 border-t"></div>
+                                    <div class="absolute inset-x-0 top-1/2 border-t"></div>
+                                    <div class="absolute inset-0 grid items-end" style=columns.clone()>
+                                        {months
+                                            .iter()
+                                            .map(|m| view! {
+                                                <div data-month=m.month.clone() class="flex items-end justify-center gap-0.5">
+                                                    <div class="w-3 max-w-[40%] rounded-t-sm bg-chart-1" style=format!("height: {}px", bar_height(m.income, top, PLOT))></div>
+                                                    <div class="w-3 max-w-[40%] rounded-t-sm bg-chart-2" style=format!("height: {}px", bar_height(m.costs, top, PLOT))></div>
+                                                </div>
+                                            })
+                                            .collect_view()}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ml-12 grid text-center text-muted-foreground" style=columns>
+                                {months
+                                    .iter()
+                                    .map(|m| {
+                                        let current = m.month == this_month;
+                                        view! { <span class=if current { "font-medium text-foreground" } else { "" }>{month_label(&m.month)}</span> }
+                                    })
+                                    .collect_view()}
+                            </div>
+                        </figure>
+                        <A href="/financial-statements" attr:class="font-medium underline-offset-4 hover:underline">"Visa resultaträkningen"</A>
+                    }
+                        .into_any()
+                })}
+            </div>
+        </Panel>
     }
 }

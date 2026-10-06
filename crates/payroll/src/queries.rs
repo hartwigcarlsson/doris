@@ -109,24 +109,13 @@ pub async fn list_payroll_runs(
     let company = company_id.to_string();
     // ponytail: every run of the company in one list; filter by year or
     // page when a company has several years of runs.
-    type Head = (
-        String,
-        String,
-        String,
-        bool,
-        Option<String>,
-        Option<u32>,
-        bool,
-    );
-    // One read transaction: heads and lines from the same snapshot (WAL).
+    type Head = (String, String, String, bool, Option<String>, Option<u32>);
+    // One read transaction: heads, lines and the ledger's corrections from
+    // the same snapshot (WAL).
     let mut tx = pool.begin().await?;
     let heads: Vec<Head> = sqlx::query_as(
         "SELECT r.payroll_run_id, r.pay_date, r.text, r.finalized,
-                b.fiscal_year_start, b.voucher_number,
-                EXISTS (SELECT 1 FROM vouchers v
-                        WHERE v.company_id = b.company_id
-                          AND v.fiscal_year_start = b.fiscal_year_start
-                          AND v.corrects = b.voucher_number)
+                b.fiscal_year_start, b.voucher_number
          FROM payroll_runs r
          LEFT JOIN payroll_run_bookings b ON b.rowid = (
              SELECT MAX(x.rowid) FROM payroll_run_bookings x
@@ -160,6 +149,8 @@ pub async fn list_payroll_runs(
     .bind(&company)
     .fetch_all(&mut *tx)
     .await?;
+    // Which bookings a rättelse has backed out is the ledger's to say.
+    let reversed = doris_ledger::corrected_vouchers_in(&mut tx, company_id).await?;
     tx.commit().await?;
 
     let mut lines = HashMap::<String, Vec<PayrollRunLineView>>::new();
@@ -193,14 +184,19 @@ pub async fn list_payroll_runs(
     }
     Ok(heads
         .into_iter()
-        .map(|(id, pay_date, text, finalized, start, number, reversed)| {
-            let status = match (start, number) {
-                (Some(start), Some(number)) if !reversed => {
-                    PayrollRunStatus::Booked(BookedVoucher {
-                        fiscal_year_start: start.parse().expect("stored dates parse"),
-                        number,
-                    })
-                }
+        .map(|(id, pay_date, text, finalized, start, number)| {
+            let booked = start.zip(number).map(|(start, number)| BookedVoucher {
+                fiscal_year_start: start.parse().expect("stored dates parse"),
+                number,
+            });
+            let backed_out = |b: &BookedVoucher| {
+                reversed.contains(&doris_ledger::VoucherRef {
+                    fiscal_year_start: b.fiscal_year_start,
+                    number: b.number,
+                })
+            };
+            let status = match booked {
+                Some(booked) if !backed_out(&booked) => PayrollRunStatus::Booked(booked),
                 _ if finalized => PayrollRunStatus::Finalized,
                 _ => PayrollRunStatus::Open,
             };

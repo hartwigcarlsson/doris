@@ -2,7 +2,7 @@
 
 use crate::domain::{
     Account, AccountLedger, AccountName, AccountNumber, Attachment, AttachmentName, Chart,
-    ContentType, DomainError, FiscalYearStatus, TrialBalanceRow, Voucher, VoucherLine,
+    ContentType, DomainError, FiscalYearStatus, Recorded, TrialBalanceRow, Voucher, VoucherLine,
     running_balance,
 };
 use crate::statements::{FinancialStatements, build};
@@ -82,11 +82,20 @@ pub async fn list_vouchers(
 ) -> Result<Vec<Voucher>> {
     doris_company::get_company(pool, company_id, user_id).await?;
     let (company_id, fiscal_year_start) = (company_id.to_string(), fiscal_year_start.to_string());
-    type Head = (u32, String, String, Option<u32>, Option<u32>);
+    type Head = (
+        u32,
+        String,
+        String,
+        Option<u32>,
+        Option<u32>,
+        String,
+        String,
+    );
     // One read transaction: heads and lines from the same snapshot (WAL).
     let mut tx = pool.begin().await?;
     let heads: Vec<Head> = sqlx::query_as(
-        "SELECT number, date, text, corrects, corrected_by FROM vouchers
+        "SELECT number, date, text, corrects, corrected_by, recorded_at, recorded_by
+         FROM vouchers
          WHERE company_id = ? AND fiscal_year_start = ? ORDER BY number",
     )
     .bind(&company_id)
@@ -112,15 +121,22 @@ pub async fn list_vouchers(
     tx.commit().await?;
     let mut vouchers: Vec<Voucher> = heads
         .into_iter()
-        .map(|(number, date, text, corrects, corrected_by)| Voucher {
-            number,
-            date: date.parse().expect("projected dates are valid"),
-            text,
-            lines: Vec::new(),
-            corrects,
-            corrected_by,
-            attachments: Vec::new(),
-        })
+        .map(
+            |(number, date, text, corrects, corrected_by, at, by)| Voucher {
+                number,
+                date: date.parse().expect("projected dates are valid"),
+                text,
+                lines: Vec::new(),
+                corrects,
+                corrected_by,
+                attachments: Vec::new(),
+                // An event without an actor leaves the column empty.
+                recorded: Some(Recorded {
+                    at,
+                    by: by.parse().ok(),
+                }),
+            },
+        )
         .collect();
     attach_lines(&mut vouchers, lines);
     for (number, sha256, file_name, content_type, size) in attachments {
@@ -159,6 +175,43 @@ pub async fn get_attachment(
         projected_attachment(sha256.to_owned(), &file_name, &content_type, size),
         data,
     ))
+}
+
+/// The bytes stored under `sha256`. The hash alone grants nothing: the
+/// caller must first have found it on a record of the company it is
+/// answering for (an invoice's underlag, say), as [`get_attachment`] does
+/// for a voucher's.
+pub async fn attachment_data(pool: &SqlitePool, sha256: &str) -> Result<Vec<u8>> {
+    let data: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT data FROM attachment_files WHERE sha256 = ?")
+            .bind(sha256)
+            .fetch_optional(pool)
+            .await?;
+    Ok(data.ok_or(DomainError::AttachmentNotFound)?)
+}
+
+/// The company's vouchers that a rättelse points at, in every fiscal year.
+/// A rättelse is always in its original's year. For modules that book
+/// vouchers of their own and need to know which have been backed out; read
+/// in the caller's transaction, so it agrees with what the caller reads.
+pub async fn corrected_vouchers_in(
+    conn: &mut sqlx::SqliteConnection,
+    company_id: Uuid,
+) -> Result<std::collections::HashSet<crate::VoucherRef>> {
+    let rows: Vec<(String, u32)> = sqlx::query_as(
+        "SELECT fiscal_year_start, corrects FROM vouchers
+         WHERE company_id = ? AND corrects IS NOT NULL",
+    )
+    .bind(company_id.to_string())
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(start, number)| crate::VoucherRef {
+            fiscal_year_start: start.parse().expect("projected dates are valid"),
+            number,
+        })
+        .collect())
 }
 
 /// The saldobalans for one fiscal year, by account number: every account
@@ -393,6 +446,7 @@ mod tests {
             corrects: None,
             corrected_by: None,
             attachments: Vec::new(),
+            recorded: None,
         }];
         // Voucher 2 was committed after the heads were read.
         attach_lines(

@@ -3,13 +3,13 @@
 use crate::active_company::Companies;
 use crate::api::{invoicing_api, ipb};
 use crate::errors::describe;
+use crate::task::spawn_local;
 use crate::ui::{
-    Button, Card, ErrorAlert, Field, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL,
-    TABLE_ROW, Table, Variant,
+    Badge, BadgeVariant, Button, Card, ErrorAlert, Field, Icon, IconName, PageHeader, TABLE_BODY,
+    TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard, Variant,
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 
 /// The form's fields, one signal each.
 #[derive(Clone, Copy)]
@@ -167,9 +167,8 @@ pub fn Suppliers() -> impl IntoView {
     };
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <div class="flex items-center justify-between">
-                <h1 class="text-sm font-medium">"Leverantörer"</h1>
+        <div class="grid gap-6">
+            <PageHeader title="Leverantörer">
                 <Button
                     kind="button"
                     on:click=move |_| {
@@ -178,9 +177,10 @@ pub fn Suppliers() -> impl IntoView {
                         open.set(Some(None));
                     }
                 >
+                    <Icon name=IconName::Plus />
                     "Ny leverantör"
                 </Button>
-            </div>
+            </PageHeader>
             <ErrorAlert message=error />
             <Show when=move || open.get().is_some()>
                 <Card title="Leverantörsuppgifter">
@@ -205,7 +205,7 @@ pub fn Suppliers() -> impl IntoView {
                     </form>
                 </Card>
             </Show>
-            <Table>
+            <TableCard><Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
                         <th class=TABLE_HEADER_CELL>"Nr"</th>
@@ -228,7 +228,7 @@ pub fn Suppliers() -> impl IntoView {
                         <SupplierRow company_id=company_id supplier=supplier edit=edit changed=changed error=error />
                     </For>
                 </tbody>
-            </Table>
+            </Table></TableCard>
         </div>
     }
 }
@@ -268,7 +268,13 @@ fn SupplierRow(
             <td class=TABLE_CELL>{details.name}</td>
             <td class=TABLE_CELL>{details.org_nr}</td>
             <td class=TABLE_CELL>{details.bankgiro}</td>
-            <td class=TABLE_CELL>{if active { "Aktiv" } else { "Inaktiv" }}</td>
+            <td class=TABLE_CELL>
+                {if active {
+                    view! { <Badge>"Aktiv"</Badge> }.into_any()
+                } else {
+                    view! { <Badge variant=BadgeVariant::Outline>"Inaktiv"</Badge> }.into_any()
+                }}
+            </td>
             <td class=format!("{TABLE_CELL} text-right")>
                 <Button variant=Variant::Ghost kind="button" on:click=move |_| edit.run(supplier.get_value())>
                     "Redigera"

@@ -5,13 +5,15 @@ use crate::api::{ledger_api, lpb};
 use crate::attachments::{open_in, read_files, size_label};
 use crate::errors::{describe, describe_code};
 use crate::fiscal_year::is_closed;
-use crate::format::{amount, today};
+use crate::format::{amount, local_time, today};
+use crate::task::spawn_local;
 use crate::ui::{
-    Button, ErrorAlert, FileInput, PaperclipIcon, SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL,
-    TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TextInput, Variant,
+    Badge, Button, Checkbox, ErrorAlert, FileInput, INPUT, Icon, IconName, LinkButton, PageHeader,
+    SELECT_OPTION, Select, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table,
+    TableCard, TextInput, Variant,
 };
+use crate::voucher_search::{Filter, PAGE, shown, visible};
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 
 #[component]
@@ -29,9 +31,14 @@ pub fn Vouchers() -> impl IntoView {
     let error = RwSignal::new(None::<String>);
 
     let load = move || {
-        let (company_id, start) = (companies.active.get_untracked(), year.get_untracked());
-        let Some(fiscal_year) =
-            years.with_untracked(|ys| ys.iter().find(|y| y.start == start).cloned())
+        // `try_`: a row may ask for a reload after the page is gone.
+        let Some(start) = year.try_get_untracked() else {
+            return;
+        };
+        let company_id = companies.active.get_untracked();
+        let Some(fiscal_year) = years
+            .try_with_untracked(|ys| ys.iter().find(|y| y.start == start).cloned())
+            .flatten()
         else {
             return;
         };
@@ -46,7 +53,10 @@ pub fn Vouchers() -> impl IntoView {
                 })
                 .await;
             // Company or year changed meanwhile: this answer is stale.
-            if company_id != companies.active.get_untracked() || start != year.get_untracked() {
+            // `try_`: the page may be gone, and its signals with it.
+            if company_id != companies.active.get_untracked()
+                || year.try_get_untracked().as_deref() != Some(start.as_str())
+            {
                 return;
             }
             match result {
@@ -55,7 +65,9 @@ pub fn Vouchers() -> impl IntoView {
                     Some(fiscal_year),
                     response.into_inner().vouchers,
                 )),
-                Err(status) => error.set(Some(describe(&status))),
+                Err(status) => {
+                    error.try_set(Some(describe(&status)));
+                }
             }
         });
     };
@@ -107,16 +119,39 @@ pub fn Vouchers() -> impl IntoView {
     });
     let changed = Callback::new(move |()| load());
 
+    let query = RwSignal::new(String::new());
+    let missing = RwSignal::new(false);
+    let corrections = RwSignal::new(false);
+    let limit = RwSignal::new(PAGE);
+    let filter = Memo::new(move |_| Filter {
+        query: query.get(),
+        missing_attachment: missing.get(),
+        corrections: corrections.get(),
+    });
+    // A new question, year or company starts from the top.
+    Effect::new(move |_| {
+        filter.track();
+        year.track();
+        limit.set(PAGE);
+    });
+    // (company, fiscal year, vouchers) as loaded; the list shows the
+    // matching ones, highest number first.
+    let matching = Memo::new(move |_| {
+        let (company_id, fiscal_year, mut list) = vouchers.get();
+        let filter = filter.get();
+        names.with(|accounts| list.retain(|v| visible(v, accounts, &filter)));
+        list.sort_by_key(|v| std::cmp::Reverse(v.number));
+        (company_id, fiscal_year, list)
+    });
+
     view! {
-        <div class="grid gap-6" data-wide>
-            <div class="flex items-end justify-between gap-4">
-                <h1 class="text-sm font-medium">"Verifikationer"</h1>
-                <A href="/vouchers/new" attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline">"Ny verifikation"</A>
-            </div>
-            <ErrorAlert message=error />
-            <div class="flex items-end gap-4">
+        <div class="grid gap-6">
+            <PageHeader title="Verifikationer">
+                <Show when=move || years.with(|ys| is_closed(ys, &year.get()))>
+                    <Badge>"Stängt"</Badge>
+                </Show>
                 <div class="w-56">
-                    <Select label="Räkenskapsår" id="fiscal_year" value=year>
+                    <Select label="Räkenskapsår" id="fiscal_year" hide_label=true value=year>
                         {move || {
                             years
                                 .get()
@@ -126,10 +161,23 @@ pub fn Vouchers() -> impl IntoView {
                         }}
                     </Select>
                 </div>
-                <Show when=move || years.with(|ys| is_closed(ys, &year.get()))>
-                    <span class="pb-2 text-xs/relaxed text-muted-foreground">"Stängt"</span>
-                </Show>
-            </div>
+                <LinkButton href="/vouchers/new" icon=IconName::Plus>"Ny verifikation"</LinkButton>
+            </PageHeader>
+            <ErrorAlert message=error />
+            <TableCard toolbar=move || view! {
+                <div class="relative max-w-xs flex-[1_1_15rem]">
+                    <Icon name=IconName::Search class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                        type="search"
+                        aria-label="Sök bland verifikationer"
+                        placeholder="Sök nummer, text, konto eller belopp"
+                        class=format!("{INPUT} pl-7")
+                        bind:value=query
+                    />
+                </div>
+                <Checkbox label="Saknar underlag" id="missing_attachment" checked=missing />
+                <Checkbox label="Rättelser" id="corrections" checked=corrections />
+            }>
             <Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
@@ -145,8 +193,9 @@ pub fn Vouchers() -> impl IntoView {
                 <tbody class=TABLE_BODY>
                     <For
                         each=move || {
-                            let (company_id, fiscal_year, list) = vouchers.get();
+                            let (company_id, fiscal_year, list) = matching.get();
                             list.into_iter()
+                                .take(limit.get())
                                 .map(|v| (company_id.clone(), fiscal_year.clone(), v))
                                 .collect::<Vec<_>>()
                         }
@@ -159,6 +208,28 @@ pub fn Vouchers() -> impl IntoView {
                     </For>
                 </tbody>
             </Table>
+            {move || {
+                // The year is set once its vouchers are in: nothing to say before.
+                let loaded = vouchers.with(|(_, fiscal_year, _)| fiscal_year.is_some());
+                let in_year = vouchers.with(|(_, _, list)| list.len());
+                let total = matching.with(|(_, _, list)| list.len());
+                let showing = shown(total, limit.get());
+                loaded.then(|| view! {
+                    <div class="flex flex-wrap items-center justify-between gap-4 px-2 pt-2 pb-1">
+                        {if in_year == 0 {
+                            view! { <p class="text-muted-foreground">"Inga verifikationer under räkenskapsåret."</p> }.into_any()
+                        } else if total == 0 {
+                            view! { <p class="text-muted-foreground">"Inga verifikationer matchar."</p> }.into_any()
+                        } else {
+                            view! { <p role="status" class="text-muted-foreground">{format!("Visar {showing} av {total}")}</p> }.into_any()
+                        }}
+                        {(showing < total).then(|| view! {
+                            <Button variant=Variant::Outline kind="button" on:click=move |_| limit.update(|l| *l += PAGE)>"Visa fler"</Button>
+                        })}
+                    </div>
+                })
+            }}
+            </TableCard>
         </div>
     }
 }
@@ -176,7 +247,28 @@ fn VoucherRow(
     // The company and year this row was loaded for, not whatever is active now.
     let company_id = StoredValue::new(company_id);
     let closed = fiscal_year.as_ref().is_some_and(|y| y.closed);
+    // The huvudbok links go to the year this row was loaded for.
+    let ledger_year = fiscal_year
+        .as_ref()
+        .map(|y| y.start.clone())
+        .unwrap_or_default();
     let fiscal_year = StoredValue::new(fiscal_year);
+    // Behandlingshistorik: when it was recorded, in this browser's time
+    // zone (JS counts minutes west of UTC), and by whom if known.
+    // The offset is the one that applied then, not today's: summer time
+    // must not move an old voucher an hour. (An unreadable time gives NaN,
+    // which is 0 here, and `local_time` shows nothing for it anyway.)
+    let then = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(&voucher.recorded_at));
+    let offset = -(then.get_timezone_offset() as i32);
+    let recorded = local_time(&voucher.recorded_at, offset);
+    let history = match (recorded.is_empty(), voucher.recorded_by_name.is_empty()) {
+        (true, _) => None,
+        (false, true) => Some(format!("Bokförd {recorded}")),
+        (false, false) => Some(format!(
+            "Bokförd {recorded} av {}",
+            voucher.recorded_by_name
+        )),
+    };
     let expanded = RwSignal::new(false);
     let correcting = RwSignal::new(false);
     let date = RwSignal::new(String::new());
@@ -273,6 +365,9 @@ fn VoucherRow(
                     }
                 }
             }
+            // The list the search and the filters read has the new underlag
+            // too; the row keeps its key, so it stays as it is.
+            changed.try_run(());
         });
     };
 
@@ -299,11 +394,15 @@ fn VoucherRow(
                 number,
                 date: date.get_untracked(),
             };
+            let company = request.company_id.clone();
             let result = ledger_api().correct_voucher(request).await;
+            // The page may be gone by now: `try_` on everything it owns.
             match result {
-                Ok(_) => changed.run(()),
-                Err(status) if company_id.get_value() == companies.active.get_untracked() => {
-                    error.set(Some(describe(&status)))
+                Ok(_) => {
+                    changed.try_run(());
+                }
+                Err(status) if company == companies.active.get_untracked() => {
+                    error.try_set(Some(describe(&status)));
                 }
                 Err(_) => {}
             }
@@ -313,21 +412,27 @@ fn VoucherRow(
     view! {
         <tr class=TABLE_ROW>
             <td class=TABLE_CELL>
-                <button type="button" aria-expanded=move || expanded.get().to_string() on:click=move |_| expanded.update(|e| *e = !*e)>
+                <button
+                    type="button"
+                    class="inline-flex h-7 items-center gap-1 rounded-md pr-1.5 font-medium tabular-nums hover:bg-muted"
+                    aria-expanded=move || expanded.get().to_string()
+                    on:click=move |_| expanded.update(|e| *e = !*e)
+                >
+                    {move || view! { <Icon name=if expanded.get() { IconName::ChevronDown } else { IconName::ChevronRight } class="size-3.5 text-muted-foreground" /> }}
                     {number}
                 </button>
             </td>
             <td class=TABLE_CELL>{voucher.date.clone()}</td>
             <td class=TABLE_CELL>{voucher.text.clone()}</td>
             <td class=format!("{TABLE_CELL} text-right tabular-nums")>{amount(total)}</td>
-            <td class=TABLE_CELL>{status}</td>
+            <td class=TABLE_CELL>{(!status.is_empty()).then(|| view! { <Badge>{status}</Badge> })}</td>
             <td class=TABLE_CELL>
                 {move || {
                     let count = attachments.with(Vec::len);
                     (count > 0)
                         .then(|| view! {
                             <span class="inline-flex items-center gap-1 text-muted-foreground">
-                                <PaperclipIcon />
+                                <Icon name=IconName::Paperclip />
                                 {count}
                                 <span class="sr-only">" underlag"</span>
                             </span>
@@ -347,29 +452,46 @@ fn VoucherRow(
             </td>
         </tr>
         <Show when=move || expanded.get()>
-            <tr class=TABLE_ROW>
+            <tr class=format!("{TABLE_ROW} bg-muted/50")>
                 <td class=TABLE_CELL></td>
                 <td class=TABLE_CELL colspan="6">
-                    <ul class="grid gap-1">
-                        {lines
-                            .iter()
-                            .map(|l| {
-                                let name = names.with(|n| n.iter().find(|a| a.number == l.account).map(|a| a.name.clone()).unwrap_or_default());
-                                let side = if l.debit > 0 {
-                                    format!("Debet {}", amount(l.debit))
-                                } else {
-                                    format!("Kredit {}", amount(l.credit))
-                                };
-                                view! {
-                                    <li class="flex justify-between gap-4">
-                                        <span>{format!("{} {}", l.account, name)}</span>
-                                        <span class="tabular-nums">{side}</span>
-                                    </li>
-                                }
-                            })
-                            .collect_view()}
-                    </ul>
-                    <div class="mt-3 grid gap-2">
+                    <div class="flex flex-wrap items-start gap-x-8 gap-y-3">
+                    <table class="w-full max-w-xl text-xs">
+                        <thead>
+                            // `!`: the outer table clears the border of every last row.
+                            <tr class="border-b! text-muted-foreground">
+                                <th class="py-1 pr-2 text-left font-normal">"Konto"</th>
+                                <th class="px-2 py-1 text-right font-normal">"Debet"</th>
+                                <th class="py-1 pl-2 text-right font-normal">"Kredit"</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {lines
+                                .iter()
+                                .map(|l| {
+                                    let name = names.with(|n| n.iter().find(|a| a.number == l.account).map(|a| a.name.clone()).unwrap_or_default());
+                                    view! {
+                                        <tr class="border-b">
+                                            <td class="py-1.5 pr-2">
+                                                <A href=format!("/trial-balance/{}?fy={ledger_year}", l.account) attr:class="underline-offset-4 hover:underline">
+                                                    {format!("{} {}", l.account, name)}
+                                                </A>
+                                            </td>
+                                            <td class="px-2 py-1.5 text-right tabular-nums">{(l.debit > 0).then(|| amount(l.debit))}</td>
+                                            <td class="py-1.5 pl-2 text-right tabular-nums">{(l.credit > 0).then(|| amount(l.credit))}</td>
+                                        </tr>
+                                    }
+                                })
+                                .collect_view()}
+                            <tr class="font-medium">
+                                <td class="py-1.5 pr-2">"Summa"</td>
+                                <td class="px-2 py-1.5 text-right tabular-nums">{amount(total)}</td>
+                                <td class="py-1.5 pl-2 text-right tabular-nums">{amount(total)}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div class="grid gap-3">
+                    <div class="grid gap-2">
                         <h2 class="text-xs/relaxed font-medium">"Underlag"</h2>
                         <ul class="grid gap-1">
                             {move || {
@@ -400,6 +522,14 @@ fn VoucherRow(
                                 on_pick=add_attachments
                             />
                         </div>
+                    </div>
+                    {history.clone().map(|line| view! {
+                        <div class="grid gap-1">
+                            <h2 class="text-xs/relaxed font-medium">"Behandlingshistorik"</h2>
+                            <p>{line}</p>
+                        </div>
+                    })}
+                    </div>
                     </div>
                 </td>
             </tr>

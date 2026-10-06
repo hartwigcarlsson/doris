@@ -1,18 +1,18 @@
 //! Routes, the session state and the page shell.
 
-use crate::active_company::{ActiveCompanySelect, Companies};
+use crate::active_company::Companies;
 use crate::api::{api, pb, prefetched_status};
+use crate::nav::Header;
 use crate::pages::{
     AccountLedger, Accounts, Agi, Companies, CompanyPage, CustomerInvoices, Customers, Employees,
     FinancialStatements, FiscalYears, Home, Invitations, Login, NewCompany, NewCustomerInvoice,
     NewSupplierInvoice, NewVoucher, OpeningBalances, Passkeys, PayrollRunPage, PayrollRuns,
     Register, SupplierInvoices, Suppliers, TrialBalance, Vouchers,
 };
-use crate::ui::{Button, Variant};
+use crate::task::PageTasks;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::{A, Redirect, Route, Router, Routes};
-use leptos_router::hooks::use_navigate;
+use leptos_router::components::{Redirect, Route, Router, Routes};
 use leptos_router::path;
 
 /// Who is signed in, as last reported by the server.
@@ -68,10 +68,9 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Router>
+            <PageTasks />
             <Header />
-            // A page that marks an element `data-wide` (the ledger's tables and line
-            // editor) gets the header's width; forms stay narrow.
-            <main class="mx-auto w-full max-w-sm px-4 py-10 has-[[data-wide]]:max-w-3xl">
+            <main class="mx-auto w-full max-w-6xl px-4 py-10">
                 <Show when=move || session.loaded.get() fallback=|| view! { <p class="text-muted-foreground">"Laddar…"</p> }>
                     <Routes fallback=|| view! { <p>"Sidan finns inte."</p> }>
                         <Route path=path!("/register") view=Register />
@@ -126,57 +125,157 @@ fn SignedIn(#[prop(optional)] admin: bool, children: ChildrenFn) -> impl IntoVie
     }
 }
 
-#[component]
-fn Header() -> impl IntoView {
-    let session = expect_context::<Session>();
-    let companies = expect_context::<Companies>();
-    let navigate = use_navigate();
-    let log_out = move |_| {
-        let navigate = navigate.clone();
-        spawn_local(async move {
-            let _ = api().logout(pb::LogoutRequest {}).await;
-            session.user.set(None);
-            navigate("/login", Default::default());
-        });
-    };
-    view! {
-        // Two rows: the account (which company, your settings) on top, and
-        // the active company's bookkeeping below, so the company picker
-        // never has to give up width to another page's link. The account
-        // links wrap as one group on a narrow screen.
-        <header class="border-b">
-            <div class="mx-auto max-w-3xl px-4 text-xs/relaxed">
-                <nav aria-label="Konto" class="flex min-h-12 flex-wrap items-center gap-x-4 gap-y-2 py-2">
-                    <A href="/" attr:class="text-sm font-semibold">"Doris"</A>
-                    <Show when=move || session.user.get().is_some()>
-                        <ActiveCompanySelect />
-                        <div class="ml-auto flex items-center gap-4">
-                            <A href="/companies" attr:class="text-muted-foreground hover:text-foreground">"Företag"</A>
-                            <A href="/settings/passkeys" attr:class="text-muted-foreground hover:text-foreground">"Passkeys"</A>
-                            <Show when=move || session.is_admin()>
-                                <A href="/admin/invitations" attr:class="text-muted-foreground hover:text-foreground">"Inbjudningar"</A>
-                            </Show>
-                            <Button variant=Variant::Ghost kind="button" on:click=log_out.clone()>"Logga ut"</Button>
-                        </div>
-                    </Show>
-                </nav>
-                <Show when=move || session.user.get().is_some() && !companies.active.get().is_empty()>
-                    <nav aria-label="Bokföring" class="flex flex-wrap items-center gap-x-4 gap-y-2 pb-3">
-                        <A href="/vouchers" attr:class="text-muted-foreground hover:text-foreground">"Verifikationer"</A>
-                        <A href="/customers" attr:class="text-muted-foreground hover:text-foreground">"Kunder"</A>
-                        <A href="/customer-invoices" attr:class="text-muted-foreground hover:text-foreground">"Kundfakturor"</A>
-                        <A href="/suppliers" attr:class="text-muted-foreground hover:text-foreground">"Leverantörer"</A>
-                        <A href="/supplier-invoices" attr:class="text-muted-foreground hover:text-foreground">"Leverantörsfakturor"</A>
-                        <A href="/trial-balance" attr:class="text-muted-foreground hover:text-foreground">"Saldobalans"</A>
-                        <A href="/financial-statements" attr:class="text-muted-foreground hover:text-foreground">"Rapporter"</A>
-                        <A href="/fiscal-years" attr:class="text-muted-foreground hover:text-foreground">"Räkenskapsår"</A>
-                        <A href="/accounts" attr:class="text-muted-foreground hover:text-foreground">"Kontoplan"</A>
-                        <A href="/payroll-runs" attr:class="text-muted-foreground hover:text-foreground">"Lönekörningar"</A>
-                        <A href="/employees" attr:class="text-muted-foreground hover:text-foreground">"Anställda"</A>
-                        <A href="/agi" attr:class="text-muted-foreground hover:text-foreground">"Arbetsgivardeklaration"</A>
-                    </nav>
-                </Show>
-            </div>
-        </header>
+/// The design is kept by tests as well as by habit: a new route has to be
+/// given to the design test and to the menu, or these fail.
+#[cfg(test)]
+mod tests {
+    use crate::nav::section_of;
+
+    const APP: &str = include_str!("app.rs");
+    const NAV: &str = include_str!("nav.rs");
+    const DESIGN_SPEC: &str = include_str!("../../../e2e/tests/design.spec.ts");
+    const LEAVING_SPEC: &str = include_str!("../../../e2e/tests/leaving.spec.ts");
+
+    /// Pages without the signed-in shell.
+    const SIGNED_OUT: [&str; 2] = ["/register", "/login"];
+    /// Pages that belong to no menu group: the start page and the account menu's.
+    const OUTSIDE_THE_GROUPS: [&str; 4] = ["/", "/companies", "/settings", "/admin"];
+    /// Top-level pages reached from another page rather than from the menu.
+    const NOT_IN_THE_MENU: [&str; 1] = ["/opening-balances"];
+
+    /// The path of every `path!` route in `source`.
+    fn routes(source: &str) -> Vec<&str> {
+        source
+            .split("path!(\"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .collect()
+    }
+
+    /// The paths in the list that `spec` opens with `declaration`.
+    fn listed<'a>(spec: &'a str, declaration: &str) -> Vec<&'a str> {
+        let list = spec
+            .split(declaration)
+            .nth(1)
+            .and_then(|rest| rest.split("];").next())
+            .unwrap_or_default();
+        list.split('"').skip(1).step_by(2).collect()
+    }
+
+    /// Whether `path` is an instance of `route` (`:name` matches any segment).
+    fn is_instance(route: &str, path: &str) -> bool {
+        let (route, path): (Vec<_>, Vec<_>) =
+            (route.split('/').collect(), path.split('/').collect());
+        route.len() == path.len()
+            && route
+                .iter()
+                .zip(&path)
+                .all(|(r, p)| r.starts_with(':') || r == p)
+    }
+
+    /// The signed-in routes that none of `visited` is an instance of.
+    fn unvisited<'a>(routes: &[&'a str], visited: &[&str]) -> Vec<&'a str> {
+        routes
+            .iter()
+            .filter(|route| !SIGNED_OUT.contains(route))
+            .filter(|route| !visited.iter().any(|path| is_instance(route, path)))
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn the_checks_notice_a_route_that_was_forgotten() {
+        let all = ["/login", "/vouchers", "/vouchers/:id", "/new-page"];
+        assert_eq!(
+            unvisited(&all, &["/vouchers", "/vouchers/7"]),
+            ["/new-page"]
+        );
+        assert_eq!(
+            unvisited(&all, &["/vouchers", "/new-page"]),
+            ["/vouchers/:id"]
+        );
+        assert_eq!(
+            routes("a path!(\"/x\") b path!(\"/y/:id\")"),
+            ["/x", "/y/:id"]
+        );
+        assert_eq!(
+            listed(
+                "const paths = [\n \"/\", \"/a\",\n \"/b\",\n];",
+                "const paths = ["
+            ),
+            ["/", "/a", "/b"]
+        );
+    }
+
+    #[test]
+    fn every_signed_in_route_is_in_the_design_test() {
+        let (routes, visited) = (routes(APP), listed(DESIGN_SPEC, "const paths = ["));
+        assert!(
+            routes.len() > 20 && visited.len() > 15,
+            "the sources were not read"
+        );
+        assert_eq!(
+            unvisited(&routes, &visited),
+            Vec::<&str>::new(),
+            "add these to `paths` in e2e/tests/design.spec.ts, so the page's h1 and width are checked"
+        );
+    }
+
+    #[test]
+    fn every_signed_in_route_is_left_while_it_loads_in_a_test() {
+        let (routes, visited) = (routes(APP), listed(LEAVING_SPEC, "const pages = ["));
+        assert!(visited.len() > 15, "the source was not read");
+        assert_eq!(
+            unvisited(&routes, &visited),
+            Vec::<&str>::new(),
+            "add these to `pages` in e2e/tests/leaving.spec.ts, so leaving them mid-load is tried"
+        );
+    }
+
+    #[test]
+    fn pages_start_their_tasks_as_page_tasks() {
+        // What outlives a page starts its own; a page's task must end with the page.
+        let app_level = ["login.rs", "register.rs"];
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<_> = std::fs::read_dir(src.join("pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| !app_level.iter().any(|name| path.ends_with(name)))
+            .collect();
+        files.extend([src.join("fiscal_year.rs"), src.join("invoice_ui.rs")]);
+        assert!(files.len() > 20, "the pages were not found");
+        for file in files {
+            let source = std::fs::read_to_string(&file).unwrap();
+            assert!(
+                !source.contains("leptos::task::spawn_local"),
+                "{}: use crate::task::spawn_local, so the task is dropped when the page is left",
+                file.display()
+            );
+        }
+    }
+
+    #[test]
+    fn every_page_belongs_to_a_menu_group_and_top_level_pages_are_linked() {
+        for route in routes(APP) {
+            let outside = |prefixes: &[&str]| {
+                prefixes
+                    .iter()
+                    .any(|p| route == *p || (*p != "/" && route.starts_with(&format!("{p}/"))))
+            };
+            if SIGNED_OUT.contains(&route) || outside(&OUTSIDE_THE_GROUPS) {
+                continue;
+            }
+            assert!(
+                section_of(route).is_some(),
+                "{route}: add it to SECTIONS in nav.rs, so its menu is marked when the page is open"
+            );
+            let top_level = route.matches('/').count() == 1;
+            if top_level && !NOT_IN_THE_MENU.contains(&route) {
+                assert!(
+                    NAV.contains(&format!("href=\"{route}\"")),
+                    "{route}: add a NavItem for it in nav.rs, or list it in NOT_IN_THE_MENU"
+                );
+            }
+        }
     }
 }

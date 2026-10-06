@@ -57,6 +57,10 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   write transaction, for example with UNIQUE constraints on projections.
 - Domain logic is pure: `decide(state, cmd) -> Result<Vec<Event>>` and
   `evolve(state, event)`. Test it given/when/then, without a database.
+- A module reads only its own tables. What another module owns is asked
+  for through that module's functions (the server puts the answers
+  together, as for member names and who recorded a voucher), never with
+  SQL against its projections.
 - Operational data is **not** events and may be purged. That covers sessions
   and WebAuthn ceremony state.
 - Voucher numbers run 1..=n per company and fiscal year without gaps (BFL
@@ -82,7 +86,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   projection, append-only by trigger and keyed by SHA-256, so a file is
   stored once. They are read only through the company's own voucher
   (`voucher_attachments`) or the company's own customer or supplier invoice, never by
-  hash alone. An underlag is never removed
+  hash alone. Invoicing finds the underlag on its own invoice and then asks
+  the ledger for the bytes (`doris_ledger::attachment_data`); it does not
+  read `attachment_files`. An underlag is never removed
   or renamed, and it may be added to a voucher in a closed year: it changes
   no amount. The type comes from the bytes, never from the client.
 - Payroll (`payroll-{company_id}`: employees and runs) has its own
@@ -94,8 +100,10 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   its booking is backed out with a rättelse (`correct_voucher_in`,
   dated today but no later than its fiscal year's end, from the run or
   the grundbok), and the run is Färdigställd again. Whether a run is
-  booked is derived from `vouchers.corrects`, never stored. Payroll
-  tables have no foreign key to `vouchers`.
+  booked is derived from the ledger's corrections
+  (`doris_ledger::corrected_vouchers_in`, read in payroll's own
+  transaction), never stored. Payroll tables have no foreign key to
+  `vouchers`, and payroll never reads that table itself.
 - Arbetsgivaravgift (`doris_payroll::domain::employer_fee`) is in code
   from 2026: 31,42 %; 10,21 % for those 67 when the year began; 0 for
   born 1937 or earlier; 20,81 % on the first 25 000 kr a month for
@@ -229,6 +237,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `invalid_attachment_name`, `empty_attachment`, `attachment_too_large`,
   `duplicate_attachment` and `attachment_not_found`. File names are never
   logged.
+- `ListVouchers` also says when each voucher was recorded and by whom
+  (`recorded_at`, `recorded_by_name`). The ledger returns the recorder's
+  user id from its own projection; the server asks identity
+  (`doris_identity::get_user`) for the display name, once per person. An
+  unknown user has an empty name. Never the email.
 - `LedgerService` also has `GetFinancialStatements`: the resultaträkning
   and balansräkning for one fiscal year under ÅRL headings (K2's
   abbreviated forms), with the year before as comparison. The mapping from
@@ -332,6 +345,51 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   shadcn's generated output. Add more by generating them with
   `npx shadcn init -t vite -b radix -p b1Gdz9bFY` in a scratch directory and
   copying the classes.
+- `src/nav.rs` holds the header: one row with Doris, the company picker,
+  the main menu (Översikt, Bokföring, Inköp, Försäljning, Lön) and the account
+  menu. Menus are native `<details name="doris-nav">`, so the browser keeps
+  one open. A click listener closes them on a click outside or on one of
+  their links or buttons, a keydown listener on Escape (focus goes back to
+  the menu's button), and an effect when the path changes. `section_of`
+  decides which menu a path belongs to: add a line there for every new page.
+- The start page (`src/pages/home.rs`) is the overview for the active
+  company and a chosen räkenskapsår (kept in `?fy=`; by default the year
+  that contains today). It adds no RPC: it sends `GetCompany`,
+  `ListFiscalYears`, `GetTrialBalance`, `ListVouchers`,
+  `ListSupplierInvoices`, `ListCustomerInvoices`, `ListPayrollRuns` and
+  `ListAgiMonths`, and `src/overview.rs` works everything out in pure
+  functions: key figures (operating income 3000–3999, operating costs
+  4000–7999, class 8 only in the result, cash 1900–1999), income and costs per month, the year's progress and the
+  "Att göra" rules. Each call is its own task, so a slow one holds nothing
+  back. A card whose call failed shows the error and the others still show;
+  if the years cannot be listed, every card that needs a year shows that
+  error. The monthly sums read every voucher of the year: when that
+  gets heavy, add a `GetMonthlyTotals` to the ledger.
+- Verifikationer lists the year's vouchers newest first, fifty at a time.
+  The search field and the "Saknar underlag"/"Rättelser" boxes filter in
+  the browser (`src/voucher_search.rs`): every word must match the number
+  (exactly), an account on the voucher (by prefix), a whole amount, or part
+  of the text or of an account's name. A search that is one amount with
+  spaces in it ("1 250,00", as the page shows it) matches that amount.
+  A row's time is shown with the UTC offset that applied then, not today's.
+- A page starts its tasks with `crate::task::spawn_local` (`src/task.rs`),
+  never `leptos::task::spawn_local`: the answer may come after the user
+  has left, the page's signals are disposed by then, and reading one
+  panics, which aborts the release wasm. A page task is dropped at its
+  next `await` once the path has changed (the request is already sent, and
+  the server finishes it). Only what outlives a page (the session, the
+  company list, the header, login and registration) uses Leptos' own.
+  `e2e/tests/leaving.spec.ts` leaves every page while it loads and a few
+  actions mid-flight; tests in `app.rs` fail if a page is missing from it
+  or starts a task the other way.
+- A view is a `grid gap-6` that starts with `PageHeader` (the page's one
+  `<h1>`, actions to the right). Tables sit in `TableCard`, statuses are
+  `Badge`s and "Ny …" actions are `LinkButton`s. A one-column form is a
+  `narrow` `Card` (352px, left-aligned); a form with several columns or a
+  line editor is a full-width `Card` or `Panel`. Login and registration
+  are centered, and their card's title is the page's `<h1>` (`page_title`).
+- Icons are lucide shapes inlined in `ui.rs` (`Icon`, `IconName`), copied
+  from lucide-static with the closing tags written out.
 - The crate also compiles for the host, so `cargo test`/`clippy --workspace`
   include it. Also lint the wasm build:
   `cargo clippy -p doris-web --target wasm32-unknown-unknown -- -D warnings`.
@@ -345,13 +403,23 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   builds.
 - E2E tests live in `e2e/` (Playwright). Every test spawns its own server on
   a fresh database, and pages get a Chrome DevTools virtual WebAuthn
-  authenticator. Select elements by their Swedish label or role.
+  authenticator. Select elements by their Swedish label or role. Header
+  links live in menus: use `goTo(page, "Verifikationer")` from `fixtures.ts`.
 
 ## Style
 The UI follows shadcn preset `b1Gdz9bFY`: style mira, base color stone, theme
-amber, font Inter (self-hosted), small radius, lucide icons (inlined SVG).
+amber, font Inter (self-hosted), small radius, lucide icons (inlined SVG, see
+`IconName`). The page and the header are `max-w-6xl`.
+`--chart-1` (amber) and `--chart-2` (stone) colour the overview's chart and
+progress bar.
 Design tokens live in `crates/web/style/input.css`. Build only the components
 you need.
+
+Every view follows one design, and a new or changed view is not done until
+it does. The rules are in `docs/design/README.md`: read them before any
+work on the UI. They cover the shell and its menus, how a view is built,
+which component to use, tokens, light and dark, 390px, and the tests that
+keep it so.
 
 ## Commands
 ```

@@ -4,12 +4,12 @@ use crate::active_company::Companies;
 use crate::api::{lpb, payroll_api, ppb};
 use crate::errors::describe;
 use crate::format::{amount, today};
+use crate::task::spawn_local;
 use crate::ui::{
-    ErrorAlert, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL,
-    TABLE_ROW, Table,
+    Badge, BadgeVariant, ErrorAlert, IconName, LinkButton, PageHeader, TABLE_AMOUNT_CELL,
+    TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, TableCard,
 };
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::components::A;
 
 /// The status as the user sees it on `today` (both `YYYY-MM-DD`).
@@ -20,6 +20,14 @@ pub fn status_label(status: ppb::PayrollRunStatus, pay_date: &str, today: &str) 
         ppb::PayrollRunStatus::Finalized => "Färdigställd",
         ppb::PayrollRunStatus::Booked => "Bokförd",
         ppb::PayrollRunStatus::Unspecified => "",
+    }
+}
+
+/// How a run's status is drawn: a booked run is done and recedes.
+pub fn status_badge(status: ppb::PayrollRunStatus) -> BadgeVariant {
+    match status {
+        ppb::PayrollRunStatus::Booked => BadgeVariant::Outline,
+        _ => BadgeVariant::Secondary,
     }
 }
 
@@ -79,13 +87,12 @@ pub fn PayrollRuns() -> impl IntoView {
     let today = today();
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <div class="flex items-end justify-between gap-4">
-                <h1 class="text-sm font-medium">"Lönekörningar"</h1>
-                <A href="/payroll-runs/new" attr:class="text-xs/relaxed font-medium underline-offset-4 hover:underline">"Ny lönekörning"</A>
-            </div>
+        <div class="grid gap-6">
+            <PageHeader title="Lönekörningar">
+                <LinkButton href="/payroll-runs/new" icon=IconName::Plus>"Ny lönekörning"</LinkButton>
+            </PageHeader>
             <ErrorAlert message=error />
-            <Table>
+            <TableCard><Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
                         <th class=TABLE_HEADER_CELL>"Utbetalningsdag"</th>
@@ -105,6 +112,7 @@ pub fn PayrollRuns() -> impl IntoView {
                             let locked = run.status() != ppb::PayrollRunStatus::Open;
                             let (gross, tax, fee, net) = (sum(|l| l.gross), sum(|l| l.tax.unwrap_or(0)), sum(|l| l.fee), sum(|l| l.net));
                             let label = status_label(run.status(), &run.pay_date, &today);
+                            let badge = status_badge(run.status());
                             let shown = move |ore: i64| if locked { amount(ore) } else { "–".to_owned() };
                             view! {
                                 <tr class=TABLE_ROW>
@@ -116,14 +124,14 @@ pub fn PayrollRuns() -> impl IntoView {
                                     <td class=TABLE_AMOUNT_CELL>{shown(tax)}</td>
                                     <td class=TABLE_AMOUNT_CELL>{shown(fee)}</td>
                                     <td class=TABLE_AMOUNT_CELL>{shown(net)}</td>
-                                    <td class=TABLE_CELL>{label}</td>
+                                    <td class=TABLE_CELL>{(!label.is_empty()).then(|| view! { <Badge variant=badge>{label}</Badge> })}</td>
                                     <td class=TABLE_CELL>{run.voucher.as_ref().map(|v| v.number.to_string())}</td>
                                 </tr>
                             }
                         }
                     </For>
                 </tbody>
-            </Table>
+            </Table></TableCard>
         </div>
     }
 }
@@ -135,7 +143,7 @@ pub fn RunLines(
     voucher_lines: Vec<lpb::VoucherLine>,
 ) -> impl IntoView {
     view! {
-        <Table>
+        <TableCard><Table>
             <thead class=TABLE_HEAD>
                 <tr class=TABLE_ROW>
                     <th class=TABLE_HEADER_CELL>"Anställd"</th>
@@ -165,9 +173,9 @@ pub fn RunLines(
                     }})
                     .collect_view()}
             </tbody>
-        </Table>
+        </Table></TableCard>
         <h2 class="text-xs/relaxed font-medium">"Verifikation"</h2>
-        <Table>
+        <TableCard><Table>
             <thead class=TABLE_HEAD>
                 <tr class=TABLE_ROW>
                     <th class=TABLE_HEADER_CELL>"Konto"</th>
@@ -187,7 +195,7 @@ pub fn RunLines(
                     })
                     .collect_view()}
             </tbody>
-        </Table>
+        </Table></TableCard>
     }
 }
 
@@ -250,5 +258,12 @@ mod tests {
             "Manuell"
         );
         assert_eq!(tax_basis_label(None), "");
+    }
+
+    #[test]
+    fn a_booked_run_recedes_and_an_open_one_does_not() {
+        assert!(status_badge(Open) == BadgeVariant::Secondary);
+        assert!(status_badge(Finalized) == BadgeVariant::Secondary);
+        assert!(status_badge(Booked) == BadgeVariant::Outline);
     }
 }

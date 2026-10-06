@@ -1,10 +1,10 @@
 use crate::api::{company_api, cpb};
 use crate::errors::describe;
 use crate::format::{accounting_method_label, legal_form_label};
-use crate::ui::{Button, Card, ErrorAlert, Field};
+use crate::task::spawn_local;
+use crate::ui::{Button, Card, ErrorAlert, Field, PageHeader, Panel};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::hooks::use_params_map;
 
 #[component]
@@ -74,8 +74,8 @@ pub fn CompanyPage() -> impl IntoView {
                             .trim()
                             .to_owned();
                         view! {
-                            <section class="grid gap-2 text-xs/relaxed">
-                                <h1 class="text-sm font-medium">{c.name.clone()}</h1>
+                            <PageHeader title=c.name.clone() />
+                            <Panel class="grid w-full max-w-xl gap-2">
                                 <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
                                     <dt class="text-muted-foreground">"Organisationsnummer"</dt>
                                     <dd>{c.org_nr.clone()}</dd>
@@ -88,12 +88,12 @@ pub fn CompanyPage() -> impl IntoView {
                                     <dt class="text-muted-foreground">"Bokföringsmetod"</dt>
                                     <dd>{accounting_method_label(c.accounting_method())}</dd>
                                 </dl>
-                            </section>
+                            </Panel>
                         }
                     })
             }}
             <Show when=move || company.get().is_some()>
-                <Card title="Medlemmar" description="De som har tillgång till företaget.">
+                <Card title="Medlemmar" description="De som har tillgång till företaget." narrow=true>
                     <ul class="mb-4 grid gap-2">
                         <For each=move || members.get() key=|m| m.email.clone() let(member)>
                             <li class="flex justify-between gap-2">

@@ -1,5 +1,7 @@
 /* Design tokens from shadcn preset b1Gdz9bFY: style mira, base stone,
-   theme amber, font Inter (self-hosted), radius small, icons lucide. */
+   theme amber, font Inter (self-hosted), radius small, icons lucide.
+   --chart-1/2 are amber and stone from the same scales, for the overview's
+   chart and progress bar. */
 @import "tailwindcss";
 @source "../src";
 @source "../index.html";
@@ -41,6 +43,8 @@
     --color-primary: var(--primary);
     --color-popover-foreground: var(--popover-foreground);
     --color-popover: var(--popover);
+    --color-chart-1: var(--chart-1);
+    --color-chart-2: var(--chart-2);
     --color-card-foreground: var(--card-foreground);
     --color-card: var(--card);
     --color-foreground: var(--foreground);
@@ -60,6 +64,8 @@
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.147 0.004 49.25);
     --popover: oklch(1 0 0);
+    --chart-1: oklch(0.555 0.163 48.998);
+    --chart-2: oklch(0.268 0.007 34.298);
     --popover-foreground: oklch(0.147 0.004 49.25);
     --primary: oklch(0.555 0.163 48.998);
     --primary-foreground: oklch(0.987 0.022 95.277);
@@ -83,6 +89,8 @@
       --card: oklch(0.216 0.006 56.043);
       --card-foreground: oklch(0.985 0.001 106.423);
       --popover: oklch(0.216 0.006 56.043);
+      --chart-1: oklch(0.769 0.188 70.08);
+      --chart-2: oklch(0.553 0.013 58.071);
       --popover-foreground: oklch(0.985 0.001 106.423);
       --primary: oklch(0.473 0.137 46.201);
       --primary-foreground: oklch(0.987 0.022 95.277);

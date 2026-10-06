@@ -7,9 +7,9 @@
 use crate::active_company::Companies;
 use crate::api::{cpb, ledger_api, lpb};
 use crate::errors::describe;
+use crate::task::spawn_local;
 use crate::ui::{SELECT_OPTION, Select};
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
@@ -159,7 +159,8 @@ pub fn keep_year_in_url(path: String, year: RwSignal<String>) {
     });
 }
 
-/// The "Räkenskapsår" select over `years`, bound to `year`.
+/// The "Räkenskapsår" select over `years`, bound to `year`, for a
+/// `PageHeader`: its label is for screen readers only.
 #[component]
 pub fn FiscalYearSelect(
     years: RwSignal<Vec<lpb::FiscalYear>>,
@@ -167,7 +168,7 @@ pub fn FiscalYearSelect(
 ) -> impl IntoView {
     view! {
         <div class="w-56">
-            <Select label="Räkenskapsår" id="fiscal_year" value=year>
+            <Select label="Räkenskapsår" id="fiscal_year" hide_label=true value=year>
                 {move || {
                     years
                         .get()

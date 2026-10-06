@@ -4,6 +4,7 @@ use doris_company::domain::{FiscalYear, LegalForm};
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DomainError {
@@ -417,6 +418,17 @@ pub enum LedgerEvent {
     },
 }
 
+/// When a voucher was recorded and by whom: behandlingshistorik (BFL 5 kap.
+/// 11 §). Read from the projection, so the domain's own state has none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recorded {
+    /// RFC 3339, UTC: the event's `recorded_at`.
+    pub at: String,
+    /// The user who recorded it; `None` if the event names no actor.
+    /// What they are called is for identity to say.
+    pub by: Option<Uuid>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Voucher {
     pub number: u32,
@@ -427,6 +439,8 @@ pub struct Voucher {
     pub corrected_by: Option<u32>,
     /// In the order they were added.
     pub attachments: Vec<Attachment>,
+    /// Set by `list_vouchers`; `None` in the domain's state.
+    pub recorded: Option<Recorded>,
 }
 
 /// One account's figures in a fiscal year (saldobalans). `opening` is its
@@ -543,6 +557,7 @@ impl Ledger {
                     corrects,
                     corrected_by: None,
                     attachments: Vec::new(),
+                    recorded: None,
                 });
             }
             LedgerEvent::OpeningBalancesSet { lines } => self.opening_balances = lines,

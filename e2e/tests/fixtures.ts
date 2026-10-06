@@ -1,4 +1,4 @@
-import { test as base, expect, type BrowserContext, type CDPSession, type Page } from "@playwright/test";
+import { test as base, expect, type BrowserContext, type CDPSession, type Locator, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
@@ -117,6 +117,11 @@ export const test = base.extend<Fixtures>({
 
 export { expect };
 
+/** The account menu shows who is signed in. */
+export async function expectSignedIn(page: Page, name: string) {
+  await expect(page.getByRole("banner").locator("summary").filter({ hasText: name })).toBeVisible();
+}
+
 /** Registers through the UI and waits until signed in. */
 export async function register(page: Page, app: string, opts: { email: string; name: string; passkey?: string; invitationLink?: string }) {
   await page.goto(opts.invitationLink ?? `${app}/register`);
@@ -125,7 +130,7 @@ export async function register(page: Page, app: string, opts: { email: string; n
   await page.getByLabel("Namn", { exact: true }).fill(opts.name);
   await page.getByLabel("Passkeyns namn").fill(opts.passkey ?? "Laptop");
   await page.getByRole("button", { name: "Skapa konto med passkey" }).click();
-  await expect(page.getByText(`Inloggad som ${opts.name}`)).toBeVisible();
+  await expectSignedIn(page, opts.name);
 }
 
 export async function logIn(page: Page, app: string, email: string) {
@@ -154,6 +159,9 @@ export async function addCompany(
   await page.getByLabel(method).check();
   await page.getByRole("button", { name: "Spara företag" }).click();
   await expect(page.getByRole("heading", { name })).toBeVisible();
+  // The company page's address ends with the new company's id.
+  await page.waitForURL(/\/companies\/[0-9a-f-]{36}$/);
+  return new URL(page.url()).pathname.split("/").pop()!;
 }
 
 export async function addSupplier(page: Page, app: string, name: string) {
@@ -172,4 +180,71 @@ export async function addCustomer(page: Page, app: string, name: string, terms =
   await page.getByLabel("Betalningsvillkor (dagar)").fill(terms);
   await page.getByRole("button", { name: "Spara" }).click();
   await expect(page.getByRole("row", { name: new RegExp(`^1 ${name}`) })).toBeVisible();
+}
+
+export type Menu = "Bokföring" | "Inköp" | "Försäljning" | "Lön" | "Konto";
+
+const MENU_OF: Record<string, Menu | null> = {
+  Översikt: null,
+  Kundfakturor: "Försäljning",
+  Kunder: "Försäljning",
+  Verifikationer: "Bokföring",
+  Saldobalans: "Bokföring",
+  Rapporter: "Bokföring",
+  Kontoplan: "Bokföring",
+  Räkenskapsår: "Bokföring",
+  Leverantörsfakturor: "Inköp",
+  Leverantörer: "Inköp",
+  Lönekörningar: "Lön",
+  Anställda: "Lön",
+  Arbetsgivardeklaration: "Lön",
+  Företag: "Konto",
+  Passkeys: "Konto",
+  Inbjudningar: "Konto",
+};
+
+/** Opens one of the header's menus (if it is closed) and returns its panel. */
+export async function openMenu(page: Page, menu: Menu): Promise<Locator> {
+  // The menu's own name is the first thing in its button; the account
+  // menu's button also holds the user's name, which could be anything.
+  const name = page.locator("summary > span:first-child", { hasText: new RegExp(`^${menu}$`) });
+  const details = page.getByRole("banner").locator("details").filter({ has: name });
+  if (!(await details.evaluate((d: HTMLDetailsElement) => d.open))) await details.locator("summary").click();
+  return details.getByRole("list");
+}
+
+/** Follows a link in the header, opening the menu that holds it first. */
+export async function goTo(page: Page, link: string) {
+  const menu = MENU_OF[link];
+  if (menu === undefined) throw new Error(`no header link called ${link}`);
+  const scope = menu ? await openMenu(page, menu) : page.getByRole("banner");
+  await scope.getByRole("link", { name: link, exact: true }).click();
+}
+
+// Protobuf by hand, for the one request the tests send many of.
+const varint = (n: number): number[] => (n < 0x80 ? [n] : [(n & 0x7f) | 0x80, ...varint(Math.floor(n / 128))]);
+const bytes = (field: number, body: number[]) => [(field << 3) | 2, ...varint(body.length), ...body];
+const text = (field: number, s: string) => bytes(field, [...Buffer.from(s, "utf8")]);
+const uint = (field: number, n: number) => [field << 3, ...varint(n)];
+
+/** Records `count` vouchers (1930 against 3001, 1 kr more each) over
+ * gRPC-Web with the page's session: far quicker than the form. */
+export async function bookMany(page: Page, app: string, companyId: string, count: number, date: string) {
+  for (let i = 1; i <= count; i++) {
+    const ore = i * 100;
+    const message = [
+      ...text(1, companyId),
+      ...text(2, date),
+      ...text(3, `Serie ${i}`),
+      ...bytes(4, [...uint(1, 1930), ...uint(2, ore)]),
+      ...bytes(4, [...uint(1, 3001), ...uint(3, ore)]),
+    ];
+    const frame = Buffer.from([0, ...[24, 16, 8, 0].map((s) => (message.length >>> s) & 0xff), ...message]);
+    const response = await page.request.post(`${app}/doris.ledger.v1.LedgerService/RecordVoucher`, {
+      headers: { "content-type": "application/grpc-web+proto", "x-grpc-web": "1" },
+      data: frame,
+    });
+    const status = response.headers()["grpc-status"] ?? (await response.body()).toString("latin1").match(/grpc-status: ?(\d+)/)?.[1];
+    if (status !== undefined && status !== "0") throw new Error(`RecordVoucher ${i} failed: grpc-status ${status}`);
+  }
 }

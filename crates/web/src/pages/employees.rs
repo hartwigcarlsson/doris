@@ -6,13 +6,14 @@ use crate::api::{payroll_api, ppb};
 use crate::errors::{describe, describe_code};
 use crate::format::{amount, parse_amount};
 use crate::pages::payroll_runs::tax_setting_label;
+use crate::task::spawn_local;
 use crate::ui::{
-    Button, Card, Checkbox, ErrorAlert, Field, SELECT_OPTION, Select, TABLE_AMOUNT_CELL,
-    TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW, Table, Variant,
+    Badge, BadgeVariant, Button, Card, Checkbox, ErrorAlert, Field, PageHeader, SELECT_OPTION,
+    Select, TABLE_AMOUNT_CELL, TABLE_BODY, TABLE_CELL, TABLE_HEAD, TABLE_HEADER_CELL, TABLE_ROW,
+    Table, TableCard, Variant,
 };
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 
 /// The salary accounts an employee can have, in the order offered.
 pub const SALARY_ACCOUNTS: [(u32, &str); 3] = [
@@ -210,8 +211,8 @@ pub fn Employees() -> impl IntoView {
     };
 
     view! {
-        <div class="grid gap-6" data-wide>
-            <h1 class="text-sm font-medium">"Anställda"</h1>
+        <div class="grid gap-6">
+            <PageHeader title="Anställda" />
             <ErrorAlert message=error />
             <Card title="Anställd">
                 <form class="grid grid-cols-2 items-end gap-4" novalidate on:submit=save>
@@ -271,7 +272,7 @@ pub fn Employees() -> impl IntoView {
                 </form>
             </Card>
             <Checkbox label="Visa inaktiva" id="show_inactive" checked=show_inactive />
-            <Table>
+            <TableCard><Table>
                 <thead class=TABLE_HEAD>
                     <tr class=TABLE_ROW>
                         <th class=TABLE_HEADER_CELL>"Namn"</th>
@@ -300,7 +301,7 @@ pub fn Employees() -> impl IntoView {
                         <EmployeeRow company_id=company_id employee=employee edit=edit changed=changed error=error />
                     </For>
                 </tbody>
-            </Table>
+            </Table></TableCard>
         </div>
     }
 }
@@ -345,7 +346,13 @@ fn EmployeeRow(
             <td class=TABLE_AMOUNT_CELL>{amount(employee.monthly_salary)}</td>
             <td class=TABLE_CELL>{account}</td>
             <td class=TABLE_CELL>{tax_setting_label(employee.tax.as_ref())}</td>
-            <td class=TABLE_CELL>{if employee.active { "Aktiv" } else { "Inaktiv" }}</td>
+            <td class=TABLE_CELL>
+                {if employee.active {
+                    view! { <Badge>"Aktiv"</Badge> }.into_any()
+                } else {
+                    view! { <Badge variant=BadgeVariant::Outline>"Inaktiv"</Badge> }.into_any()
+                }}
+            </td>
             <td class=format!("{TABLE_CELL} text-right")>
                 <Show when=move || stored.with_value(|e| e.active)>
                     <Button variant=Variant::Ghost kind="button" on:click=move |_| edit.run(stored.get_value())>

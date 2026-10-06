@@ -2,7 +2,7 @@ use crate::api::{api, pb};
 use crate::app::Session;
 use crate::errors::describe;
 use crate::passkey;
-use crate::ui::{Button, Card, ErrorAlert, Field};
+use crate::ui::{Button, Card, ErrorAlert, Field, NARROW};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -76,7 +76,8 @@ pub fn Register() -> impl IntoView {
     };
     view! {
         {move || done.get().then(|| view! { <Redirect path="/" /> })}
-        <Card title=title description="Du loggar in med en passkey – inget lösenord behövs.">
+        <div class=format!("mx-auto {NARROW}")>
+        <Card title=title description="Du loggar in med en passkey – inget lösenord behövs." page_title=true>
             <Show
                 when=open
                 fallback=move || {
@@ -113,6 +114,7 @@ pub fn Register() -> impl IntoView {
                 </form>
             </Show>
         </Card>
+        </div>
     }
 }
 

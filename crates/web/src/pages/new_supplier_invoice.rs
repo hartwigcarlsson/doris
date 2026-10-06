@@ -7,10 +7,10 @@ use crate::attachments::check_sizes;
 use crate::errors::{describe, describe_code};
 use crate::format::{amount, parse_amount, plus_days, today};
 use crate::invoice_ui::{InvoiceLineRows, LineRow, PickedFiles, preview_vat};
-use crate::ui::{Button, Card, ErrorAlert, Field, SELECT_OPTION, Select};
+use crate::task::spawn_local;
+use crate::ui::{Button, ErrorAlert, Field, PageHeader, Panel, SELECT_OPTION, Select};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use leptos_router::hooks::use_navigate;
 
 #[component]
@@ -158,8 +158,10 @@ pub fn NewSupplierInvoice() -> impl IntoView {
     let to_pay = move || net_total() + parse_amount(&vat.get()).unwrap_or(0);
 
     view! {
-        <Card title="Ny leverantörsfaktura">
-            <form class="grid gap-4" data-wide novalidate on:submit=submit>
+        <div class="grid gap-6">
+        <PageHeader title="Ny leverantörsfaktura" />
+        <Panel>
+            <form class="grid gap-4" novalidate on:submit=submit>
                 <ErrorAlert message=error />
                 <div class="grid grid-cols-2 gap-4">
                     <Select label="Leverantör" id="invoice_supplier" value=supplier>
@@ -201,8 +203,12 @@ pub fn NewSupplierInvoice() -> impl IntoView {
                     </p>
                 </div>
                 <PickedFiles id="invoice_files" files=files reading=reading error=error company=form_company />
+                // In its own row, so the grid does not stretch it across the card.
+                <div>
                 <Button disabled=Signal::derive(move || busy.get() || reading.get() > 0)>"Registrera"</Button>
+                </div>
             </form>
-        </Card>
+        </Panel>
+        </div>
     }
 }

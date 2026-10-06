@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { addCompany, addCustomer, expect, register, test } from "./fixtures";
+import { addCompany, addCustomer, expect, goTo, register, test } from "./fixtures";
 
 // The Status cell; the row's buttons have words of their own.
 const status = (row: Locator) => row.getByRole("cell").nth(5);
@@ -24,7 +24,7 @@ test("a customer invoice gets the proposed number, is booked, paid, reversed and
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
   await addCustomer(page, app, "Kund AB", "10");
-  await page.getByRole("banner").getByRole("link", { name: "Kundfakturor" }).click();
+  await goTo(page, "Kundfakturor");
   await page.getByRole("link", { name: "Ny kundfaktura" }).click();
   await expect(page.getByLabel("Fakturanummer")).toHaveValue("1");
   await page.getByLabel("Kund", { exact: true }).selectOption({ label: "1 Kund AB" });
@@ -34,10 +34,10 @@ test("a customer invoice gets the proposed number, is booked, paid, reversed and
 
   const row = page.getByRole("row", { name: /^1017 Kund AB/ });
   await expect(status(row)).toHaveText("Obetald");
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await expect(page.getByRole("row", { name: /Kundfaktura 1017, Kund AB/ })).toContainText("1 underlag");
 
-  await page.getByRole("banner").getByRole("link", { name: "Kundfakturor" }).click();
+  await goTo(page, "Kundfakturor");
   await page.getByLabel("Visa betalda och makulerade").check();
   await row.getByRole("button", { name: "Registrera inbetalning" }).click();
   await page.getByRole("button", { name: "Bekräfta inbetalning" }).click();
@@ -96,19 +96,19 @@ test("under kontantmetoden only the payment is booked, and Räkenskapsår warns 
   await addCustomer(page, app, "Kund AB");
   await registerInvoice(page, app);
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await expect(page.getByRole("row", { name: /Kundfaktura/ })).toHaveCount(0);
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   await expect(page.getByText(warning)).toBeVisible();
 
-  await page.getByRole("banner").getByRole("link", { name: "Kundfakturor" }).click();
+  await goTo(page, "Kundfakturor");
   await page.getByRole("row", { name: /^1 Kund AB/ }).getByRole("button", { name: "Registrera inbetalning" }).click();
   await page.getByRole("button", { name: "Bekräfta inbetalning" }).click();
   await expect(page.getByRole("row", { name: /^1 Kund AB/ })).toHaveCount(0);
 
-  await page.getByRole("banner").getByRole("link", { name: "Verifikationer" }).click();
+  await goTo(page, "Verifikationer");
   await expect(page.getByRole("row", { name: /Kundfaktura 1, Kund AB/ })).toContainText("1 underlag");
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   await expect(page.getByRole("heading", { name: "Räkenskapsår" })).toBeVisible();
   await expect(page.getByText(warning)).toHaveCount(0);
 });

@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { addCompany, expect, register, test } from "./fixtures";
+import { addCompany, expect, goTo, register, test } from "./fixtures";
 
 // Last calendar year has always ended, so it can be closed.
 const last = new Date().getFullYear() - 1;
@@ -21,7 +21,7 @@ test("a year opens with balances, closes with its result and reopens", async ({ 
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB", lastStart);
 
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   await page.getByRole("link", { name: "Ingående balanser" }).click();
   await expect(page.getByRole("heading", { name: `Ingående balanser ${lastStart}` })).toBeVisible();
   await page.getByLabel("Konto, rad 1").fill("1930");
@@ -38,7 +38,7 @@ test("a year opens with balances, closes with its result and reopens", async ({ 
   await book(page, app, `${last}-06-01`, "1250");
   await expect(page.getByRole("status")).toHaveText("Verifikation 1 bokförd");
 
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   const lastYear = page.getByRole("row", { name: new RegExp(`^${lastStart}`) });
   await lastYear.getByRole("button", { name: "Stäng år" }).click();
   await lastYear.getByRole("button", { name: "Bekräfta stängning" }).click();
@@ -57,7 +57,7 @@ test("a year opens with balances, closes with its result and reopens", async ({ 
   await expect(page.getByRole("row", { name: /Ingående balans/ })).toContainText("-10 000,00");
   await expect(page.getByText("Inga transaktioner på kontot under räkenskapsåret.")).toHaveCount(0);
 
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   await lastYear.getByRole("button", { name: "Öppna igen" }).click();
   await lastYear.getByLabel("Anledning").fill("Glömd faktura");
   await lastYear.getByRole("button", { name: "Bekräfta", exact: true }).click();
@@ -76,7 +76,7 @@ test("the fiscal years follow the active company", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560360793", "Bolaget AB", nextStart);
   await addCompany(page, app, "5560160680", "Exempel AB", lastStart);
-  await page.getByRole("banner").getByRole("link", { name: "Räkenskapsår" }).click();
+  await goTo(page, "Räkenskapsår");
   const lastYear = page.getByRole("row", { name: new RegExp(`^${lastStart}`) });
   await lastYear.getByRole("button", { name: "Stäng år" }).click();
   await lastYear.getByRole("button", { name: "Bekräfta stängning" }).click();
@@ -87,4 +87,36 @@ test("the fiscal years follow the active company", async ({ page, app }) => {
   await expect(page.getByRole("status")).toHaveCount(0);
   await expect(lastYear).toHaveCount(0);
   await expect(page.getByRole("row", { name: new RegExp(`^${nextStart}`) })).toContainText("Öppet");
+});
+
+// The rows are filled in when the balances arrive. Typing before that used
+// to be overwritten, so the form waits for them.
+test("opening balances typed while the page loads are kept", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB", lastStart);
+  await page.route("**/GetOpeningBalances", async (route) => {
+    await new Promise((r) => setTimeout(r, 1000));
+    await route.continue();
+  });
+  await page.goto(`${app}/opening-balances`);
+  await expect(page.getByRole("heading", { name: `Ingående balanser ${lastStart}` })).toBeVisible();
+  await page.getByLabel("Konto, rad 1").fill("1930");
+  await page.getByLabel("Debet, rad 1").fill("10000");
+  await page.getByLabel("Konto, rad 2").fill("2081");
+  await page.getByLabel("Kredit, rad 2").fill("10000");
+  await expect(page.getByRole("button", { name: "Spara" })).toBeEnabled();
+  await expect(page.getByLabel("Konto, rad 1")).toHaveValue("1930");
+  await page.getByRole("button", { name: "Spara" }).click();
+  await expect(page.getByRole("status")).toHaveText("Ingående balanser sparade");
+});
+
+
+test("opening balances that cannot be fetched show the error and a form that cannot be saved", async ({ page, app }) => {
+  await register(page, app, { email: "anna@example.se", name: "Anna" });
+  await addCompany(page, app, "5560160680", "Exempel AB", lastStart);
+  await page.route("**/GetOpeningBalances", (route) => route.abort());
+  await page.goto(`${app}/opening-balances`);
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByLabel("Konto, rad 1")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Spara" })).toBeDisabled();
 });
