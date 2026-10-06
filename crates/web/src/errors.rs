@@ -165,6 +165,13 @@ fn message(code: &str) -> &'static str {
         "customer_invoice_paid" => "Fakturan är redan betald.",
         "customer_invoice_not_paid" => "Fakturan är inte betald.",
         "customer_invoice_cancelled" => "Fakturan är makulerad.",
+        "invalid_vat_box" => "Välj en ruta som finns på momsdeklarationen.",
+        "invalid_vat_period" => "Den redovisningsperioden finns inte.",
+        "vat_period_not_ended" => "Perioden har inte tagit slut än.",
+        "vat_period_locked" => "Redovisningsperioden kan inte ändras när en deklaration för året är inlämnad.",
+        "vat_return_outdated" => "Bokföringen har ändrats sedan deklarationen visades. Ladda om sidan och kontrollera den igen.",
+        "vat_return_unchanged" => "Perioden är redan inlämnad och har inte ändrats.",
+        "vat_not_registered" => "Företaget är inte momsregistrerat det räkenskapsåret.",
         _ => "Något gick fel. Försök igen.",
     }
 }
@@ -402,5 +409,20 @@ mod tests {
             message("payroll_run_not_due"),
             "Lönekörningen kan inte bokföras före utbetalningsdagen."
         );
+    }
+
+    #[test]
+    fn vat_codes_have_swedish_messages() {
+        for code in [
+            "invalid_vat_box",
+            "invalid_vat_period",
+            "vat_period_not_ended",
+            "vat_period_locked",
+            "vat_return_outdated",
+            "vat_return_unchanged",
+            "vat_not_registered",
+        ] {
+            assert_ne!(message(code), message("something_else"), "{code}");
+        }
     }
 }

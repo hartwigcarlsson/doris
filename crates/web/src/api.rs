@@ -5,6 +5,7 @@ use doris_proto::company::v1::company_service_client::CompanyServiceClient;
 use doris_proto::invoicing::v1::invoicing_service_client::InvoicingServiceClient;
 use doris_proto::ledger::v1::ledger_service_client::LedgerServiceClient;
 use doris_proto::payroll::v1::payroll_service_client::PayrollServiceClient;
+use doris_proto::vat::v1::vat_service_client::VatServiceClient;
 use leptos::prelude::window;
 use tonic_web_wasm_client::Client;
 use tonic_web_wasm_client::options::{Credentials, FetchOptions};
@@ -14,12 +15,16 @@ pub use doris_proto::company::v1 as cpb;
 pub use doris_proto::invoicing::v1 as ipb;
 pub use doris_proto::ledger::v1 as lpb;
 pub use doris_proto::payroll::v1 as ppb;
+#[allow(unused_imports)]
+pub use doris_proto::vat::v1 as vpb;
 
 pub type Api = AuthServiceClient<Client>;
 pub type CompanyApi = CompanyServiceClient<Client>;
 pub type InvoicingApi = InvoicingServiceClient<Client>;
 pub type LedgerApi = LedgerServiceClient<Client>;
 pub type PayrollApi = PayrollServiceClient<Client>;
+#[allow(dead_code)]
+pub type VatApi = VatServiceClient<Client>;
 
 pub fn api() -> Api {
     AuthServiceClient::new(client())
@@ -41,6 +46,11 @@ pub fn payroll_api() -> PayrollApi {
 pub fn ledger_api() -> LedgerApi {
     // Room for a 10 MiB underlag coming back from GetAttachment.
     LedgerServiceClient::new(client()).max_decoding_message_size(11 << 20)
+}
+
+#[allow(dead_code)]
+pub fn vat_api() -> VatApi {
+    VatServiceClient::new(client())
 }
 
 /// Cookies are always sent, so the session also works when the frontend is
