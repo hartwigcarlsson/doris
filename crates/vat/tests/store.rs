@@ -4,7 +4,7 @@ use doris_company::domain::{AccountingMethod, LegalForm};
 use doris_ledger::domain::{RecordVoucher, VoucherLine};
 use doris_vat::domain::{DomainError, VatStatus};
 use doris_vat::period::VatPeriodKind;
-use doris_vat::{Error, export_vat_file, get_vat_return, list_vat_returns, set_vat_period};
+use doris_vat::{Error, export_vat_file, get_vat_return, list_vat_returns, mark_vat_return_submitted, set_vat_period};
 use jiff::civil::Date;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -123,4 +123,127 @@ async fn monthly_and_not_registered_change_the_periods() {
 
     let not_a_year = set_vat_period(&pool, id, anna, d("2026-02-01"), VatPeriodKind::Monthly).await;
     assert!(matches!(not_a_year, Err(Error::Ledger(_))));
+}
+
+async fn saldo(pool: &SqlitePool, id: Uuid, user: Uuid, account: u32) -> i64 {
+    doris_ledger::trial_balance(pool, id, user, d("2026-01-01"))
+        .await
+        .unwrap()
+        .iter()
+        .find(|r| r.account == account)
+        .map_or(0, |r| r.opening + r.debit - r.credit)
+}
+
+async fn mark(pool: &SqlitePool, id: Uuid, user: Uuid, end: &str) -> doris_vat::Result<Option<doris_ledger::VoucherRef>> {
+    let print = get_vat_return(pool, id, user, d(end), d(TODAY)).await?.fingerprint;
+    mark_vat_return_submitted(pool, id, user, d(end), &print, d(TODAY)).await
+}
+
+#[tokio::test]
+async fn marking_submitted_books_the_settlement_and_zeroes_the_vat_accounts() {
+    for method in [AccountingMethod::Invoice, AccountingMethod::Cash] {
+        let pool = db().await;
+        let anna = Uuid::new_v4();
+        let id = company(&pool, anna, method).await;
+        q3_books(&pool, id, anna).await;
+        let voucher = mark(&pool, id, anna, "2026-09-30").await.unwrap().unwrap();
+        assert_eq!(voucher.number, 3);
+        assert_eq!((saldo(&pool, id, anna, 2611).await, saldo(&pool, id, anna, 2640).await), (0, 0));
+        assert_eq!(saldo(&pool, id, anna, 2650).await, -2_100_00);
+        assert_eq!(saldo(&pool, id, anna, 3740).await, -20);
+        let view = get_vat_return(&pool, id, anna, d("2026-09-30"), d(TODAY)).await.unwrap();
+        assert_eq!((view.summary.status, view.boxes.vat_due), (VatStatus::Submitted, 2_100), "the settlement is not counted");
+        assert_eq!(view.submissions[0].submitted_by, Some(anna));
+        let vouchers = doris_ledger::list_vouchers(&pool, id, anna, d("2026-01-01")).await.unwrap();
+        let settled = vouchers.iter().find(|v| v.number == 3).unwrap();
+        assert_eq!((settled.date, settled.text.as_str()), (d("2026-09-30"), "Momsavräkning juli–september 2026"));
+        let year = list_vat_returns(&pool, id, anna, d("2026-01-01"), d(TODAY)).await.unwrap();
+        assert!(year.locked);
+    }
+}
+
+#[tokio::test]
+async fn a_second_identical_submission_is_refused_and_books_nothing() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna, AccountingMethod::Invoice).await;
+    q3_books(&pool, id, anna).await;
+    let print = get_vat_return(&pool, id, anna, d("2026-09-30"), d(TODAY)).await.unwrap().fingerprint;
+    mark_vat_return_submitted(&pool, id, anna, d("2026-09-30"), &print, d(TODAY)).await.unwrap();
+    let again = mark_vat_return_submitted(&pool, id, anna, d("2026-09-30"), &print, d(TODAY)).await;
+    assert!(matches!(again, Err(Error::Domain(DomainError::VatReturnUnchanged))));
+    let vouchers = doris_ledger::list_vouchers(&pool, id, anna, d("2026-01-01")).await.unwrap();
+    assert_eq!(vouchers.len(), 3);
+}
+
+#[tokio::test]
+async fn a_late_voucher_changes_the_period_and_the_next_submission_books_the_difference() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna, AccountingMethod::Invoice).await;
+    q3_books(&pool, id, anna).await;
+    mark(&pool, id, anna, "2026-09-30").await.unwrap();
+    book(&pool, id, anna, "2026-09-20", &[(1510, 500_00, 0), (3001, 0, 400_00), (2611, 0, 100_00)]).await;
+    let view = get_vat_return(&pool, id, anna, d("2026-09-30"), d(TODAY)).await.unwrap();
+    assert_eq!((view.summary.status, view.boxes.vat_due), (VatStatus::Changed, 2_200));
+    let stale = mark_vat_return_submitted(&pool, id, anna, d("2026-09-30"), "stale", d(TODAY)).await;
+    assert!(matches!(stale, Err(Error::Domain(DomainError::VatReturnOutdated))));
+    mark(&pool, id, anna, "2026-09-30").await.unwrap();
+    assert_eq!(saldo(&pool, id, anna, 2611).await, 0);
+    assert_eq!(saldo(&pool, id, anna, 2650).await, -2_200_00);
+}
+
+#[tokio::test]
+async fn a_corrected_settlement_is_booked_again() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna, AccountingMethod::Invoice).await;
+    q3_books(&pool, id, anna).await;
+    let first = mark(&pool, id, anna, "2026-09-30").await.unwrap().unwrap();
+    doris_ledger::correct_voucher(&pool, id, anna, first.fiscal_year_start, first.number, d(TODAY), d(TODAY)).await.unwrap();
+    let view = get_vat_return(&pool, id, anna, d("2026-09-30"), d(TODAY)).await.unwrap();
+    assert_eq!(view.summary.status, VatStatus::Changed);
+    assert!(view.submissions[0].corrected);
+    mark(&pool, id, anna, "2026-09-30").await.unwrap();
+    assert_eq!(saldo(&pool, id, anna, 2650).await, -2_100_00);
+}
+
+#[tokio::test]
+async fn a_closed_year_refuses_the_submission_and_records_nothing() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    // First year 2025, so 2025 can be closed on 2026-10-06.
+    let id = doris_company::register_company(
+        &pool,
+        anna,
+        NewCompany {
+            org_nr: "556016-0680",
+            name: "Exempel AB",
+            legal_form: LegalForm::Aktiebolag,
+            street: "",
+            postal_code: "",
+            city: "",
+            fiscal_year_start: d("2025-01-01"),
+            fiscal_year_end: d("2025-12-31"),
+            accounting_method: AccountingMethod::Invoice,
+        },
+    )
+    .await
+    .unwrap();
+    book(&pool, id, anna, "2025-12-10", &[(1930, 125_00, 0), (3001, 0, 100_00), (2611, 0, 25_00)]).await;
+    doris_ledger::close_fiscal_year(&pool, id, anna, d("2025-01-01"), d(TODAY)).await.unwrap();
+    let refused = mark(&pool, id, anna, "2025-12-31").await;
+    assert!(matches!(refused, Err(Error::Ledger(_))));
+    let view = get_vat_return(&pool, id, anna, d("2025-12-31"), d(TODAY)).await.unwrap();
+    assert!(view.submissions.is_empty());
+}
+
+#[tokio::test]
+async fn a_period_with_nothing_to_settle_is_recorded_without_a_voucher() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna, AccountingMethod::Invoice).await;
+    assert_eq!(mark(&pool, id, anna, "2026-03-31").await.unwrap(), None);
+    let view = get_vat_return(&pool, id, anna, d("2026-03-31"), d(TODAY)).await.unwrap();
+    assert_eq!((view.summary.status, view.submissions.len()), (VatStatus::Submitted, 1));
 }

@@ -231,3 +231,36 @@ pub async fn export_vat_file(pool: &SqlitePool, company_id: Uuid, actor: Uuid, p
     let xml = eskd::eskd_xml(&company.org_nr, period, &domain::boxes(&accounts));
     Ok((eskd::file_name(&company.org_nr, period), xml, domain::fingerprint(period.end, &accounts)))
 }
+
+/// Records the period as submitted and books its settlement voucher (dated
+/// the period's last day) in one transaction: both, or nothing and no
+/// voucher number used up. `fingerprint` is that of the file downloaded or
+/// the declaration shown.
+pub async fn mark_vat_return_submitted(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    period_end: Date,
+    fingerprint: &str,
+    today: Date,
+) -> Result<Option<VoucherRef>> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let (company, vat, version, _) = load(&mut tx, company_id, actor).await?;
+    let (kind, period) = resolve(&company, &vat, period_end)?;
+    let accounts = domain::saldos(&totals_in(&mut tx, company_id, &vat, period).await?);
+    let corrected = doris_ledger::corrected_vouchers_in(&mut tx, company_id).await?;
+    let domain::Prepared { lines, mut submission } =
+        domain::submit(&vat, period, kind, today, accounts, fingerprint, &corrected)?;
+    if !lines.is_empty() {
+        let cmd = doris_ledger::domain::RecordVoucher {
+            date: period.end,
+            text: format!("Momsavräkning {}", period.label()),
+            lines,
+        };
+        submission.voucher = Some(doris_ledger::record_voucher_in(&mut tx, company_id, actor, cmd, today).await?);
+    }
+    let voucher = submission.voucher;
+    append(&mut tx, company_id, version, &[VatEvent::VatReturnSubmitted(submission)], actor).await?;
+    tx.commit().await?;
+    Ok(voucher)
+}
