@@ -68,7 +68,7 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
         )
         .add_service(VatServiceServer::new(vat))
         .into_axum_router()
-        .layer(axum::middleware::from_fn_with_state(pool, session_gate))
+        .layer(axum::middleware::from_fn_with_state(pool, auth_gate))
         .layer(GrpcWebLayer::new())
         .layer(axum::middleware::map_response(hide_internal_messages));
     app = if serve_frontend {
@@ -83,15 +83,43 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
     app
 }
 
-/// LedgerService and InvoicingService accept bodies of up to 21 MiB, and tonic reserves the size
-/// a frame header claims before any handler runs. So their calls need a valid
-/// session before the body is read; the handlers still check it themselves.
-async fn session_gate(
+/// Authenticates every gRPC call before its body is read. With an
+/// `authorization: Bearer` header the call runs as the token's owner, if
+/// `access` lets tokens make it, with the token recorded on every event it
+/// appends. Without one, LedgerService and InvoicingService (bodies of up
+/// to 21 MiB, which tonic reserves from the frame header before any handler
+/// runs) need a valid session cookie here; handlers still check it.
+async fn auth_gate(
     State(pool): State<SqlitePool>,
-    request: axum::extract::Request,
+    mut request: axum::extract::Request,
     next: Next,
 ) -> axum::response::Response {
-    let path = request.uri().path();
+    let path = request.uri().path().to_owned();
+    if let Some(secret) = grpc::bearer(request.headers()) {
+        let now = jiff::Timestamp::now();
+        let (user, access) = match doris_identity::token_user(&pool, &secret, now).await {
+            Ok(Some(found)) => found,
+            Ok(None) => return grpc::not_signed_in().into_http(),
+            Err(err) => return grpc::status(err).into_http(),
+        };
+        let required = access::access(&path);
+        if required == access::Access::SessionOnly {
+            return tonic::Status::permission_denied("token_not_allowed").into_http();
+        }
+        let token_id = access.token_id;
+        request.extensions_mut().insert(grpc::TokenCaller {
+            user,
+            access,
+            required,
+        });
+        let response = doris_eventstore::VIA_TOKEN
+            .scope(token_id.to_string(), next.run(request))
+            .await;
+        if let Err(err) = doris_identity::touch_api_token(&pool, token_id, now).await {
+            tracing::warn!("api token usage: {err}");
+        }
+        return response;
+    }
     let large = path.starts_with("/doris.ledger.v1.LedgerService/")
         || path.starts_with("/doris.invoicing.v1.InvoicingService/");
     if large && let Err(status) = grpc::session_user(&pool, request.headers()).await {

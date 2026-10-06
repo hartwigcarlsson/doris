@@ -44,11 +44,14 @@ impl AuthService for AuthApi {
         &self,
         request: Request<pb::GetStatusRequest>,
     ) -> Result<Response<pb::GetStatusResponse>, Status> {
-        let current_user = match session_token(&request) {
-            Some(token) => doris_identity::session_user(&self.pool, &token, Timestamp::now())
-                .await
-                .map_err(status)?,
-            None => None,
+        let current_user = match request.extensions().get::<TokenCaller>() {
+            Some(token) => Some(token.user.clone()),
+            None => match session_token(&request) {
+                Some(token) => doris_identity::session_user(&self.pool, &token, Timestamp::now())
+                    .await
+                    .map_err(status)?,
+                None => None,
+            },
         };
         Ok(Response::new(pb::GetStatusResponse {
             bootstrap_required: doris_identity::bootstrap_required(&self.pool)
@@ -322,7 +325,58 @@ pub(crate) async fn signed_in_user<T>(
     pool: &SqlitePool,
     request: &Request<T>,
 ) -> Result<User, Status> {
+    if let Some(token) = request.extensions().get::<TokenCaller>() {
+        return Ok(token.user.clone());
+    }
     session_user(pool, request.metadata().as_ref()).await
+}
+
+/// A call made with an API token. `auth_gate` puts it in the request.
+#[derive(Clone)]
+pub(crate) struct TokenCaller {
+    pub user: User,
+    pub access: doris_identity::TokenAccess,
+    pub required: crate::access::Access,
+}
+
+/// The token in an `authorization: Bearer …` header. The scheme is
+/// case-insensitive; anything else in the header is not a token, but is
+/// still returned, so that it fails as one rather than falling back to the
+/// cookie.
+pub(crate) fn bearer(headers: &http::HeaderMap) -> Option<String> {
+    let value = headers.get(http::header::AUTHORIZATION)?;
+    let value = value.to_str().unwrap_or_default().trim();
+    let token = match value.split_once(' ') {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("bearer") => rest.trim(),
+        _ => value,
+    };
+    Some(token.to_owned())
+}
+
+/// The company asked about and the caller. A token needs the call's scope
+/// for that company; membership is then checked by each module.
+pub(crate) async fn company_caller<T>(
+    pool: &SqlitePool,
+    request: &Request<T>,
+    company_id: &str,
+) -> Result<(Uuid, Uuid), Status> {
+    let user = signed_in_user(pool, request).await?;
+    let company: Uuid = company_id
+        .parse()
+        .map_err(|_| Status::not_found("company_not_found"))?;
+    if let Some(token) = request.extensions().get::<TokenCaller>() {
+        let grant = token
+            .access
+            .grants
+            .iter()
+            .find(|g| g.company_id == company)
+            .ok_or_else(|| Status::not_found("company_not_found"))?;
+        match token.required {
+            crate::access::Access::Company(scope) if grant.scopes.contains(&scope) => {}
+            _ => return Err(Status::permission_denied("missing_scope")),
+        }
+    }
+    Ok((company, user.id))
 }
 
 /// The user whose session cookie is in `headers`, or `Unauthenticated`.
@@ -432,7 +486,7 @@ fn set_cookie<T>(response: &mut Response<T>, token: &str, max_age: i64) {
     );
 }
 
-fn not_signed_in() -> Status {
+pub(crate) fn not_signed_in() -> Status {
     Status::unauthenticated("not_signed_in")
 }
 

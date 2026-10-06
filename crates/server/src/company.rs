@@ -30,12 +30,11 @@ impl CompanyApi {
         request: &Request<T>,
         company_id: &str,
     ) -> Result<(Company, Uuid), Status> {
-        let user = signed_in_user(&self.pool, request).await?;
-        let id: Uuid = company_id.parse().map_err(|_| company_not_found())?;
-        let company = doris_company::get_company(&self.pool, id, user.id)
+        let (id, user) = grpc::company_caller(&self.pool, request, company_id).await?;
+        let company = doris_company::get_company(&self.pool, id, user)
             .await
             .map_err(status)?;
-        Ok((company, user.id))
+        Ok((company, user))
     }
 }
 
@@ -113,10 +112,17 @@ impl CompanyService for CompanyApi {
         request: Request<pb::ListCompaniesRequest>,
     ) -> Result<Response<pb::ListCompaniesResponse>, Status> {
         let user = signed_in_user(&self.pool, &request).await?;
+        let token = request.extensions().get::<grpc::TokenCaller>().cloned();
         let companies = doris_company::list_companies(&self.pool, user.id)
             .await
             .map_err(status)?
             .into_iter()
+            // A token sees only the companies it was given.
+            .filter(|c| {
+                token
+                    .as_ref()
+                    .is_none_or(|t| t.access.grants.iter().any(|g| g.company_id == c.id))
+            })
             .map(|c| pb::CompanySummary {
                 id: c.id.to_string(),
                 org_nr: OrgNr::parse(&c.org_nr).map_or(c.org_nr.clone(), |o| o.formatted()),

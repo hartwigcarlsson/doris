@@ -4,7 +4,6 @@
 
 use doris_identity::domain::Scope;
 
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Access {
     /// Concerns one company and needs this scope for it.
@@ -16,7 +15,6 @@ pub(crate) enum Access {
 }
 
 /// The access a gRPC path (`/package.Service/Method`) needs from a token.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn access(path: &str) -> Access {
     path.strip_prefix('/')
         .and_then(|p| p.split_once('/'))
@@ -24,7 +22,6 @@ pub(crate) fn access(path: &str) -> Access {
         .unwrap_or(Access::SessionOnly)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn classify(service: &str, method: &str) -> Option<Access> {
     use Access::*;
     use Scope::*;

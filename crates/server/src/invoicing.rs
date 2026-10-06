@@ -2,7 +2,7 @@
 //! `doris_invoicing`. Every call needs a session, and a company the caller
 //! isn't a member of looks exactly like one that doesn't exist.
 
-use crate::grpc::{signed_in_user, today};
+use crate::grpc::today;
 use crate::ledger::{attachment_message, date, new_attachments};
 use doris_company::domain::AccountingMethod;
 use doris_invoicing::customer_invoices::{CustomerInvoice, NewCustomerInvoice};
@@ -34,9 +34,7 @@ impl InvoicingApi {
         request: &Request<T>,
         company_id: &str,
     ) -> Result<(Uuid, Uuid), Status> {
-        let user = signed_in_user(&self.pool, request).await?;
-        let company: Uuid = company_id.parse().map_err(|_| company_not_found())?;
-        Ok((company, user.id))
+        crate::grpc::company_caller(&self.pool, request, company_id).await
     }
 }
 
