@@ -1,7 +1,9 @@
 //! `doris.auth.v1.AuthService`: maps gRPC calls onto `doris_identity`, and
 //! carries the session in an HttpOnly cookie.
 
-use doris_identity::domain::{DomainError, Grant, Role, Scope, TokenChange, TokenRequest, User};
+use doris_identity::domain::{
+    Confirmation, DomainError, Grant, Role, Scope, TokenChange, TokenRequest, User,
+};
 use doris_identity::{Auth, Error, SESSION_TTL};
 use doris_proto::auth::v1 as pb;
 use doris_proto::auth::v1::auth_service_server::AuthService;
@@ -84,16 +86,19 @@ impl AuthApi {
         user_id: Uuid,
         req: &pb::FinishApiTokenRequest,
     ) -> Result<TokenRequest, Status> {
-        let request = self
+        let Confirmation::ApiToken { request } = self
             .auth
-            .finish_api_token(
+            .finish_confirmation(
                 user_id,
                 ceremony_id(&req.ceremony_id)?,
                 &credential(&req.credential_json)?,
                 Timestamp::now(),
             )
             .await
-            .map_err(finish_status)?;
+            .map_err(finish_status)?
+        else {
+            return Err(Status::failed_precondition("ceremony_expired"));
+        };
         for grant in &request.change().grants {
             self.member_of(user_id, grant.company_id).await?;
         }
@@ -337,7 +342,13 @@ impl AuthService for AuthApi {
             .await?;
         let (ceremony_id, options) = self
             .auth
-            .begin_api_token(user.id, TokenRequest::Create { change }, Timestamp::now())
+            .begin_confirmation(
+                user.id,
+                Confirmation::ApiToken {
+                    request: TokenRequest::Create { change },
+                },
+                Timestamp::now(),
+            )
             .await
             .map_err(status)?;
         ceremony_response(ceremony_id, &options)
@@ -380,9 +391,11 @@ impl AuthService for AuthApi {
             .await?;
         let (ceremony_id, options) = self
             .auth
-            .begin_api_token(
+            .begin_confirmation(
                 user.id,
-                TokenRequest::Change { token_id, change },
+                Confirmation::ApiToken {
+                    request: TokenRequest::Change { token_id, change },
+                },
                 Timestamp::now(),
             )
             .await

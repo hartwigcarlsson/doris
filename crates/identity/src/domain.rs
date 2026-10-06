@@ -558,6 +558,23 @@ pub enum TokenRequest {
     Change { token_id: Uuid, change: TokenChange },
 }
 
+/// What a passkey is asked to confirm: an action that gives someone access.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum Confirmation {
+    ApiToken {
+        request: TokenRequest,
+    },
+    Invitation {
+        email: Email,
+    },
+    /// The company module checks membership; identity only carries it.
+    AddMember {
+        company_id: Uuid,
+        email: Email,
+    },
+}
+
 impl TokenRequest {
     pub fn change(&self) -> &TokenChange {
         match self {

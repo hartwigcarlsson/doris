@@ -1,11 +1,11 @@
 //! WebAuthn ceremonies: registering with a passkey, adding passkeys (confirmed
-//! by an existing one), logging in and confirming an API token request. Ceremony state is kept server-side, is single use and expires
-//! after [`CEREMONY_TTL`].
+//! by an existing one), logging in and confirming an API token request, an invitation or a new member). Ceremony state
+//! is kept server-side, is single use and expires after [`CEREMONY_TTL`].
 
-use crate::domain::{DisplayName, Email, Passkey, TokenRequest, User};
+use crate::domain::{Confirmation, DisplayName, Email, Passkey, TokenRequest, User};
 use crate::{
-    Error, Result, add_passkey, check_api_token_change, check_new_api_token, check_registration,
-    create_session, find_user_by_email, get_user, record_passkey_use, register,
+    Error, Result, add_passkey, check_api_token_change, check_invitation, check_new_api_token,
+    check_registration, create_session, find_user_by_email, get_user, record_passkey_use, register,
 };
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -55,10 +55,10 @@ enum Ceremony {
         user_id: Option<Uuid>,
         state: Option<PasskeyAuthentication>,
     },
-    /// Confirms exactly this create or change of an API token.
-    ApiToken {
+    /// Confirms exactly this action (a token, an invitation, a member).
+    Confirm {
         user_id: Uuid,
-        request: TokenRequest,
+        action: Confirmation,
         state: PasskeyAuthentication,
     },
 }
@@ -316,46 +316,50 @@ impl Auth {
         Ok((user, session))
     }
 
-    /// Checks every rule for the token request, then asks the browser for
-    /// an assertion from one of the user's own passkeys. Nothing changes
-    /// until [`Auth::finish_api_token`]; company membership is the caller's
-    /// to check.
-    pub async fn begin_api_token(
+    /// Checks identity's rules for the action, then asks the browser for an
+    /// assertion from one of the user's own passkeys. Nothing changes until
+    /// the caller carries out what [`Auth::finish_confirmation`] returns;
+    /// company membership is the caller's to check.
+    pub async fn begin_confirmation(
         &self,
         user_id: Uuid,
-        request: TokenRequest,
+        action: Confirmation,
         now: Timestamp,
     ) -> Result<(Uuid, RequestChallengeResponse)> {
-        match &request {
-            TokenRequest::Create { change } => {
-                check_new_api_token(&self.pool, user_id, change, now).await?
+        match &action {
+            Confirmation::ApiToken {
+                request: TokenRequest::Create { change },
+            } => check_new_api_token(&self.pool, user_id, change, now).await?,
+            Confirmation::ApiToken {
+                request: TokenRequest::Change { token_id, change },
+            } => check_api_token_change(&self.pool, user_id, *token_id, change, now).await?,
+            Confirmation::Invitation { email } => {
+                check_invitation(&self.pool, user_id, email.as_str(), now).await?
             }
-            TokenRequest::Change { token_id, change } => {
-                check_api_token_change(&self.pool, user_id, *token_id, change, now).await?
-            }
+            Confirmation::AddMember { .. } => {}
         }
         let (options, state) = self.start_user_authentication(user_id).await?;
-        let ceremony = Ceremony::ApiToken {
+        let ceremony = Ceremony::Confirm {
             user_id,
-            request,
+            action,
             state,
         };
         Ok((self.start(&ceremony, now).await?, options))
     }
 
     /// Verifies the assertion and records the passkey's use. Returns the
-    /// request the passkey confirmed, for the caller to carry out. A
-    /// ceremony another user began looks like one that doesn't exist.
-    pub async fn finish_api_token(
+    /// action the passkey confirmed. A ceremony another user began looks
+    /// like one that doesn't exist.
+    pub async fn finish_confirmation(
         &self,
         user_id: Uuid,
         ceremony_id: Uuid,
         credential: &PublicKeyCredential,
         now: Timestamp,
-    ) -> Result<TokenRequest> {
-        let Ceremony::ApiToken {
+    ) -> Result<Confirmation> {
+        let Ceremony::Confirm {
             user_id: owner,
-            request,
+            action,
             state,
         } = self.take(ceremony_id, now).await?
         else {
@@ -367,7 +371,7 @@ impl Auth {
         self.verified_use(user_id, credential, &state)
             .await?
             .ok_or(Error::CredentialRejected)?;
-        Ok(request)
+        Ok(action)
     }
 
     /// An authentication challenge for one user's own passkeys.

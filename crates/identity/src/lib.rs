@@ -195,9 +195,34 @@ pub async fn create_invitation(
     email: &str,
     now: Timestamp,
 ) -> Result<(Uuid, String)> {
-    let email = Email::parse(email)?;
     let mut tx = doris_eventstore::begin(pool).await?;
-    let (creator, _) = load_user(&mut tx, creator_id)
+    let created = invitation_in(&mut tx, creator_id, email, now).await?;
+    tx.commit().await?;
+    Ok(created)
+}
+
+/// Runs every rule for an invitation without saving it, so a passkey
+/// ceremony can refuse before the authenticator is asked.
+pub async fn check_invitation(
+    pool: &SqlitePool,
+    creator_id: Uuid,
+    email: &str,
+    now: Timestamp,
+) -> Result<()> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let checked = invitation_in(&mut tx, creator_id, email, now).await;
+    tx.rollback().await?;
+    checked.map(drop)
+}
+
+async fn invitation_in(
+    conn: &mut SqliteConnection,
+    creator_id: Uuid,
+    email: &str,
+    now: Timestamp,
+) -> Result<(Uuid, String)> {
+    let email = Email::parse(email)?;
+    let (creator, _) = load_user(conn, creator_id)
         .await?
         .ok_or(Error::UserNotFound)?;
 
@@ -208,7 +233,7 @@ pub async fn create_invitation(
     )
     .bind(email.as_str())
     .bind(now.as_second())
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
     if taken {
         return Err(Error::AlreadyExists);
@@ -217,15 +242,7 @@ pub async fn create_invitation(
     let id = Uuid::new_v4();
     let token = token::new_token();
     let event = domain::create_invitation(&creator, id, email, token::hash_token(&token), now)?;
-    commit(
-        &mut tx,
-        &invitation_stream(id),
-        0,
-        &[event],
-        Some(creator_id),
-    )
-    .await?;
-    tx.commit().await?;
+    commit(conn, &invitation_stream(id), 0, &[event], Some(creator_id)).await?;
     Ok((id, token))
 }
 
