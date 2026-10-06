@@ -148,8 +148,20 @@ async fn apply_api_token(
                 .execute(&mut *conn)
                 .await?;
         }
-        ApiTokenEvent::ApiTokenChanged { .. } => {
-            // Projected in the next commit.
+        ApiTokenEvent::ApiTokenChanged {
+            name,
+            expires_at,
+            grants,
+        } => {
+            sqlx::query(
+                "UPDATE api_tokens SET name = ?, expires_at = ?, grants = ? WHERE token_id = ?",
+            )
+            .bind(name)
+            .bind(expires_at.as_second())
+            .bind(serde_json::to_string(&grants)?)
+            .bind(token_id)
+            .execute(&mut *conn)
+            .await?;
         }
     }
     Ok(())

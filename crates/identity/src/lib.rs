@@ -23,8 +23,9 @@ use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 pub use api_token::{
-    API_TOKEN_PREFIX, ApiTokenSummary, TokenAccess, create_api_token, list_api_tokens,
-    revoke_api_token, token_user, touch_api_token,
+    API_TOKEN_PREFIX, ApiTokenSummary, TokenAccess, change_api_token, check_api_token_change,
+    check_new_api_token, create_api_token, list_api_tokens, revoke_api_token, token_user,
+    touch_api_token,
 };
 pub use projections::rebuild_projections;
 pub use queries::{

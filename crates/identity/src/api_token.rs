@@ -1,7 +1,7 @@
 //! API tokens: event-sourced grants per company, looked up by hash on
 //! every call. When a token was last used is operational state.
 
-use crate::domain::{self, ApiToken, ApiTokenEvent, Grant, NewApiToken, User};
+use crate::domain::{self, ApiToken, ApiTokenEvent, Grant, NewApiToken, TokenChange, User};
 use crate::{API_TOKEN_STREAM, Error, Result, commit, get_user, load_stream, load_user, token};
 use jiff::Timestamp;
 use sqlx::SqlitePool;
@@ -164,5 +164,65 @@ pub async fn touch_api_token(pool: &SqlitePool, token_id: Uuid, now: Timestamp) 
     .bind(now.as_second())
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Replaces a token's name, expiry and grants. Its secret stays.
+pub async fn change_api_token(
+    pool: &SqlitePool,
+    actor_id: Uuid,
+    token_id: Uuid,
+    change: TokenChange,
+    now: Timestamp,
+) -> Result<()> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let (actor, _) = load_user(&mut tx, actor_id)
+        .await?
+        .ok_or(Error::UserNotFound)?;
+    let (events, version) = load_stream::<ApiTokenEvent>(&mut tx, &stream(token_id)).await?;
+    let token = ApiToken::from_events(&events).ok_or(Error::ApiTokenNotFound)?;
+    let events = domain::change_api_token(&token, &actor, change, now)?;
+    commit(&mut tx, &stream(token_id), version, &events, Some(actor_id)).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Runs every rule for a new token without saving it, so a passkey
+/// ceremony can refuse before the authenticator is asked.
+pub async fn check_new_api_token(
+    pool: &SqlitePool,
+    owner_id: Uuid,
+    change: &TokenChange,
+    now: Timestamp,
+) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+    let (owner, _) = load_user(&mut conn, owner_id)
+        .await?
+        .ok_or(Error::UserNotFound)?;
+    let cmd = NewApiToken {
+        token_id: Uuid::nil(),
+        name: change.name.clone(),
+        expires_at: change.expires_at,
+        grants: change.grants.clone(),
+    };
+    domain::create_api_token(&owner, cmd, String::new(), now)?;
+    Ok(())
+}
+
+/// Runs every rule for a change without saving it.
+pub async fn check_api_token_change(
+    pool: &SqlitePool,
+    actor_id: Uuid,
+    token_id: Uuid,
+    change: &TokenChange,
+    now: Timestamp,
+) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+    let (actor, _) = load_user(&mut conn, actor_id)
+        .await?
+        .ok_or(Error::UserNotFound)?;
+    let (events, _) = load_stream::<ApiTokenEvent>(&mut conn, &stream(token_id)).await?;
+    let token = ApiToken::from_events(&events).ok_or(Error::ApiTokenNotFound)?;
+    domain::change_api_token(&token, &actor, change.clone(), now)?;
     Ok(())
 }
