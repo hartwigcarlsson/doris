@@ -36,7 +36,10 @@ pub fn VatReturnPage() -> impl IntoView {
                 return;
             }
             match result {
-                Ok(r) => declaration.set(Some((company_id, r.into_inner()))),
+                Ok(r) => {
+                    downloaded.set(None);
+                    declaration.set(Some((company_id, r.into_inner())));
+                }
                 Err(status) => error.set(Some(describe(&status))),
             }
         });
@@ -44,6 +47,9 @@ pub fn VatReturnPage() -> impl IntoView {
     Effect::new(move |_| {
         companies.active.track();
         declaration.set(None);
+        downloaded.set(None);
+        confirming.set(false);
+        booked.set(None);
         error.set(None);
         load();
     });
@@ -52,7 +58,11 @@ pub fn VatReturnPage() -> impl IntoView {
         error.set(None);
         let Some((company_id, _)) = declaration.get_untracked() else { return };
         spawn_local(async move {
-            match vat_api().export_vat_file(vpb::VatReturnRef { company_id, period: period.get_value() }).await {
+            let result = vat_api().export_vat_file(vpb::VatReturnRef { company_id: company_id.clone(), period: period.get_value() }).await;
+            if company_id != companies.active.get_untracked() {
+                return;
+            }
+            match result {
                 Ok(file) => {
                     let file = file.into_inner();
                     save_as(&file.file_name, "application/xml", &file.content);
