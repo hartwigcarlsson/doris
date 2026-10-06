@@ -185,6 +185,21 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `HttpOnly; Secure; SameSite=Strict`. Only a SHA-256 hash of the token is
   stored, and the same goes for invitation tokens.
 - Email is personal data: never log it.
+- API tokens (`doris_` + 256 random bits, sent as `authorization: Bearer
+  …`) let doris-cli and agents call the API without a passkey. A user
+  creates them in the account menu (API-tokens); each has a last day at
+  most a year off, ends at midnight in Sweden after it, and can be revoked
+  by its owner or an admin. A token is never changed: it is revoked and a
+  new one made. Only its SHA-256 is stored (`api_tokens`, events in
+  `api-token-{id}`); it is never logged.
+- A token has scopes per company (`ledger|invoicing|payroll|vat:read|write`,
+  `company:read`) and never more than its owner: membership is checked on
+  every call, as for a session. `crates/server/src/access.rs` says what each
+  rpc needs from a token; an rpc missing there is closed to tokens, and a
+  test keeps it in step with `proto/`. `auth_gate` (`crates/server/src/lib.rs`)
+  authenticates the token, and every event appended in the call records it
+  as `via_token` in the metadata (`doris_eventstore::VIA_TOKEN`). A token
+  cannot manage tokens, invite, create companies or add members.
 
 ## API
 - The contract lives in `proto/doris/auth/v1/auth.proto`,
@@ -243,6 +258,11 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `customer_invoice_not_found`, `customer_inactive`,
   `duplicate_customer_invoice`, `customer_invoice_paid`,
   `customer_invoice_not_paid` and `customer_invoice_cancelled`.
+- `AuthService` also has `CreateApiToken`, `ListApiTokens` and
+  `RevokeApiToken` (session only). Codes: `invalid_token_name`,
+  `invalid_token_expiry`, `invalid_token_grants`, `api_token_not_found`,
+  `missing_scope` (the token lacks the scope for that company) and
+  `token_not_allowed` (the rpc is for sessions only).
 - `VatService` (`proto/doris/vat/v1/vat.proto`; codes mapped in
   `crates/server/src/vat.rs`): `SetVatPeriod`, `ListVatReturns`,
   `GetVatReturn`, `ExportVatFile` (eSKD 6.0, ISO-8859-1) and
@@ -307,8 +327,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   an external service. It is stored as twelve digits and never changed
   on an employee.
 - tonic reserves the size a frame header claims before a handler runs, so
-  `session_gate` (`crates/server/src/lib.rs`) answers `LedgerService` and
-  `InvoicingService` calls without a valid session with `not_signed_in` before the body is read. The
+  `auth_gate` (`crates/server/src/lib.rs`) answers `LedgerService` and
+  `InvoicingService` calls without a valid session or token with `not_signed_in` before the body is read. The
   handlers still check the session themselves.
 - A reverse proxy in front of Doris must allow request bodies of about
   21 MiB (nginx's default `client_max_body_size` is 1 MiB).
