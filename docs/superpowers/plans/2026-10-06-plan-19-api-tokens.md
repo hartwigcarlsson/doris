@@ -18,7 +18,7 @@
 - Token-format: `doris_` + `token::new_token()`. Bara `token::hash_token(secret)` sparas. Token loggas aldrig, varken klartext eller hash.
 - En token är en delmängd av ägarens åtkomst; medlemskap kontrolleras av modulen vid varje anrop.
 - Behörigheter: `ledger:read`, `ledger:write`, `invoicing:read`, `invoicing:write`, `payroll:read`, `payroll:write`, `vat:read`, `vat:write`, `company:read`.
-- Utgång: sista giltiga dag högst 366 dagar efter i dag; token slutar gälla vid midnatt svensk tid efter den dagen; domänen kräver `now < expires_at <= now + 367 dagar`.
+- Utgång: sista giltiga dag högst 366 dagar efter i dag; token slutar gälla vid midnatt svensk tid efter den dagen; domänen kräver `now < expires_at <= now + 368 dagar`.
 - Felkoder (snake_case, utan personuppgifter): `invalid_token_name`, `invalid_token_expiry`, `invalid_token_grants`, `api_token_not_found`, `missing_scope`, `token_not_allowed`. Utgången/okänd/återkallad token: `not_signed_in`. Bolag utanför grants: `company_not_found`.
 - En e-postadress eller ett personnummer loggas aldrig.
 - UI följer `docs/design/README.md`: `PageHeader`, `TableCard`, `Badge`, `LinkButton`, endast tokens, ljust/mörkt, 390 px. Sidor startar uppgifter med `crate::task::spawn_local`.
@@ -167,7 +167,7 @@ git commit -m "Record the API token an event was appended under"
 
 **Interfaces:**
 - Produces (i `doris_identity::domain`):
-  - `pub const MAX_TOKEN_LIFETIME: SignedDuration` (367 dagar)
+  - `pub const MAX_TOKEN_LIFETIME: SignedDuration` (368 dagar)
   - `pub enum Scope { LedgerRead, LedgerWrite, InvoicingRead, InvoicingWrite, PayrollRead, PayrollWrite, VatRead, VatWrite, CompanyRead }` med `Scope::ALL: [Scope; 9]`, `fn as_str(self) -> &'static str`, `fn parse(&str) -> Option<Scope>`; serialiseras som `"ledger:read"` osv.
   - `pub struct Grant { pub company_id: Uuid, pub scopes: Vec<Scope> }`
   - `pub enum ApiTokenEvent { ApiTokenCreated { token_id, user_id, name: String, token_hash: String, expires_at: Timestamp, grants: Vec<Grant> }, ApiTokenRevoked { revoked_by: Uuid } }`
@@ -277,17 +277,17 @@ fn a_token_needs_a_name_of_1_to_100_characters() {
 }
 
 #[test]
-fn a_token_expires_after_now_and_within_367_days() {
+fn a_token_expires_after_now_and_within_368_days() {
     let anna = user(Role::Member);
     let grants = || vec![grant(Uuid::new_v4(), &[Scope::LedgerRead])];
-    for expires_in in [SignedDuration::ZERO, -DAY, 367 * DAY + SignedDuration::from_secs(1)] {
+    for expires_in in [SignedDuration::ZERO, -DAY, 368 * DAY + SignedDuration::from_secs(1)] {
         assert_eq!(
             create_api_token(&anna, cmd("Agent", expires_in, grants()), "h".into(), now()),
             Err(DomainError::InvalidTokenExpiry),
             "{expires_in:?}"
         );
     }
-    assert!(create_api_token(&anna, cmd("Agent", 367 * DAY, grants()), "h".into(), now()).is_ok());
+    assert!(create_api_token(&anna, cmd("Agent", 368 * DAY, grants()), "h".into(), now()).is_ok());
 }
 
 #[test]
@@ -376,7 +376,7 @@ I `crates/identity/src/domain.rs`, lägg till i `DomainError`:
 ```rust
     #[error("token name must be 1-100 characters")]
     InvalidTokenName,
-    #[error("token must expire after now and within 367 days")]
+    #[error("token must expire after now and within 368 days")]
     InvalidTokenExpiry,
     #[error("token needs each company once, each with a scope")]
     InvalidTokenGrants,
@@ -389,7 +389,7 @@ Och i slutet av filen:
 ```rust
 /// A token lives at most a year: its last day may be 366 days off, and it
 /// ends at the following midnight in Sweden (an hour's summer time to spare).
-pub const MAX_TOKEN_LIFETIME: SignedDuration = SignedDuration::from_hours(24 * 367);
+pub const MAX_TOKEN_LIFETIME: SignedDuration = SignedDuration::from_hours(24 * 368);
 
 /// What an API token may do in one company. Stored as its string, so a
 /// scope added later changes no old event.

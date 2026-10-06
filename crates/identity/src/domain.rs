@@ -31,7 +31,7 @@ pub enum DomainError {
     NotAdmin,
     #[error("token name must be 1-100 characters")]
     InvalidTokenName,
-    #[error("token must expire after now and within 367 days")]
+    #[error("token must expire after now and within 368 days")]
     InvalidTokenExpiry,
     #[error("token needs each company once, each with a scope")]
     InvalidTokenGrants,
@@ -386,9 +386,10 @@ pub fn create_invitation(
     })
 }
 
-/// A token lives at most a year: its last day may be 366 days off, and it
-/// ends at the following midnight in Sweden (an hour's summer time to spare).
-pub const MAX_TOKEN_LIFETIME: SignedDuration = SignedDuration::from_hours(24 * 367);
+/// A token lives at most a year: its last day may be at most 366 days after
+/// today, and it ends at the following midnight in Sweden. 368 days covers
+/// that and the hour that daylight saving time can add.
+pub const MAX_TOKEN_LIFETIME: SignedDuration = SignedDuration::from_hours(24 * 368);
 
 /// What an API token may do in one company. Stored as its string, so a
 /// scope added later changes no old event.

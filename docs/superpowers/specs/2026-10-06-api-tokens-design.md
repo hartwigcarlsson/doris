@@ -47,10 +47,10 @@ ApiTokenRevoked { revoked_by }
 
 Regler, testade given/when/then utan databas:
 - `name` trimmas och är 1–100 tecken (`invalid_token_name`).
-- `expires_at` ligger efter `now` och högst 367 dagar fram
+- `expires_at` ligger efter `now` och högst 368 dagar fram
   (`invalid_token_expiry`). Servern räknar fram den ur den sista giltiga
   dagen: midnatt svensk tid efter den dagen, och dagen får vara högst 366
-  dagar efter i dag. 367 dagar ger plats för det och för sommartid.
+  dagar efter i dag. 368 dagar ger plats för det och för sommartid.
 - `grants` innehåller minst ett bolag, inget bolag mer än en gång och minst
   en behörighet per bolag (`invalid_token_grants`). Behörigheterna sorteras
   och dubbletter tas bort. En okänd behörighetssträng från klienten avvisas
@@ -235,7 +235,7 @@ message RevokeApiTokenResponse {}
 
 ## Tester
 - **Domän** (identity, given/when/then): skapa med giltiga värden; tomt
-  namn, för långt namn, utgångstid i dåtiden eller mer än 367 dagar fram,
+  namn, för långt namn, utgångstid i dåtiden eller mer än 368 dagar fram,
   tomma grants, bolag två gånger, bolag utan behörighet; återkalla som
   ägare, som admin, som annan användare, och två gånger (inga events).
 - **Projektion**: `api_tokens` byggs om från `read_all` och blir lika.

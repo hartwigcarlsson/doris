@@ -98,13 +98,13 @@ fn a_token_needs_a_name_of_1_to_100_characters() {
 }
 
 #[test]
-fn a_token_expires_after_now_and_within_367_days() {
+fn a_token_expires_after_now_and_within_368_days() {
     let anna = user(Role::Member);
     let grants = || vec![grant(Uuid::new_v4(), &[Scope::LedgerRead])];
     for expires_in in [
         SignedDuration::ZERO,
         -DAY,
-        367 * DAY + SignedDuration::from_secs(1),
+        368 * DAY + SignedDuration::from_secs(1),
     ] {
         assert_eq!(
             create_api_token(&anna, cmd("Agent", expires_in, grants()), "h".into(), now()),
@@ -112,7 +112,7 @@ fn a_token_expires_after_now_and_within_367_days() {
             "{expires_in:?}"
         );
     }
-    assert!(create_api_token(&anna, cmd("Agent", 367 * DAY, grants()), "h".into(), now()).is_ok());
+    assert!(create_api_token(&anna, cmd("Agent", 368 * DAY, grants()), "h".into(), now()).is_ok());
 }
 
 #[test]
