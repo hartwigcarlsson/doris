@@ -35,6 +35,7 @@ fn classify(service: &str, method: &str) -> Option<Access> {
             | "FinishLogin"
             | "Logout"
             | "BeginAddPasskey"
+            | "ContinueAddPasskey"
             | "FinishAddPasskey"
             | "ListPasskeys"
             | "GetInvitation"

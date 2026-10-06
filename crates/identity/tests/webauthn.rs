@@ -386,6 +386,21 @@ async fn finish_registration_rechecks_the_invitation() {
     );
 }
 
+/// Confirms adding a passkey with `confirming` (an existing passkey of
+/// the user's) and returns the registration ceremony and its options.
+async fn confirm_add_passkey(
+    auth: &Auth,
+    user_id: uuid::Uuid,
+    confirming: &mut Authenticator,
+    name: &str,
+) -> (uuid::Uuid, webauthn_rs::prelude::CreationChallengeResponse) {
+    let (ceremony, options) = auth.begin_add_passkey(user_id, name, now()).await.unwrap();
+    let assertion = confirming.do_authentication(origin(), options).unwrap();
+    auth.continue_add_passkey(user_id, ceremony, &assertion, now())
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn a_user_can_add_a_second_passkey_and_log_in_with_either() {
     let (pool, auth) = setup().await;
@@ -393,10 +408,7 @@ async fn a_user_can_add_a_second_passkey_and_log_in_with_either() {
     let mut phone = authenticator();
     let (anna, _) = sign_up(&auth, &mut laptop, "anna@example.se", None).await;
 
-    let (ceremony, options) = auth
-        .begin_add_passkey(anna.id, "Telefon", now())
-        .await
-        .unwrap();
+    let (ceremony, options) = confirm_add_passkey(&auth, anna.id, &mut laptop, "Telefon").await;
     let credential = phone.do_registration(origin(), options).unwrap();
     auth.finish_add_passkey(anna.id, ceremony, &credential, now())
         .await
@@ -432,16 +444,14 @@ async fn a_user_can_add_a_second_passkey_and_log_in_with_either() {
 #[tokio::test]
 async fn an_add_passkey_ceremony_belongs_to_the_user_who_started_it() {
     let (pool, auth) = setup().await;
-    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
     let (_, token) = create_invitation(&pool, anna.id, "bo@example.se", now())
         .await
         .unwrap();
     let (bo, _) = sign_up(&auth, &mut authenticator(), "bo@example.se", Some(&token)).await;
 
-    let (ceremony, options) = auth
-        .begin_add_passkey(anna.id, "Telefon", now())
-        .await
-        .unwrap();
+    let (ceremony, options) = confirm_add_passkey(&auth, anna.id, &mut annas, "Telefon").await;
     let credential = authenticator().do_registration(origin(), options).unwrap();
     let err = auth
         .finish_add_passkey(bo.id, ceremony, &credential, now())
@@ -641,4 +651,130 @@ async fn logging_in_still_fails_the_same_way_for_a_wrong_passkey() {
         .unwrap_err();
 
     assert!(matches!(err, Error::LoginFailed), "{err:?}");
+}
+
+#[tokio::test]
+async fn adding_a_passkey_needs_one_of_the_users_own() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let mut bos = authenticator();
+    sign_up(&auth, &mut bos, "bo@example.se", Some(&invitation)).await;
+
+    let (ceremony, _) = auth
+        .begin_add_passkey(anna.id, "Telefon", now())
+        .await
+        .unwrap();
+    let (_, bos_options) = auth.begin_login("bo@example.se", now()).await.unwrap();
+    let bos_assertion = bos.do_authentication(origin(), bos_options).unwrap();
+    let err = auth
+        .continue_add_passkey(anna.id, ceremony, &bos_assertion, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::CredentialRejected), "{err:?}");
+    assert_eq!(
+        get_user(&pool, anna.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .passkeys
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_confirmation_to_add_a_passkey_belongs_to_its_user_and_is_used_once() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let (bo, _) = sign_up(
+        &auth,
+        &mut authenticator(),
+        "bo@example.se",
+        Some(&invitation),
+    )
+    .await;
+
+    let (ceremony, options) = auth
+        .begin_add_passkey(anna.id, "Telefon", now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let by_bo = auth
+        .continue_add_passkey(bo.id, ceremony, &assertion, now())
+        .await
+        .unwrap_err();
+    let again = auth
+        .continue_add_passkey(anna.id, ceremony, &assertion, now())
+        .await
+        .unwrap_err();
+    let (late, options) = auth
+        .begin_add_passkey(anna.id, "Telefon", now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let expired = auth
+        .continue_add_passkey(anna.id, late, &assertion, now() + CEREMONY_TTL)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(by_bo, Error::CeremonyNotFound), "{by_bo:?}");
+    assert!(matches!(again, Error::CeremonyNotFound), "{again:?}");
+    assert!(matches!(expired, Error::CeremonyExpired), "{expired:?}");
+}
+
+#[tokio::test]
+async fn a_bad_passkey_name_is_refused_before_any_passkey_is_asked() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let err = auth
+        .begin_add_passkey(anna.id, "  ", now())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::Domain(DomainError::InvalidPasskeyName)),
+        "{err:?}"
+    );
+    let ceremonies: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM webauthn_ceremonies")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ceremonies, 0);
+}
+
+#[tokio::test]
+async fn a_registration_ceremony_cannot_be_continued() {
+    // Only a confirmation continues; anything else is gone.
+    let (_, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (ceremony, options) = auth
+        .begin_add_passkey(anna.id, "Telefon", now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let (registration, _) = auth
+        .continue_add_passkey(anna.id, ceremony, &assertion, now())
+        .await
+        .unwrap();
+    let (other, options) = auth
+        .begin_add_passkey(anna.id, "Surfplatta", now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+
+    let err = auth
+        .continue_add_passkey(anna.id, registration, &assertion, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::CeremonyNotFound), "{err:?}");
+    let _ = other;
 }

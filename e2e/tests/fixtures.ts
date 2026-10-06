@@ -42,13 +42,14 @@ async function cdpFor(page: Page): Promise<CDPSession> {
 }
 
 /** Gives the page a virtual passkey authenticator (Chrome DevTools WebAuthn),
- * like a laptop's or phone's built-in one. Returns its id. */
-export async function addAuthenticator(page: Page): Promise<string> {
+ * like a laptop's or phone's built-in one. Returns its id. Chrome allows one
+ * internal authenticator, so a second one is a security key ("usb"). */
+export async function addAuthenticator(page: Page, transport: "internal" | "usb" = "internal"): Promise<string> {
   const cdp = await cdpFor(page);
   const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
     options: {
       protocol: "ctap2",
-      transport: "internal",
+      transport,
       hasResidentKey: true,
       hasUserVerification: true,
       isUserVerified: true,
@@ -56,6 +57,13 @@ export async function addAuthenticator(page: Page): Promise<string> {
     },
   });
   return authenticatorId;
+}
+
+/** Whether the authenticator answers on its own. One that always answers
+ * would take a challenge for a key it does not hold, so a second
+ * authenticator stays silent until its turn. */
+export async function setPresence(page: Page, authenticatorId: string, enabled: boolean) {
+  await (await cdpFor(page)).send("WebAuthn.setAutomaticPresenceSimulation", { authenticatorId, enabled });
 }
 
 export async function removeAuthenticator(page: Page, authenticatorId: string) {

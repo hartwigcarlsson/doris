@@ -279,7 +279,8 @@ async fn an_admin_invites_a_member_who_registers_through_the_link() {
 #[tokio::test]
 async fn a_signed_in_user_adds_and_lists_passkeys() {
     let server = TestServer::start().await;
-    let session = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut laptop = device();
+    let session = server.sign_up(&mut laptop, "anna@example.se", None).await;
     let mut phone = device();
     let mut grpc = server.grpc();
 
@@ -293,13 +294,24 @@ async fn a_signed_in_user_adds_and_lists_passkeys() {
         .await
         .unwrap()
         .into_inner();
-    let options: CreationChallengeResponse = serde_json::from_str(&begin.options_json).unwrap();
+    let confirmed = grpc
+        .continue_add_passkey(authed(
+            pb::ContinueAddPasskeyRequest {
+                credential_json: server.confirm(&mut laptop, &begin),
+                ceremony_id: begin.ceremony_id,
+            },
+            &session,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let options: CreationChallengeResponse = serde_json::from_str(&confirmed.options_json).unwrap();
     let credential = phone
         .do_registration(server.origin.clone(), options)
         .unwrap();
     grpc.finish_add_passkey(authed(
         pb::FinishAddPasskeyRequest {
-            ceremony_id: begin.ceremony_id,
+            ceremony_id: confirmed.ceremony_id,
             credential_json: serde_json::to_string(&credential).unwrap(),
         },
         &session,

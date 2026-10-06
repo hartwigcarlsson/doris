@@ -170,7 +170,10 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 ## Authentication
 - WebAuthn/passkeys only (webauthn-rs). Never store or accept passwords.
 - A user is identified by email plus a display name, and can have several
-  passkeys.
+  passkeys. Adding a passkey needs an assertion from one of the user's
+  existing passkeys (`BeginAddPasskey` → `ContinueAddPasskey` →
+  `FinishAddPasskey`), so a stolen session cannot add its own and then use it
+  to confirm an API token.
 - The first user to register becomes admin. After that, registration requires
   an email-bound invitation that an admin creates.
 - WebAuthn ceremonies (`doris_identity::Auth`) keep their state server-side
@@ -280,6 +283,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `vat_return_outdated`, `vat_return_unchanged` and `vat_not_registered`;
   `LedgerService.SetAccountVatBox` answers `invalid_vat_box`. Ledger
   refusals keep their codes.
+- `AuthService` also has `ContinueAddPasskey` (session only): it takes the
+  existing passkey's assertion and returns the creation options for the new one.
 - `LedgerService` also has `GetOpeningBalances`, `SetOpeningBalances`,
   `CloseFiscalYear` and `ReopenFiscalYear`. Their codes are
   `not_balance_sheet_account`, `duplicate_account`,

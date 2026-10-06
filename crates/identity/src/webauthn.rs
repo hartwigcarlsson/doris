@@ -1,5 +1,5 @@
-//! WebAuthn ceremonies: registering with a passkey, adding passkeys, logging
-//! in and confirming an API token request. Ceremony state is kept server-side, is single use and expires
+//! WebAuthn ceremonies: registering with a passkey, adding passkeys (confirmed
+//! by an existing one), logging in and confirming an API token request. Ceremony state is kept server-side, is single use and expires
 //! after [`CEREMONY_TTL`].
 
 use crate::domain::{DisplayName, Email, Passkey, TokenRequest, User};
@@ -37,6 +37,13 @@ enum Ceremony {
         display_name: String,
         passkey_name: String,
         state: PasskeyRegistration,
+    },
+    /// An existing passkey must confirm adding another, so a stolen
+    /// session cannot add its own.
+    ConfirmAddPasskey {
+        user_id: Uuid,
+        passkey_name: String,
+        state: PasskeyAuthentication,
     },
     AddPasskey {
         user_id: Uuid,
@@ -159,17 +166,47 @@ impl Auth {
         Ok((user, session))
     }
 
-    /// Asks the browser to create another passkey for a logged-in user.
+    /// Asks one of the user's existing passkeys to confirm adding another.
     pub async fn begin_add_passkey(
         &self,
         user_id: Uuid,
         passkey_name: &str,
         now: Timestamp,
-    ) -> Result<(Uuid, CreationChallengeResponse)> {
+    ) -> Result<(Uuid, RequestChallengeResponse)> {
         let passkey_name = Passkey::validate_name(passkey_name)?;
-        let user = get_user(&self.pool, user_id)
+        let (options, state) = self.start_user_authentication(user_id).await?;
+        let ceremony = Ceremony::ConfirmAddPasskey {
+            user_id,
+            passkey_name,
+            state,
+        };
+        Ok((self.start(&ceremony, now).await?, options))
+    }
+
+    /// Verifies the confirmation, then asks the browser to create the new
+    /// passkey (finished by [`Auth::finish_add_passkey`]).
+    pub async fn continue_add_passkey(
+        &self,
+        user_id: Uuid,
+        ceremony_id: Uuid,
+        credential: &PublicKeyCredential,
+        now: Timestamp,
+    ) -> Result<(Uuid, CreationChallengeResponse)> {
+        let Ceremony::ConfirmAddPasskey {
+            user_id: owner,
+            passkey_name,
+            state,
+        } = self.take(ceremony_id, now).await?
+        else {
+            return Err(Error::CeremonyNotFound);
+        };
+        if owner != user_id {
+            return Err(Error::CeremonyNotFound);
+        }
+        let user = self
+            .verified_use(user_id, credential, &state)
             .await?
-            .ok_or(Error::UserNotFound)?;
+            .ok_or(Error::CredentialRejected)?;
         let existing = user
             .passkeys
             .iter()

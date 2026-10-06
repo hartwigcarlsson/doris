@@ -59,6 +59,9 @@ pub fn Passkeys() -> impl IntoView {
                 </ul>
             </Card>
             <Card title="Lägg till passkey" narrow=true>
+                <p class="mb-4 text-xs/relaxed text-muted-foreground">
+                    "Du bekräftar med en passkey du redan har, sedan skapar du den nya."
+                </p>
                 <form class="grid gap-4" novalidate on:submit=submit>
                     <Field label="Passkeyns namn" id="passkey_name" placeholder="t.ex. iPhone" value=name />
                     <ErrorAlert message=error />
@@ -76,9 +79,18 @@ async fn add_passkey(passkey_name: String) -> Result<(), String> {
         .await
         .map_err(|s| describe(&s))?
         .into_inner();
-    let credential_json = passkey::create(&begin.options_json).await?;
+    let confirmation = passkey::get(&begin.options_json).await?;
+    let confirmed = api
+        .continue_add_passkey(pb::ContinueAddPasskeyRequest {
+            ceremony_id: begin.ceremony_id,
+            credential_json: confirmation,
+        })
+        .await
+        .map_err(|s| describe(&s))?
+        .into_inner();
+    let credential_json = passkey::create(&confirmed.options_json).await?;
     api.finish_add_passkey(pb::FinishAddPasskeyRequest {
-        ceremony_id: begin.ceremony_id,
+        ceremony_id: confirmed.ceremony_id,
         credential_json,
     })
     .await

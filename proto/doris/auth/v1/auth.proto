@@ -16,7 +16,11 @@ service AuthService {
   rpc Logout(LogoutRequest) returns (LogoutResponse);
 
   // Require a session.
+  // BeginAddPasskey asks an existing passkey to confirm (request options);
+  // ContinueAddPasskey takes that assertion and returns creation options
+  // for the new passkey, which FinishAddPasskey saves.
   rpc BeginAddPasskey(BeginAddPasskeyRequest) returns (BeginCeremonyResponse);
+  rpc ContinueAddPasskey(ContinueAddPasskeyRequest) returns (BeginCeremonyResponse);
   rpc FinishAddPasskey(FinishAddPasskeyRequest) returns (FinishAddPasskeyResponse);
   rpc ListPasskeys(ListPasskeysRequest) returns (ListPasskeysResponse);
 
@@ -93,6 +97,11 @@ message LogoutResponse {}
 
 message BeginAddPasskeyRequest {
   string passkey_name = 1;
+}
+
+message ContinueAddPasskeyRequest {
+  string ceremony_id = 1;
+  string credential_json = 2;
 }
 
 message FinishAddPasskeyRequest {

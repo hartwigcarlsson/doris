@@ -218,6 +218,25 @@ impl AuthService for AuthApi {
         ceremony_response(ceremony_id, &options)
     }
 
+    async fn continue_add_passkey(
+        &self,
+        request: Request<pb::ContinueAddPasskeyRequest>,
+    ) -> Result<Response<pb::BeginCeremonyResponse>, Status> {
+        let user = self.user(&request).await?;
+        let req = request.into_inner();
+        let (ceremony_id, options) = self
+            .auth
+            .continue_add_passkey(
+                user.id,
+                ceremony_id(&req.ceremony_id)?,
+                &credential(&req.credential_json)?,
+                Timestamp::now(),
+            )
+            .await
+            .map_err(finish_status)?;
+        ceremony_response(ceremony_id, &options)
+    }
+
     async fn finish_add_passkey(
         &self,
         request: Request<pb::FinishAddPasskeyRequest>,
@@ -499,14 +518,14 @@ fn grant_message(grant: &Grant) -> pb::TokenGrant {
     }
 }
 
-/// When a token whose last day is `raw` (`YYYY-MM-DD`) stops working:
-/// midnight in Sweden after that day. The day is today at the earliest and
-/// 366 days off at most.
 fn api_token_id(raw: &str) -> Result<Uuid, Status> {
     raw.parse()
         .map_err(|_| Status::not_found("api_token_not_found"))
 }
 
+/// When a token whose last day is `raw` (`YYYY-MM-DD`) stops working:
+/// midnight in Sweden after that day. The day is today at the earliest and
+/// 366 days off at most.
 fn token_expiry(raw: &str, now: Timestamp) -> Result<Timestamp, Status> {
     use jiff::ToSpan;
     let invalid = || Status::invalid_argument("invalid_token_expiry");
