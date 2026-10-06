@@ -60,6 +60,19 @@ test("a quarter is declared, downloaded, submitted and changed", async ({ page, 
   await voucher(page, app, `${last}-12-20`, "Sen försäljning", [["1930", "125", ""], ["3001", "", "100"], ["2611", "", "25"]]);
   await page.goto(`${app}/vat?fy=${last}-01-01`);
   await expect(page.getByRole("row", { name: new RegExp(`oktober–december ${last}`) })).toContainText("Ändrad");
+
+  // Submitted again, the new settlement books only the late 25 kronor.
+  await page.goto(`${app}/vat/${last}12`);
+  await page.getByRole("button", { name: "Markera inlämnad…" }).click();
+  await page.getByRole("button", { name: "Bekräfta" }).click();
+  await expect(page.getByRole("status")).toContainText("verifikation 5");
+  await page.goto(`${app}/vouchers`);
+  await page.getByLabel("Räkenskapsår").selectOption(`${last}-01-01`);
+  const settlement = page.getByRole("row", { name: new RegExp(`^5 .*Momsavräkning oktober–december ${last}`) });
+  await expect(settlement).toContainText("25,00");
+  await settlement.getByRole("button", { name: "5", exact: true }).click();
+  await expect(page.getByRole("row", { name: /^2611 .*25,00/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /^2650 .*25,00/ })).toBeVisible();
 });
 
 test("an account's momsruta changes the declaration", async ({ page, app }) => {
@@ -67,7 +80,10 @@ test("an account's momsruta changes the declaration", async ({ page, app }) => {
   await addCompany(page, app, "5560160680", "Exempel AB", `${last}-01-01`);
   await voucher(page, app, `${last}-11-10`, "Momsfri försäljning", [["1930", "500", ""], ["3004", "", "500"]]);
   await goTo(page, "Kontoplan");
-  await page.getByLabel("Momsruta för 3004").selectOption("5");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/SetAccountVatBox")),
+    page.getByLabel("Momsruta för 3004").selectOption("5"),
+  ]);
   await page.goto(`${app}/vat/${last}12`);
   await expect(page.getByRole("button", { name: /Momspliktig försäljning som inte ingår.*05.*500/ })).toBeVisible();
 });
