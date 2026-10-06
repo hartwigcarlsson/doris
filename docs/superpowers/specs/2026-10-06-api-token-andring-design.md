@@ -23,6 +23,27 @@ räcker inte för att ge sig själv en token.
 Utanför det här steget: ett förhöjt "sudo-läge", passkey vid återkallande
 och ändring av andras tokens.
 
+## Ny passkey kräver en befintlig
+Utan detta kunde en stulen session först registrera sin egen passkey och
+sedan bekräfta en token med den. Därför kräver även "lägg till passkey" en
+assertion från en av användarens befintliga passkeys:
+
+1. `BeginAddPasskey(passkey_name)` validerar namnet och startar en
+   autentisering mot användarens passkeys. Ceremonin är
+   `ConfirmAddPasskey { user_id, passkey_name, state }`, och svaret är request
+   options.
+2. `ContinueAddPasskey(ceremony_id, credential_json)` (ny) verifierar
+   assertionen (`verified_use`, och användningen registreras). Den startar
+   sedan registreringen som förut (`AddPasskey`, med befintliga passkeys
+   undantagna) och svarar med creation options.
+3. `FinishAddPasskey` är oförändrad.
+
+Ceremonin tillhör den som startade den, gäller i 5 minuter och kan
+avslutas en gång. Fel: `credential_rejected` och `ceremony_expired`.
+`ContinueAddPasskey` är `SessionOnly`. Sidan Passkeys kör
+`navigator.credentials.get` och sedan `navigator.credentials.create` på
+samma klick.
+
 ## Domän (`doris-identity`)
 Ett nytt event i tokenens ström `api-token-{token_id}`, med
 `schema_version` 1. Det är en ny händelsetyp, så `ApiTokenCreated` och

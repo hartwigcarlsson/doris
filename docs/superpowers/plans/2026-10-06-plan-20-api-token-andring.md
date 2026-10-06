@@ -14,6 +14,7 @@
 1. **En ceremonisort i stället för två.** `Ceremony::ApiToken { user_id, request: TokenRequest, state }`, där `TokenRequest` är `Create { change }` eller `Change { token_id, change }`. Samma beteende; en finish av fel sort ger `ceremony_expired` i servern.
 2. **Medlemskapet kontrolleras i servern**, eftersom identity inte läser company. Därför returnerar `Auth::finish_api_token` den godkända begäran, och servern kontrollerar bolagen och skriver eventet. Assertionen och skrivningen ligger alltså i två transaktioner, och domänen beslutar om igen i skrivningen (återkallad token: `api_token_revoked`).
 3. **Ändringssidan hämtar token via `ListApiTokens`** (ingen ny `GetApiToken`).
+4. **E2E kontrollerar ändringen med `company:read` och `GetCompany`** i stället för Läsa→Skriva bokföring med `RecordVoucher`: GetCompany är ett tomt meddelande plus ett id och lätt att bygga för hand. Läsa→skriva bokföring med samma hemlighet täcks av servertestet `a_token_is_changed_with_a_passkey_and_its_secret_keeps_working`.
 
 ## Global Constraints
 - Kod, identifierare, URL:er, proto, händelsenamn och commits på engelska; bara synlig UI-text på svenska.
@@ -1820,4 +1821,293 @@ Expected: PASS. (`cargo fmt --check` kan klaga på filer som branchen inte rör;
 ```bash
 git add AGENTS.md
 git commit -m "Document changing API tokens with a passkey in AGENTS.md"
+```
+
+---
+
+### Task 8: Ny passkey kräver en befintlig passkey
+
+Tillagd efter slutgranskningen: utan detta kan en stulen session registrera en egen passkey och sedan bekräfta en token med den. Se specens avsnitt "Ny passkey kräver en befintlig".
+
+**Files:**
+- Modify: `crates/identity/src/webauthn.rs`, `crates/identity/tests/webauthn.rs`
+- Modify: `proto/doris/auth/v1/auth.proto`, `crates/server/src/grpc.rs`, `crates/server/src/access.rs`, `crates/server/tests/grpc.rs`
+- Modify: `crates/web/src/pages/passkeys.rs`
+- Modify: `e2e/tests/auth.spec.ts`
+- Modify: `AGENTS.md`
+
+**Interfaces:**
+- Consumes: `Auth::start_user_authentication`, `Auth::verified_use` (Task 3), `Error::CredentialRejected`.
+- Produces:
+  - `Auth::begin_add_passkey(&self, user_id: Uuid, passkey_name: &str, now: Timestamp) -> Result<(Uuid, RequestChallengeResponse)>` (returtypen ändras från `CreationChallengeResponse`)
+  - `Auth::continue_add_passkey(&self, user_id: Uuid, ceremony_id: Uuid, credential: &PublicKeyCredential, now: Timestamp) -> Result<(Uuid, CreationChallengeResponse)>`
+  - `Auth::finish_add_passkey` oförändrad
+  - RPC `ContinueAddPasskey(ContinueAddPasskeyRequest) returns (BeginCeremonyResponse)` med `message ContinueAddPasskeyRequest { string ceremony_id = 1; string credential_json = 2; }`
+
+- [ ] **Step 1: Fallerande tester i identity**
+
+I `crates/identity/tests/webauthn.rs`, lägg till en hjälpare och använd den i de två befintliga add-passkey-testerna (de anropar i dag `begin_add_passkey` och går direkt till `do_registration`):
+
+```rust
+/// Confirms adding a passkey with `confirming` (an existing passkey of
+/// the user's) and returns the registration ceremony and its options.
+async fn confirm_add_passkey(
+    auth: &Auth,
+    user_id: uuid::Uuid,
+    confirming: &mut Authenticator,
+    name: &str,
+) -> (uuid::Uuid, webauthn_rs::prelude::CreationChallengeResponse) {
+    let (ceremony, options) = auth.begin_add_passkey(user_id, name, now()).await.unwrap();
+    let assertion = confirming.do_authentication(origin(), options).unwrap();
+    auth.continue_add_passkey(user_id, ceremony, &assertion, now())
+        .await
+        .unwrap()
+}
+```
+
+- `a_user_can_add_a_second_passkey_and_log_in_with_either`: `let (ceremony, options) = confirm_add_passkey(&auth, anna.id, &mut laptop, "Telefon").await;` och sedan `phone.do_registration(…)` och `finish_add_passkey` som förut.
+- `an_add_passkey_ceremony_belongs_to_the_user_who_started_it`: behåll `annas` passkey i en variabel och använd `confirm_add_passkey(&auth, anna.id, &mut annas, "Telefon")`; påståendena oförändrade.
+
+Nya tester:
+
+```rust
+#[tokio::test]
+async fn adding_a_passkey_needs_one_of_the_users_own() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now()).await.unwrap();
+    let mut bos = authenticator();
+    sign_up(&auth, &mut bos, "bo@example.se", Some(&invitation)).await;
+
+    let (ceremony, _) = auth.begin_add_passkey(anna.id, "Telefon", now()).await.unwrap();
+    let (_, bos_options) = auth.begin_login("bo@example.se", now()).await.unwrap();
+    let bos_assertion = bos.do_authentication(origin(), bos_options).unwrap();
+    let err = auth
+        .continue_add_passkey(anna.id, ceremony, &bos_assertion, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::CredentialRejected), "{err:?}");
+    assert_eq!(get_user(&pool, anna.id).await.unwrap().unwrap().passkeys.len(), 1);
+}
+
+#[tokio::test]
+async fn a_confirmation_to_add_a_passkey_belongs_to_its_user_and_is_used_once() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now()).await.unwrap();
+    let (bo, _) = sign_up(&auth, &mut authenticator(), "bo@example.se", Some(&invitation)).await;
+
+    let (ceremony, options) = auth.begin_add_passkey(anna.id, "Telefon", now()).await.unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let by_bo = auth.continue_add_passkey(bo.id, ceremony, &assertion, now()).await.unwrap_err();
+    let again = auth.continue_add_passkey(anna.id, ceremony, &assertion, now()).await.unwrap_err();
+    let (late, options) = auth.begin_add_passkey(anna.id, "Telefon", now()).await.unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let expired = auth
+        .continue_add_passkey(anna.id, late, &assertion, now() + CEREMONY_TTL)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(by_bo, Error::CeremonyNotFound), "{by_bo:?}");
+    assert!(matches!(again, Error::CeremonyNotFound), "{again:?}");
+    assert!(matches!(expired, Error::CeremonyExpired), "{expired:?}");
+}
+
+#[tokio::test]
+async fn a_bad_passkey_name_is_refused_before_any_passkey_is_asked() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let err = auth.begin_add_passkey(anna.id, "  ", now()).await.unwrap_err();
+    assert!(matches!(err, Error::Domain(DomainError::InvalidPasskeyName)), "{err:?}");
+    let ceremonies: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM webauthn_ceremonies")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ceremonies, 0);
+}
+
+#[tokio::test]
+async fn a_registration_ceremony_cannot_be_continued() {
+    // Only a confirmation continues; anything else is gone.
+    let (_, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (ceremony, options) = auth.begin_add_passkey(anna.id, "Telefon", now()).await.unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let (registration, _) = auth.continue_add_passkey(anna.id, ceremony, &assertion, now()).await.unwrap();
+    let (other, options) = auth.begin_add_passkey(anna.id, "Surfplatta", now()).await.unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+
+    let err = auth.continue_add_passkey(anna.id, registration, &assertion, now()).await.unwrap_err();
+
+    assert!(matches!(err, Error::CeremonyNotFound), "{err:?}");
+    let _ = other;
+}
+```
+
+- [ ] **Step 2: Kör och se dem fallera**
+
+Run: `cargo test -p doris-identity --test webauthn`
+Expected: kompileringsfel (`continue_add_passkey` saknas; `begin_add_passkey` ger fel optionstyp).
+
+- [ ] **Step 3: Implementera i identity**
+
+I `crates/identity/src/webauthn.rs`, ny variant i `Ceremony`:
+
+```rust
+    /// An existing passkey must confirm adding another, so a stolen
+    /// session cannot add its own.
+    ConfirmAddPasskey {
+        user_id: Uuid,
+        passkey_name: String,
+        state: PasskeyAuthentication,
+    },
+```
+
+Ersätt `begin_add_passkey` och lägg till `continue_add_passkey` (registreringsdelen är den gamla `begin_add_passkey`-kroppen):
+
+```rust
+    /// Asks one of the user's existing passkeys to confirm adding another.
+    pub async fn begin_add_passkey(
+        &self,
+        user_id: Uuid,
+        passkey_name: &str,
+        now: Timestamp,
+    ) -> Result<(Uuid, RequestChallengeResponse)> {
+        let passkey_name = Passkey::validate_name(passkey_name)?;
+        let (options, state) = self.start_user_authentication(user_id).await?;
+        let ceremony = Ceremony::ConfirmAddPasskey {
+            user_id,
+            passkey_name,
+            state,
+        };
+        Ok((self.start(&ceremony, now).await?, options))
+    }
+
+    /// Verifies the confirmation, then asks the browser to create the new
+    /// passkey (finished by [`Auth::finish_add_passkey`]).
+    pub async fn continue_add_passkey(
+        &self,
+        user_id: Uuid,
+        ceremony_id: Uuid,
+        credential: &PublicKeyCredential,
+        now: Timestamp,
+    ) -> Result<(Uuid, CreationChallengeResponse)> {
+        let Ceremony::ConfirmAddPasskey {
+            user_id: owner,
+            passkey_name,
+            state,
+        } = self.take(ceremony_id, now).await?
+        else {
+            return Err(Error::CeremonyNotFound);
+        };
+        if owner != user_id {
+            return Err(Error::CeremonyNotFound);
+        }
+        let user = self
+            .verified_use(user_id, credential, &state)
+            .await?
+            .ok_or(Error::CredentialRejected)?;
+        let existing = user
+            .passkeys
+            .iter()
+            .map(|p| Ok(webauthn_passkey(p)?.cred_id().clone()))
+            .collect::<Result<Vec<_>>>()?;
+        let (options, state) = self.webauthn.start_passkey_registration(
+            user.id,
+            user.email.as_str(),
+            user.display_name.as_str(),
+            Some(existing),
+        )?;
+        let ceremony = Ceremony::AddPasskey {
+            user_id,
+            passkey_name,
+            state,
+        };
+        Ok((self.start(&ceremony, now).await?, options))
+    }
+```
+
+Modulens doc-kommentar: nämn att en ny passkey bekräftas med en befintlig.
+
+- [ ] **Step 4: Server**
+
+`proto/doris/auth/v1/auth.proto`: efter `BeginAddPasskey`:
+
+```proto
+  // BeginAddPasskey asks an existing passkey to confirm (request options);
+  // ContinueAddPasskey takes that assertion and returns creation options
+  // for the new passkey, which FinishAddPasskey saves.
+  rpc ContinueAddPasskey(ContinueAddPasskeyRequest) returns (BeginCeremonyResponse);
+```
+
+och meddelandet `message ContinueAddPasskeyRequest { string ceremony_id = 1; string credential_json = 2; }` efter `BeginAddPasskeyRequest`.
+
+`crates/server/src/grpc.rs`: `begin_add_passkey` är oförändrad i kroppen (svaret är nu request options). Ny handler:
+
+```rust
+    async fn continue_add_passkey(
+        &self,
+        request: Request<pb::ContinueAddPasskeyRequest>,
+    ) -> Result<Response<pb::BeginCeremonyResponse>, Status> {
+        let user = self.user(&request).await?;
+        let req = request.into_inner();
+        let (ceremony_id, options) = self
+            .auth
+            .continue_add_passkey(
+                user.id,
+                ceremony_id(&req.ceremony_id)?,
+                &credential(&req.credential_json)?,
+                Timestamp::now(),
+            )
+            .await
+            .map_err(finish_status)?;
+        ceremony_response(ceremony_id, &options)
+    }
+```
+
+Rätta också doc-kommentaren som hamnat på fel funktion (granskningen): `api_token_id` står mellan `token_expiry`s doc-kommentar och `token_expiry`. Flytta `api_token_id` ovanför kommentaren så att kommentaren hör till `token_expiry` igen.
+
+`crates/server/src/access.rs`: lägg till `"ContinueAddPasskey"` i `AuthService`s `SessionOnly`-arm.
+
+`crates/server/tests/grpc.rs`, `a_signed_in_user_adds_and_lists_passkeys`: behåll Annas enhet (`let mut laptop = device(); let session = server.sign_up(&mut laptop, …)`), och mellan begin och registreringen:
+
+```rust
+    let confirmed = grpc
+        .continue_add_passkey(authed(
+            pb::ContinueAddPasskeyRequest {
+                credential_json: server.confirm(&mut laptop, &begin),
+                ceremony_id: begin.ceremony_id,
+            },
+            &session,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+```
+
+och registrera `phone` mot `confirmed.options_json` och avsluta med `confirmed.ceremony_id`. Lägg till ett test att en bearer-token får `token_not_allowed` på `ContinueAddPasskey` om det är enkelt (tabelltestet täcker det annars).
+
+- [ ] **Step 5: Webben**
+
+`crates/web/src/pages/passkeys.rs`, `add_passkey`: efter `begin_add_passkey`, kör `passkey::get(&begin.options_json).await?`, skicka det med `continue_add_passkey(pb::ContinueAddPasskeyRequest { ceremony_id: begin.ceremony_id, credential_json })`, och kör sedan `passkey::create` på det svarets `options_json` och `finish_add_passkey` med dess `ceremony_id`. Kortets beskrivning (eller en rad under fältet): "Du bekräftar med en passkey du redan har, sedan skapar du den nya." Knapptexten "Lägg till passkey" är oförändrad.
+
+- [ ] **Step 6: E2E**
+
+`e2e/tests/auth.spec.ts`, "a user adds a second passkey and signs in with it": den gamla autentiseraren måste nu finnas kvar när man lägger till, eftersom den bekräftar. Lägg till telefonens autentiserare utan att ta bort laptopens innan klicket; när passkeyn är tillagd, ta bort laptopens och logga in med telefonens. Om Chromes virtuella autentiserare inte väljer rätt enhet för `get` respektive `create` (laptopen har den efterfrågade nyckeln; laptopen är undantagen vid `create` via `excludeCredentials`), beskriv vad som hände i rapporten och låt testet visa beteendet med den enklaste fungerande uppsättningen; ändra inte appen för testets skull.
+
+- [ ] **Step 7: AGENTS.md**
+
+I Authentication-stycket om passkeys: "Adding a passkey needs an assertion from one of the user's existing passkeys (`BeginAddPasskey` → `ContinueAddPasskey` → `FinishAddPasskey`), so a stolen session cannot add its own and then use it to confirm an API token." Under API: `ContinueAddPasskey`.
+
+- [ ] **Step 8: Kör allt och committa**
+
+Run: `cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo clippy -p doris-web --target wasm32-unknown-unknown -- -D warnings && cargo fmt --all --check && make web && cargo build -p doris-server && (cd e2e && npx playwright test auth.spec.ts tokens.spec.ts)`
+Expected: PASS.
+
+```bash
+git add crates proto e2e/tests/auth.spec.ts AGENTS.md
+git commit -m "Confirm adding a passkey with one the user already has"
 ```
