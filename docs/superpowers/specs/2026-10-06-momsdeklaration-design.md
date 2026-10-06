@@ -14,7 +14,7 @@ lämnades, visar när en period ändrats och tar då fram en ny deklaration.
 |---|---|
 | Underlag | Ledgerns verifikationsrader i perioden. Faktura- och kontantmetoden blir rätt av sig själva, eftersom momsen är bokförd när den ska redovisas. Doris egna avräkningsverifikationer (och rättelser av dem) räknas inte. |
 | Rutor | Varje konto har högst en ruta på blanketten. Standard från BAS i `bas.rs`; användaren kan ändra eller ta bort rutan per konto (händelse i kontoplanen). Alla rutor 05–62 går att välja, utom 49 som räknas fram. |
-| Period | Inställning per räkenskapsår: månad, kvartal, helår eller ej momsregistrerad. Standard kvartal. Månad och kvartal är kalenderperioder även vid brutet räkenskapsår; helår är räkenskapsåret. |
+| Period | Inställning per räkenskapsår: månad, kvartal, helår eller ej momsregistrerad. Standard kvartal. Månad och kvartal är kalenderperioder även vid brutet räkenskapsår; helår är räkenskapsåret. Byts periodtyp mellan två år börjar årets första period dagen efter förra årets sista period (räknad utan denna justering), så att ingen månad deklareras två gånger eller aldrig. |
 | Avrundning | Varje ruta summeras i öre, sedan stryks ören (mot noll). Ruta 49 räknas på de avrundade rutorna. |
 | Avräkning | Bokförs när perioden markeras inlämnad, i samma transaktion: momskontona mot 2650, öresdifferensen på 3740, daterad periodens sista dag. En ny inlämning bokför bara skillnaden. |
 | Inlämning | Doris skriver filen; användaren laddar upp och signerar hos Skatteverket och markerar sedan perioden inlämnad. Doris skickar inget själv. |
@@ -156,6 +156,10 @@ Konton med ruta men utan rader i perioden kommer inte med.
   ger årets perioder: månader och kalenderkvartal vars **sista månad**
   ligger i räkenskapsåret, med hela kalenderperioden (en period kan börja i
   året innan); helår ger räkenskapsåret; `NotRegistered` ger inga.
+  `periods_after(fiscal_year, kind, previous)` låter årets första period
+  börja dagen efter förra årets sista (förra årets egna `periods`); det är
+  den listan som används. Första året och ett år efter ett ej
+  momsregistrerat år får de naturliga perioderna.
   Perioden identifieras av `end`; i URL och fil som `ÅÅÅÅMM`.
 - `Boxes`: belopp i hela kronor per ruta (alla 29 rutor), plus ruta 49.
 

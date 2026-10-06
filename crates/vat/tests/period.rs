@@ -1,5 +1,5 @@
 use doris_company::domain::FiscalYear;
-use doris_vat::period::{VatPeriod, VatPeriodKind::*, due_date, periods};
+use doris_vat::period::{VatPeriod, VatPeriodKind::*, due_date, periods, periods_after};
 use jiff::civil::Date;
 
 fn d(s: &str) -> Date {
@@ -84,4 +84,38 @@ fn easter_holidays_push_the_date_to_the_next_workday() {
     assert_eq!(due("2047-02-01", "2047-02-28", Monthly).as_deref(), Some("2047-04-16"));
     // Kristi himmelsfärdsdag 2067-05-12.
     assert_eq!(due("2067-03-01", "2067-03-31", Monthly).as_deref(), Some("2067-05-13"));
+}
+
+fn first(list: &[VatPeriod]) -> (String, String) {
+    spans(&list[..1])[0].clone()
+}
+
+#[test]
+fn a_year_whose_kind_changes_starts_after_the_last_period_of_the_year_before() {
+    let (fy2025, fy2026) = (year("2025-05-01", "2026-04-30"), year("2026-05-01", "2027-04-30"));
+    // April 2026 was declared as FY2025's last month: not again in a quarter.
+    let quarters = periods_after(fy2026, Quarterly, Some((fy2025, Monthly)));
+    assert_eq!(first(&quarters), ("2026-05-01".into(), "2026-06-30".into()));
+    assert_eq!(quarters.len(), 4);
+    // FY2025's last quarter ended in March: April goes with May.
+    let months = periods_after(fy2026, Monthly, Some((fy2025, Quarterly)));
+    assert_eq!(first(&months), ("2026-04-01".into(), "2026-05-31".into()));
+    assert_eq!(spans(&months[1..]), spans(&periods(fy2026, Monthly)[1..]));
+    // After a helår, the first quarter starts the day after it.
+    let quarters = periods_after(fy2026, Quarterly, Some((fy2025, Yearly)));
+    assert_eq!(first(&quarters), ("2026-05-01".into(), "2026-06-30".into()));
+}
+
+#[test]
+fn the_same_kind_a_first_year_or_an_unregistered_year_before_changes_nothing() {
+    let (fy2025, fy2026) = (year("2025-05-01", "2026-04-30"), year("2026-05-01", "2027-04-30"));
+    assert_eq!(periods_after(fy2026, Quarterly, Some((fy2025, Quarterly))), periods(fy2026, Quarterly));
+    assert_eq!(periods_after(fy2026, Monthly, Some((fy2025, Monthly))), periods(fy2026, Monthly));
+    let (cal2025, cal2026) = (year("2025-01-01", "2025-12-31"), year("2026-01-01", "2026-12-31"));
+    for (before, now) in [(Monthly, Quarterly), (Quarterly, Monthly), (Yearly, Monthly), (Monthly, Yearly)] {
+        assert_eq!(periods_after(cal2026, now, Some((cal2025, before))), periods(cal2026, now));
+    }
+    assert_eq!(periods_after(fy2026, Quarterly, None), periods(fy2026, Quarterly));
+    assert_eq!(periods_after(fy2026, Quarterly, Some((fy2025, NotRegistered))), periods(fy2026, Quarterly));
+    assert!(periods_after(fy2026, NotRegistered, Some((fy2025, Monthly))).is_empty());
 }

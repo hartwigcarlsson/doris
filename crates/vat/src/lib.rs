@@ -82,6 +82,16 @@ fn fiscal_year(company: &Company, start: Date) -> Result<FiscalYear> {
     Ok(year)
 }
 
+/// The periods of `year`, the first starting after the year before's last
+/// (`period::periods_after`).
+fn year_periods(company: &Company, vat: &Vat, year: FiscalYear, kind: VatPeriodKind) -> Vec<VatPeriod> {
+    let previous = (year.start > company.first_fiscal_year.start).then(|| {
+        let before = company.first_fiscal_year.containing(year.start.yesterday().expect("far from the date limits"));
+        (before, vat.kind(before.start))
+    });
+    period::periods_after(year, kind, previous)
+}
+
 /// The period ending `period_end`, of the year its last month is in.
 fn resolve(company: &Company, vat: &Vat, period_end: Date) -> Result<(VatPeriodKind, VatPeriod)> {
     let year = company.first_fiscal_year.containing(period_end);
@@ -89,7 +99,7 @@ fn resolve(company: &Company, vat: &Vat, period_end: Date) -> Result<(VatPeriodK
     if kind == VatPeriodKind::NotRegistered {
         return Err(DomainError::VatNotRegistered.into());
     }
-    let period = period::periods(year, kind)
+    let period = year_periods(company, vat, year, kind)
         .into_iter()
         .find(|p| p.end == period_end)
         .ok_or(DomainError::InvalidVatPeriod)?;
@@ -158,7 +168,7 @@ pub async fn list_vat_returns(pool: &SqlitePool, company_id: Uuid, actor: Uuid, 
     let kind = vat.kind(year.start);
     let corrected = doris_ledger::corrected_vouchers_in(&mut conn, company_id).await?;
     let mut periods = Vec::new();
-    for period in period::periods(year, kind) {
+    for period in year_periods(&company, &vat, year, kind) {
         periods.push(summary(&mut conn, company_id, &vat, kind, period, today, &corrected).await?.0);
     }
     Ok(VatYear { kind, locked: domain::is_locked(&vat, year), periods })

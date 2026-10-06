@@ -79,6 +79,19 @@ pub fn periods(fiscal_year: FiscalYear, kind: VatPeriodKind) -> Vec<VatPeriod> {
     }
 }
 
+/// The periods of `fiscal_year` when `previous` (the year before and its
+/// kind) is known: the first period starts the day after the year before's
+/// last period, so a change of kind in a broken year neither declares a
+/// month twice nor skips one. Unregistered years before change nothing.
+pub fn periods_after(fiscal_year: FiscalYear, kind: VatPeriodKind, previous: Option<(FiscalYear, VatPeriodKind)>) -> Vec<VatPeriod> {
+    let mut list = periods(fiscal_year, kind);
+    let last_before = previous.and_then(|(year, kind)| periods(year, kind).last().copied());
+    if let (Some(first), Some(before)) = (list.first_mut(), last_before) {
+        first.start = before.end.tomorrow().expect("far from the date limits");
+    }
+    list
+}
+
 /// When a month or quarter must be declared (turnover up to 40 MSEK): the
 /// 12th of the second month after it, the 17th when that month is January
 /// or August, moved on to the next workday.

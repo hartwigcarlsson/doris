@@ -247,3 +247,35 @@ async fn a_period_with_nothing_to_settle_is_recorded_without_a_voucher() {
     let view = get_vat_return(&pool, id, anna, d("2026-03-31"), d(TODAY)).await.unwrap();
     assert_eq!((view.summary.status, view.submissions.len()), (VatStatus::Submitted, 1));
 }
+
+#[tokio::test]
+async fn a_month_declared_in_the_year_before_is_not_declared_again_in_a_quarter() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = doris_company::register_company(
+        &pool,
+        anna,
+        NewCompany {
+            org_nr: "556016-0680",
+            name: "Exempel AB",
+            legal_form: LegalForm::Aktiebolag,
+            street: "",
+            postal_code: "",
+            city: "",
+            fiscal_year_start: d("2025-05-01"),
+            fiscal_year_end: d("2026-04-30"),
+            accounting_method: AccountingMethod::Invoice,
+        },
+    )
+    .await
+    .unwrap();
+    set_vat_period(&pool, id, anna, d("2025-05-01"), VatPeriodKind::Monthly).await.unwrap();
+    book(&pool, id, anna, "2026-04-10", &[(1510, 1_250_00, 0), (3001, 0, 1_000_00), (2611, 0, 250_00)]).await;
+    book(&pool, id, anna, "2026-05-10", &[(1510, 125_00, 0), (3001, 0, 100_00), (2611, 0, 25_00)]).await;
+    let year = list_vat_returns(&pool, id, anna, d("2026-05-01"), d(TODAY)).await.unwrap();
+    let first = year.periods[0].period;
+    assert_eq!((first.start, first.end), (d("2026-05-01"), d("2026-06-30")));
+    assert_eq!(year.periods[0].vat_due, 25);
+    let june = get_vat_return(&pool, id, anna, d("2026-06-30"), d(TODAY)).await.unwrap();
+    assert_eq!(june.boxes.vat_due, 25);
+}
