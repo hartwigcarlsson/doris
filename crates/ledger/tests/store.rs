@@ -3,13 +3,14 @@ use doris_company::domain::{AccountingMethod, LegalForm};
 use doris_ledger::domain::AccountNumber;
 use doris_ledger::domain::{ContentType, DomainError, RecordVoucher, TrialBalanceRow, VoucherLine};
 use doris_ledger::statements::StatementLine;
+use doris_ledger::vat_box::VatBox;
 use doris_ledger::{
     Error, NewAttachment, VoucherRef, account_ledger, add_account, add_attachment, attachment_data,
     check_accounts_in, close_fiscal_year, correct_voucher, corrected_vouchers_in,
     financial_statements, get_attachment, link_attachment_in, list_accounts, list_fiscal_years,
     list_vouchers, opening_balances, rebuild_projections, record_voucher, record_voucher_in,
     record_voucher_with_attachments, rename_account, reopen_fiscal_year, set_account_active,
-    set_opening_balances, store_attachment_in, trial_balance,
+    set_account_vat_box, set_opening_balances, store_attachment_in, trial_balance,
 };
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -1739,4 +1740,47 @@ async fn stored_bytes_are_read_by_their_hash_and_an_unknown_hash_is_not_found() 
         matches!(unknown, Err(Error::Domain(DomainError::AttachmentNotFound))),
         "{unknown:?}"
     );
+}
+
+#[tokio::test]
+async fn an_accounts_box_is_listed_set_and_cleared() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let boxed = |accounts: &[doris_ledger::domain::Account], n: u16| {
+        accounts
+            .iter()
+            .find(|a| a.number.get() == n)
+            .unwrap()
+            .vat_box
+            .map(VatBox::get)
+    };
+    let before = list_accounts(&pool, id, anna).await.unwrap();
+    assert_eq!(boxed(&before, 2611), Some(10));
+
+    set_account_vat_box(&pool, id, anna, 3004, Some(5))
+        .await
+        .unwrap();
+    set_account_vat_box(&pool, id, anna, 2611, None)
+        .await
+        .unwrap();
+    let after = list_accounts(&pool, id, anna).await.unwrap();
+    assert_eq!((boxed(&after, 3004), boxed(&after, 2611)), (Some(5), None));
+    assert_eq!(
+        events_of(&pool, "accounts-").await,
+        ["ChartSeeded", "AccountVatBoxSet", "AccountVatBoxSet"]
+    );
+
+    let refused = set_account_vat_box(&pool, id, anna, 2650, Some(48)).await;
+    assert!(matches!(
+        refused,
+        Err(Error::Domain(DomainError::InvalidVatBox))
+    ));
+    let refused = set_account_vat_box(&pool, id, anna, 2611, Some(49)).await;
+    assert!(matches!(
+        refused,
+        Err(Error::Domain(DomainError::InvalidVatBox))
+    ));
+    let stranger = set_account_vat_box(&pool, id, Uuid::new_v4(), 3004, None).await;
+    assert!(matches!(stranger, Err(Error::NotFound)));
 }

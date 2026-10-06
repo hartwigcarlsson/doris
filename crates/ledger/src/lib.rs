@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
+use vat_box::VatBox;
 
 pub use projections::rebuild_projections;
 pub use queries::{
@@ -113,6 +114,21 @@ pub async fn set_account_active(
     .await
 }
 
+pub async fn set_account_vat_box(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    number: u32,
+    vat_box: Option<u32>,
+) -> Result<()> {
+    let number = AccountNumber::parse(number)?;
+    let vat_box = vat_box.map(VatBox::parse).transpose()?;
+    change_chart(pool, company_id, actor, |chart| {
+        domain::set_account_vat_box(chart, number, vat_box)
+    })
+    .await
+}
+
 async fn change_chart(
     pool: &SqlitePool,
     company_id: Uuid,
@@ -148,21 +164,29 @@ fn accounts_stream(company_id: Uuid) -> String {
     format!("{ACCOUNTS_STREAM}{company_id}")
 }
 
-/// The company's chart. A company that has none yet gets the built-in BAS
-/// selection appended first, in the caller's transaction.
-async fn seeded_chart(conn: &mut SqliteConnection, company_id: Uuid, actor: Uuid) -> Result<Chart> {
-    let stream = accounts_stream(company_id);
-    let recorded = doris_eventstore::load(conn, &stream).await?;
+/// The company's chart as its events say, or the built-in BAS selection
+/// when it has none yet. Writes nothing.
+pub(crate) async fn chart_in(conn: &mut SqliteConnection, company_id: Uuid) -> Result<Chart> {
+    let recorded = doris_eventstore::load(conn, &accounts_stream(company_id)).await?;
     if recorded.is_empty() {
-        let seed = domain::seed_chart();
-        append(conn, &stream, 0, std::slice::from_ref(&seed), actor).await?;
-        return Ok(Chart::from_events(&[seed]));
+        return Ok(Chart::from_events(&[domain::seed_chart()]));
     }
     let events = recorded
         .iter()
         .map(|e| e.decode::<ChartEvent>())
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Chart::from_events(&events))
+}
+
+/// The company's chart. A company that has none yet gets the built-in BAS
+/// selection appended first, in the caller's transaction.
+async fn seeded_chart(conn: &mut SqliteConnection, company_id: Uuid, actor: Uuid) -> Result<Chart> {
+    let stream = accounts_stream(company_id);
+    if doris_eventstore::stream_version(conn, &stream).await? == 0 {
+        let seed = domain::seed_chart();
+        append(conn, &stream, 0, std::slice::from_ref(&seed), actor).await?;
+    }
+    chart_in(conn, company_id).await
 }
 
 /// Appends events and updates projections within the caller's transaction.

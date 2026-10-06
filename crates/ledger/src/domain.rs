@@ -1,5 +1,6 @@
 //! Pure ledger rules: the chart of accounts and vouchers. No I/O, no clock.
 
+use crate::vat_box::{VatBox, default_vat_box};
 use doris_company::domain::{FiscalYear, LegalForm};
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
@@ -142,6 +143,12 @@ pub enum ChartEvent {
     AccountReactivated {
         number: AccountNumber,
     },
+    /// The account's box on the momsdeklaration. None: no box, even where
+    /// BAS has one.
+    AccountVatBoxSet {
+        number: AccountNumber,
+        vat_box: Option<VatBox>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +156,7 @@ pub struct Account {
     pub number: AccountNumber,
     pub name: AccountName,
     pub active: bool,
+    pub vat_box: Option<VatBox>,
 }
 
 /// A company's chart of accounts. Accounts are never removed, only
@@ -177,6 +185,7 @@ impl Chart {
                             number,
                             name,
                             active: true,
+                            vat_box: default_vat_box(number.get()),
                         },
                     );
                 }
@@ -188,6 +197,7 @@ impl Chart {
                         number,
                         name,
                         active: true,
+                        vat_box: default_vat_box(number.get()),
                     },
                 );
             }
@@ -198,6 +208,11 @@ impl Chart {
             }
             ChartEvent::AccountDeactivated { number } => self.set_active(number, false),
             ChartEvent::AccountReactivated { number } => self.set_active(number, true),
+            ChartEvent::AccountVatBoxSet { number, vat_box } => {
+                if let Some(account) = self.accounts.get_mut(&number) {
+                    account.vat_box = vat_box;
+                }
+            }
         }
     }
 
@@ -266,6 +281,23 @@ pub fn set_account_active(
         (false, true) => vec![ChartEvent::AccountReactivated { number }],
         _ => vec![],
     })
+}
+
+/// Setting the box it already has yields no events. 2650 and 3740 take
+/// no box: the settlement itself books on them.
+pub fn set_account_vat_box(
+    chart: &Chart,
+    number: AccountNumber,
+    vat_box: Option<VatBox>,
+) -> Result<Vec<ChartEvent>, DomainError> {
+    let account = chart.get(number).ok_or(DomainError::AccountNotFound)?;
+    if vat_box.is_some() && matches!(number.get(), 2650 | 3740) {
+        return Err(DomainError::InvalidVatBox);
+    }
+    if account.vat_box == vat_box {
+        return Ok(vec![]);
+    }
+    Ok(vec![ChartEvent::AccountVatBoxSet { number, vat_box }])
 }
 
 /// The most one line may carry: 100 miljarder kronor. With at most 100

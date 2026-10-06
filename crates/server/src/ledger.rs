@@ -471,6 +471,7 @@ fn domain_status(err: DomainError) -> Status {
     use DomainError::*;
     match err {
         InvalidAccountNumber => Status::invalid_argument("invalid_account_number"),
+        InvalidVatBox => Status::invalid_argument("invalid_vat_box"),
         InvalidAccountName => Status::invalid_argument("invalid_account_name"),
         AccountExists => Status::already_exists("account_exists"),
         AccountNotFound => Status::not_found("account_not_found"),

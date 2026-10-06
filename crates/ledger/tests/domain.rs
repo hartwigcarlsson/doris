@@ -1,4 +1,5 @@
 use doris_ledger::domain::*;
+use doris_ledger::vat_box::VatBox;
 
 fn n(number: u32) -> AccountNumber {
     AccountNumber::parse(number).unwrap()
@@ -1059,5 +1060,54 @@ fn attachment_events_are_readable_json() {
                 "size": 9
             }
         })
+    );
+}
+
+#[test]
+fn seeded_and_added_accounts_get_bas_boxes_and_a_set_box_wins() {
+    let mut chart = seeded();
+    assert_eq!(chart.get(n(2611)).unwrap().vat_box, VatBox::parse(10).ok());
+    assert_eq!(chart.get(n(1930)).unwrap().vat_box, None);
+    chart.apply(&ChartEvent::AccountAdded {
+        number: n(4535),
+        name: name("Tjänst EU"),
+    });
+    assert_eq!(chart.get(n(4535)).unwrap().vat_box, VatBox::parse(21).ok());
+    chart.apply(&ChartEvent::AccountVatBoxSet {
+        number: n(2611),
+        vat_box: None,
+    });
+    assert_eq!(chart.get(n(2611)).unwrap().vat_box, None);
+}
+
+#[test]
+fn a_box_is_set_once_and_never_on_2650_or_3740() {
+    let chart = seeded();
+    let b42 = VatBox::parse(42).ok();
+    assert_eq!(
+        set_account_vat_box(&chart, n(3004), VatBox::parse(5).ok()).unwrap(),
+        [ChartEvent::AccountVatBoxSet {
+            number: n(3004),
+            vat_box: VatBox::parse(5).ok()
+        }]
+    );
+    assert_eq!(set_account_vat_box(&chart, n(3004), b42).unwrap(), []);
+    assert_eq!(
+        set_account_vat_box(&chart, n(2650), b42),
+        Err(DomainError::InvalidVatBox)
+    );
+    assert_eq!(
+        set_account_vat_box(&chart, n(3740), b42),
+        Err(DomainError::InvalidVatBox)
+    );
+    assert!(
+        set_account_vat_box(&chart, n(2650), None)
+            .unwrap()
+            .is_empty()
+    );
+    // 1234 is not in the BAS selection.
+    assert_eq!(
+        set_account_vat_box(&chart, n(1234), None),
+        Err(DomainError::AccountNotFound)
     );
 }

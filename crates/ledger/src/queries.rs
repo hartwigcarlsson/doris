@@ -1,9 +1,8 @@
 //! Read-only views over the ledger projections. Each checks membership first.
 
 use crate::domain::{
-    Account, AccountLedger, AccountName, AccountNumber, Attachment, AttachmentName, Chart,
-    ContentType, DomainError, FiscalYearStatus, Recorded, TrialBalanceRow, Voucher, VoucherLine,
-    running_balance,
+    Account, AccountLedger, AccountNumber, Attachment, AttachmentName, ContentType, DomainError,
+    FiscalYearStatus, Recorded, TrialBalanceRow, Voucher, VoucherLine, running_balance,
 };
 use crate::statements::{FinancialStatements, build};
 use crate::{Error, Result};
@@ -11,33 +10,21 @@ use jiff::civil::Date;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-/// The company's chart, by number. Before its first change that is the
-/// built-in BAS selection, which is not stored until then.
+/// The company's chart, by number, read from its events. Before its first
+/// change that is the built-in BAS selection, which is not stored until then.
 pub async fn list_accounts(
     pool: &SqlitePool,
     company_id: Uuid,
     user_id: Uuid,
 ) -> Result<Vec<Account>> {
     doris_company::get_company(pool, company_id, user_id).await?;
-    let rows: Vec<(i64, String, bool)> = sqlx::query_as(
-        "SELECT number, name, active FROM accounts WHERE company_id = ? ORDER BY number",
-    )
-    .bind(company_id.to_string())
-    .fetch_all(pool)
-    .await?;
-    if rows.is_empty() {
-        return Ok(Chart::from_events(&[crate::domain::seed_chart()])
-            .accounts()
-            .cloned()
-            .collect());
-    }
-    Ok(rows
-        .into_iter()
-        .map(|(number, name, active)| Account {
-            number: AccountNumber::parse(number as u32).expect("projected numbers are valid"),
-            name: AccountName::parse(&name).expect("projected names are valid"),
-            active,
-        })
+    let mut conn = pool.acquire().await?;
+    // The chart's events, not the projection: they also carry each
+    // account's momsruta.
+    Ok(crate::chart_in(&mut conn, company_id)
+        .await?
+        .accounts()
+        .cloned()
         .collect())
 }
 
