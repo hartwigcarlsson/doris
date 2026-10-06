@@ -979,6 +979,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "doris-vat"
+version = "0.1.0"
+dependencies = [
+ "doris-company",
+ "doris-eventstore",
+ "doris-ledger",
+ "jiff",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "doris-web"
 version = "0.1.0"
 dependencies = [
