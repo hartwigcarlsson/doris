@@ -88,9 +88,20 @@ const iso = (daysFromToday: number) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+// A new company declares VAT quarterly, and the quarters of this year that
+// have ended are then on the to-do list; these tests want an empty one.
+async function notVatRegistered(page: Page, app: string) {
+  await page.goto(`${app}/vat`);
+  // Let the page load first, or its answer overwrites the choice.
+  await expect(page.getByRole("link", { name: /januari–mars/ })).toBeVisible();
+  await page.getByLabel("Redovisningsperiod").selectOption("not_registered");
+  await expect(page.getByRole("row")).toHaveCount(1); // only the header: no periods
+}
+
 test("nothing to do says so", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
+  await notVatRegistered(page, app);
   await page.goto(app);
   await expect(figure(page, "Att göra")).toContainText("Inget att göra just nu.");
   await expect(figure(page, "Senaste verifikationer")).toContainText("Inga verifikationer än.");
@@ -188,6 +199,7 @@ test("a company that cannot be fetched says so and the rest still shows", async 
 test("one slow call does not hold the others back", async ({ page, app }) => {
   await register(page, app, { email: "anna@example.se", name: "Anna" });
   await addCompany(page, app, "5560160680", "Exempel AB");
+  await notVatRegistered(page, app);
   let release = () => {};
   const held = new Promise<void>((r) => (release = r));
   await page.route("**/GetCompany", async (route) => {

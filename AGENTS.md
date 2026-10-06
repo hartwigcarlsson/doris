@@ -36,6 +36,7 @@ crates/company      doris-company: companies, members, fiscal year and accountin
 crates/invoicing    doris-invoicing: customers, suppliers, and customer and supplier invoices
 crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
 crates/identity     doris-identity: users, passkeys, invitations, sessions
+crates/vat           doris-vat: redovisningsperiod, momsdeklaration and the momsavräkning
 crates/ledger       doris-ledger: chart of accounts, vouchers, opening balances and year closing
 crates/payroll      doris-payroll: employees, payroll runs and arbetsgivaravgift
 crates/proto        doris-proto: generated code (feature `server` for stubs)
@@ -130,6 +131,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   An employee's specification number is their 1-based position in the
   register (`Payroll.employees`, hire order), the same in every month.
 
+- Moms (`vat-{company_id}`, crate `doris-vat`): `VatPeriodSet` per räkenskapsår (månad, kvartal (default), helår, ej momsregistrerad; calendar months and quarters, a period belongs to the year its last month is in) and `VatReturnSubmitted` with what was declared. An account's box is `AccountVatBoxSet` in the chart (BAS default in `crates/ledger/src/vat_box.rs`, read from the chart's events). The boxes come from `doris_ledger::vat_box_totals_in`, leaving out Doris' own settlement vouchers and their corrections; öre are struck off per box and box 49 is computed from the rounded boxes. Marking a period submitted books the momsavräkning (VAT accounts to 2650, öre to 3740, dated the period's last day) with `record_voucher_in` in the same transaction; a later submission books only the difference, and a corrected settlement counts as not booked. `doris-vat` has no projections: it reads its own stream.
+
 ## BFL requirements to keep in mind
 - Varaktighet (durability): accounting data must never be altered or deleted.
   Corrections are new entries.
@@ -168,10 +171,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 
 ## API
 - The contract lives in `proto/doris/auth/v1/auth.proto`,
-  `proto/doris/company/v1/company.proto`, `proto/doris/ledger/v1/ledger.proto` and
   `proto/doris/company/v1/company.proto`, `proto/doris/ledger/v1/ledger.proto`,
-  `proto/doris/invoicing/v1/invoicing.proto` and
-  `proto/doris/payroll/v1/payroll.proto`. `doris-proto` generates
+  `proto/doris/invoicing/v1/invoicing.proto`,
+  `proto/doris/payroll/v1/payroll.proto` and `proto/doris/vat/v1/vat.proto`. `doris-proto` generates
   the client; its `server` feature adds the server stubs. The client builds for
   wasm32 because no transport is generated.
 - gRPC-Web over HTTP/1.1 (`tonic_web::GrpcWebLayer`) shares one port with the
@@ -224,6 +226,7 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `customer_invoice_not_found`, `customer_inactive`,
   `duplicate_customer_invoice`, `customer_invoice_paid`,
   `customer_invoice_not_paid` and `customer_invoice_cancelled`.
+- `VatService` (`proto/doris/vat/v1/vat.proto`; codes mapped in `crates/server/src/vat.rs`): `SetVatPeriod`, `ListVatReturns`, `GetVatReturn`, `ExportVatFile` (eSKD 6.0, ISO-8859-1) and `MarkVatReturnSubmitted` (with the fingerprint). Codes: `invalid_vat_period`, `vat_period_not_ended`, `vat_period_locked`, `vat_return_outdated`, `vat_return_unchanged` and `vat_not_registered`; `LedgerService.SetAccountVatBox` answers `invalid_vat_box`. Ledger refusals keep their codes.
 - `LedgerService` also has `GetOpeningBalances`, `SetOpeningBalances`,
   `CloseFiscalYear` and `ReopenFiscalYear`. Their codes are
   `not_balance_sheet_account`, `duplicate_account`,
@@ -345,8 +348,9 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   shadcn's generated output. Add more by generating them with
   `npx shadcn init -t vite -b radix -p b1Gdz9bFY` in a scratch directory and
   copying the classes.
+- `src/vat_form.rs` holds SKV 4700's sections and row texts; `/vat` and `/vat/{ÅÅÅÅMM}` draw them.
 - `src/nav.rs` holds the header: one row with Doris, the company picker,
-  the main menu (Översikt, Bokföring, Inköp, Försäljning, Lön) and the account
+  the main menu (Översikt, Bokföring (with Moms), Inköp, Försäljning, Lön) and the account
   menu. Menus are native `<details name="doris-nav">`, so the browser keeps
   one open. A click listener closes them on a click outside or on one of
   their links or buttons, a keydown listener on Escape (focus goes back to
