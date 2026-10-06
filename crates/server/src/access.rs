@@ -29,9 +29,22 @@ fn classify(service: &str, method: &str) -> Option<Access> {
         ("doris.auth.v1.AuthService", "GetStatus") => Owner,
         (
             "doris.auth.v1.AuthService",
-            "BeginRegistration" | "FinishRegistration" | "BeginLogin" | "FinishLogin" | "Logout"
-            | "BeginAddPasskey" | "FinishAddPasskey" | "ListPasskeys" | "GetInvitation"
-            | "CreateInvitation" | "ListInvitations" | "CreateApiToken" | "ListApiTokens"
+            "BeginRegistration"
+            | "FinishRegistration"
+            | "BeginLogin"
+            | "FinishLogin"
+            | "Logout"
+            | "BeginAddPasskey"
+            | "FinishAddPasskey"
+            | "ListPasskeys"
+            | "GetInvitation"
+            | "CreateInvitation"
+            | "ListInvitations"
+            | "BeginCreateApiToken"
+            | "FinishCreateApiToken"
+            | "BeginChangeApiToken"
+            | "FinishChangeApiToken"
+            | "ListApiTokens"
             | "RevokeApiToken",
         ) => SessionOnly,
 
@@ -194,7 +207,14 @@ mod tests {
             ),
             ("/doris.company.v1.CompanyService/ListCompanies", Owner),
             ("/doris.auth.v1.AuthService/GetStatus", Owner),
-            ("/doris.auth.v1.AuthService/CreateApiToken", SessionOnly),
+            (
+                "/doris.auth.v1.AuthService/BeginCreateApiToken",
+                SessionOnly,
+            ),
+            (
+                "/doris.auth.v1.AuthService/FinishChangeApiToken",
+                SessionOnly,
+            ),
             ("/doris.company.v1.CompanyService/AddMember", SessionOnly),
             ("/doris.ledger.v1.LedgerService/SomethingNew", SessionOnly),
             ("/index.html", SessionOnly),

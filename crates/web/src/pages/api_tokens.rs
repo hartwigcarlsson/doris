@@ -5,6 +5,7 @@ use crate::active_company::Companies;
 use crate::api::{api, pb};
 use crate::errors::describe;
 use crate::format::{date, plus_days, today};
+use crate::passkey;
 use crate::task::spawn_local;
 use crate::ui::{
     Badge, BadgeVariant, Button, Card, Checkbox, ErrorAlert, Field, IconName, LinkButton,
@@ -189,6 +190,58 @@ pub fn ApiTokens() -> impl IntoView {
 /// A company's (read, write) boxes in `AREAS` order.
 type Boxes = Vec<(RwSignal<bool>, RwSignal<bool>)>;
 
+/// Begins creating (`token_id` `None`) or changing a token, has one of the
+/// user's passkeys confirm it, and finishes. A new token's secret comes back.
+async fn save_with_passkey(
+    token_id: Option<String>,
+    name: String,
+    expires_on: String,
+    grants: Vec<pb::TokenGrant>,
+) -> Result<Option<String>, String> {
+    let mut api = api();
+    let begin = match &token_id {
+        None => {
+            api.begin_create_api_token(pb::CreateApiTokenRequest {
+                name,
+                expires_on,
+                grants,
+            })
+            .await
+        }
+        Some(id) => {
+            api.begin_change_api_token(pb::ChangeApiTokenRequest {
+                token_id: id.clone(),
+                name,
+                expires_on,
+                grants,
+            })
+            .await
+        }
+    }
+    .map_err(|s| describe(&s))?
+    .into_inner();
+    let credential_json = passkey::get(&begin.options_json).await?;
+    let finish = pb::FinishApiTokenRequest {
+        ceremony_id: begin.ceremony_id,
+        credential_json,
+    };
+    match token_id {
+        None => Ok(Some(
+            api.finish_create_api_token(finish)
+                .await
+                .map_err(|s| describe(&s))?
+                .into_inner()
+                .secret,
+        )),
+        Some(_) => {
+            api.finish_change_api_token(finish)
+                .await
+                .map_err(|s| describe(&s))?;
+            Ok(None)
+        }
+    }
+}
+
 #[component]
 pub fn NewApiToken() -> impl IntoView {
     let companies = expect_context::<Companies>();
@@ -221,14 +274,11 @@ pub fn NewApiToken() -> impl IntoView {
                 .collect()
         });
         spawn_local(async move {
-            let request = pb::CreateApiTokenRequest {
-                name: name.get_untracked(),
-                expires_on: last_day.get_untracked(),
-                grants,
-            };
-            match api().create_api_token(request).await {
-                Ok(created) => secret.set(Some(created.into_inner().secret)),
-                Err(status) => error.set(Some(describe(&status))),
+            match save_with_passkey(None, name.get_untracked(), last_day.get_untracked(), grants)
+                .await
+            {
+                Ok(created) => secret.set(created),
+                Err(message) => error.set(Some(message)),
             }
             busy.set(false);
         });

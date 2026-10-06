@@ -35,22 +35,23 @@ fn grant(company: &str, scopes: &[&str]) -> pb::TokenGrant {
 #[tokio::test]
 async fn a_user_creates_lists_and_revokes_a_token() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, "556016-0680").await;
     let mut api = server.grpc();
 
-    let created = api
-        .create_api_token(authed(
+    let created = server
+        .create_token(
+            &anna,
+            &mut annas,
             create(
                 "Agent",
                 in_days(90),
                 vec![grant(&id, &["ledger:write", "ledger:read"])],
             ),
-            &anna,
-        ))
+        )
         .await
-        .unwrap()
-        .into_inner();
+        .unwrap();
     let listed = api
         .list_api_tokens(authed(pb::ListApiTokensRequest {}, &anna))
         .await
@@ -88,17 +89,18 @@ async fn a_user_creates_lists_and_revokes_a_token() {
 #[tokio::test]
 async fn revoking_twice_is_fine() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, "556016-0680").await;
     let mut api = server.grpc();
-    let created = api
-        .create_api_token(authed(
-            create("Agent", in_days(1), vec![grant(&id, &["ledger:read"])]),
+    let created = server
+        .create_token(
             &anna,
-        ))
+            &mut annas,
+            create("Agent", in_days(1), vec![grant(&id, &["ledger:read"])]),
+        )
         .await
-        .unwrap()
-        .into_inner();
+        .unwrap();
     let revoke = || pb::RevokeApiTokenRequest {
         token_id: created.token_id.clone(),
     };
@@ -114,7 +116,7 @@ async fn a_token_without_grants_is_refused() {
 
     let err = server
         .grpc()
-        .create_api_token(authed(create("Agent", in_days(30), vec![]), &anna))
+        .begin_create_api_token(authed(create("Agent", in_days(30), vec![]), &anna))
         .await
         .unwrap_err();
 
@@ -133,14 +135,14 @@ async fn a_token_is_only_for_the_users_own_companies_and_known_scopes() {
     let mut api = server.grpc();
 
     let not_member = api
-        .create_api_token(authed(
+        .begin_create_api_token(authed(
             create("Agent", in_days(30), vec![grant(&annas, &["ledger:read"])]),
             &bo,
         ))
         .await
         .unwrap_err();
     let unknown_scope = api
-        .create_api_token(authed(
+        .begin_create_api_token(authed(
             create("Agent", in_days(30), vec![grant(&annas, &["ledger:admin"])]),
             &anna,
         ))
@@ -167,7 +169,7 @@ async fn the_last_day_is_today_at_the_earliest_and_a_year_off_at_most() {
 
     for day in [in_days(-1), in_days(367), "i morgon".to_owned()] {
         let err = api
-            .create_api_token(authed(try_day(day.clone()), &anna))
+            .begin_create_api_token(authed(try_day(day.clone()), &anna))
             .await
             .unwrap_err();
         assert_eq!(
@@ -176,7 +178,7 @@ async fn the_last_day_is_today_at_the_earliest_and_a_year_off_at_most() {
             "{day}"
         );
     }
-    api.create_api_token(authed(try_day(in_days(366)), &anna))
+    api.begin_create_api_token(authed(try_day(in_days(366)), &anna))
         .await
         .unwrap();
 }
@@ -184,23 +186,25 @@ async fn the_last_day_is_today_at_the_earliest_and_a_year_off_at_most() {
 #[tokio::test]
 async fn someone_elses_token_cannot_be_seen_or_revoked_but_an_admin_can_revoke_it() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let mut bos = device();
+    let bo = server.invite_with(&anna, "bo@example.se", &mut bos).await;
     let cecilia = server.invite(&anna, "cecilia@example.se").await;
     let bos_company = company(&server, &bo, "556016-0680").await;
     let mut api = server.grpc();
-    let created = api
-        .create_api_token(authed(
+    let created = server
+        .create_token(
+            &bo,
+            &mut bos,
             create(
                 "Bo",
                 in_days(30),
                 vec![grant(&bos_company, &["ledger:read"])],
             ),
-            &bo,
-        ))
+        )
         .await
-        .unwrap()
-        .into_inner();
+        .unwrap();
     let revoke = || pb::RevokeApiTokenRequest {
         token_id: created.token_id.clone(),
     };
@@ -268,10 +272,17 @@ fn vouchers(company: &str) -> lpb::ListVouchersRequest {
 #[tokio::test]
 async fn a_read_token_lists_but_does_not_book_and_a_write_token_books_with_its_id_recorded() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, "556016-0680").await;
-    let reader = api_token(&server, &anna, &[(&id, &["ledger:read"])]).await;
-    let writer = api_token(&server, &anna, &[(&id, &["ledger:read", "ledger:write"])]).await;
+    let reader = api_token(&server, &anna, &mut annas, &[(&id, &["ledger:read"])]).await;
+    let writer = api_token(
+        &server,
+        &anna,
+        &mut annas,
+        &[(&id, &["ledger:read", "ledger:write"])],
+    )
+    .await;
     let mut ledger = server.ledger();
 
     ledger
@@ -316,12 +327,14 @@ async fn a_read_token_lists_but_does_not_book_and_a_write_token_books_with_its_i
 #[tokio::test]
 async fn scopes_are_per_company() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let a = company(&server, &anna, "556016-0680").await;
     let b = company(&server, &anna, "556036-0793").await;
     let token = api_token(
         &server,
         &anna,
+        &mut annas,
         &[(&a, &["ledger:write"]), (&b, &["ledger:read"])],
     )
     .await;
@@ -345,10 +358,11 @@ async fn scopes_are_per_company() {
 #[tokio::test]
 async fn a_company_outside_the_grants_does_not_exist_for_the_token() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let granted = company(&server, &anna, "556016-0680").await;
     let other = company(&server, &anna, "556036-0793").await;
-    let token = api_token(&server, &anna, &[(&granted, &["ledger:read"])]).await;
+    let token = api_token(&server, &anna, &mut annas, &[(&granted, &["ledger:read"])]).await;
 
     let err = server
         .ledger()
@@ -373,7 +387,8 @@ async fn a_company_outside_the_grants_does_not_exist_for_the_token() {
 #[tokio::test]
 async fn expired_revoked_and_malformed_tokens_are_not_signed_in_even_with_a_cookie() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, "556016-0680").await;
     let me = server
         .grpc()
@@ -398,7 +413,7 @@ async fn expired_revoked_and_malformed_tokens_are_not_signed_in_even_with_a_cook
     )
     .await
     .unwrap();
-    let revoked = api_token(&server, &anna, &[(&id, &["ledger:read"])]).await;
+    let revoked = api_token(&server, &anna, &mut annas, &[(&id, &["ledger:read"])]).await;
     let revoked_id = server
         .grpc()
         .list_api_tokens(authed(pb::ListApiTokensRequest {}, &anna))
@@ -439,13 +454,20 @@ async fn expired_revoked_and_malformed_tokens_are_not_signed_in_even_with_a_cook
 #[tokio::test]
 async fn a_token_cannot_manage_tokens_invite_or_create_companies_but_knows_its_owner() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, "556016-0680").await;
-    let token = api_token(&server, &anna, &[(&id, &["ledger:read", "company:read"])]).await;
+    let token = api_token(
+        &server,
+        &anna,
+        &mut annas,
+        &[(&id, &["ledger:read", "company:read"])],
+    )
+    .await;
     let mut auth = server.grpc();
 
     let errors = [
-        auth.create_api_token(bearer(
+        auth.begin_create_api_token(bearer(
             create("Ny", in_days(1), vec![grant(&id, &["ledger:read"])]),
             &token,
         ))
@@ -506,9 +528,10 @@ async fn a_token_cannot_manage_tokens_invite_or_create_companies_but_knows_its_o
 #[tokio::test]
 async fn the_bearer_scheme_is_case_insensitive_and_spaces_are_ignored() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, "556016-0680").await;
-    let token = api_token(&server, &anna, &[(&id, &["ledger:read"])]).await;
+    let token = api_token(&server, &anna, &mut annas, &[(&id, &["ledger:read"])]).await;
 
     for header in [format!("bearer {token}"), format!("BEARER  {token} ")] {
         let mut request = tonic::Request::new(vouchers(&id));
@@ -522,12 +545,14 @@ async fn the_bearer_scheme_is_case_insensitive_and_spaces_are_ignored() {
 #[tokio::test]
 async fn each_service_checks_the_area() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, "556016-0680").await;
-    let ledger_only = api_token(&server, &anna, &[(&id, &["ledger:read"])]).await;
+    let ledger_only = api_token(&server, &anna, &mut annas, &[(&id, &["ledger:read"])]).await;
     let all = api_token(
         &server,
         &anna,
+        &mut annas,
         &[(&id, &["payroll:read", "invoicing:read", "vat:read"])],
     )
     .await;
@@ -585,9 +610,10 @@ async fn each_service_checks_the_area() {
 #[tokio::test]
 async fn a_token_sends_large_underlag_through_the_gate() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, "556016-0680").await;
-    let token = api_token(&server, &anna, &[(&id, &["ledger:write"])]).await;
+    let token = api_token(&server, &anna, &mut annas, &[(&id, &["ledger:write"])]).await;
     let pdf = |size: usize| {
         let mut data = b"%PDF-1.7\n".to_vec();
         data.resize(size, b'x');
@@ -634,9 +660,10 @@ async fn another_authorization_scheme_does_not_hide_the_session() {
 #[tokio::test]
 async fn a_call_with_a_token_records_its_last_use() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna, "556016-0680").await;
-    let token = api_token(&server, &anna, &[(&id, &["ledger:read"])]).await;
+    let token = api_token(&server, &anna, &mut annas, &[(&id, &["ledger:read"])]).await;
     let last_used = || async {
         server
             .grpc()
@@ -657,4 +684,294 @@ async fn a_call_with_a_token_records_its_last_use() {
         .unwrap();
 
     assert!(last_used().await.is_some());
+}
+
+fn change_of(token_id: &str, company: &str, scopes: &[&str]) -> pb::ChangeApiTokenRequest {
+    pb::ChangeApiTokenRequest {
+        token_id: token_id.into(),
+        name: "Agent".into(),
+        expires_on: in_days(30),
+        grants: vec![grant(company, scopes)],
+    }
+}
+
+async fn only_token_id(server: &TestServer, session: &str) -> String {
+    server
+        .grpc()
+        .list_api_tokens(authed(pb::ListApiTokensRequest {}, session))
+        .await
+        .unwrap()
+        .into_inner()
+        .tokens[0]
+        .id
+        .clone()
+}
+
+#[tokio::test]
+async fn a_token_is_changed_with_a_passkey_and_its_secret_keeps_working() {
+    let server = TestServer::start().await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let id = company(&server, &anna, "556016-0680").await;
+    let secret = api_token(&server, &anna, &mut annas, &[(&id, &["ledger:read"])]).await;
+    let token_id = only_token_id(&server, &anna).await;
+    let mut ledger = server.ledger();
+    let before = ledger
+        .record_voucher(bearer(sale(&id), &secret))
+        .await
+        .unwrap_err();
+
+    server
+        .change_token(
+            &anna,
+            &mut annas,
+            change_of(&token_id, &id, &["ledger:read", "ledger:write"]),
+        )
+        .await
+        .unwrap();
+    ledger
+        .record_voucher(bearer(sale(&id), &secret))
+        .await
+        .unwrap();
+    server
+        .change_token(
+            &anna,
+            &mut annas,
+            change_of(&token_id, &id, &["company:read"]),
+        )
+        .await
+        .unwrap();
+    let after = ledger
+        .list_vouchers(bearer(vouchers(&id), &secret))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        code_of(before),
+        (Code::PermissionDenied, "missing_scope".into())
+    );
+    assert_eq!(
+        code_of(after),
+        (Code::PermissionDenied, "missing_scope".into())
+    );
+    let listed = server
+        .grpc()
+        .list_api_tokens(authed(pb::ListApiTokensRequest {}, &anna))
+        .await
+        .unwrap()
+        .into_inner()
+        .tokens;
+    assert_eq!(listed.len(), 1, "changed, not replaced");
+    assert_eq!(listed[0].grants, vec![grant(&id, &["company:read"])]);
+}
+
+#[tokio::test]
+async fn each_ceremony_is_finished_once_by_the_user_who_began_it() {
+    let server = TestServer::start().await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server.invite(&anna, "bo@example.se").await;
+    let id = company(&server, &anna, "556016-0680").await;
+    let mut auth = server.grpc();
+    let begin = auth
+        .begin_create_api_token(authed(
+            create("Agent", in_days(30), vec![grant(&id, &["ledger:read"])]),
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let finish = pb::FinishApiTokenRequest {
+        credential_json: server.confirm(&mut annas, &begin),
+        ceremony_id: begin.ceremony_id.clone(),
+    };
+
+    let by_bo = auth
+        .finish_create_api_token(authed(finish.clone(), &bo))
+        .await
+        .unwrap_err();
+    let again = auth
+        .finish_create_api_token(authed(finish, &anna))
+        .await
+        .unwrap_err();
+
+    // A create ceremony finished as a change.
+    let secret = api_token(&server, &anna, &mut annas, &[(&id, &["ledger:read"])]).await;
+    let begin = auth
+        .begin_create_api_token(authed(
+            create("Agent", in_days(30), vec![grant(&id, &["ledger:read"])]),
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let finish = pb::FinishApiTokenRequest {
+        credential_json: server.confirm(&mut annas, &begin),
+        ceremony_id: begin.ceremony_id,
+    };
+    let wrong_kind = auth
+        .finish_change_api_token(authed(finish, &anna))
+        .await
+        .unwrap_err();
+
+    for err in [by_bo, again, wrong_kind] {
+        assert_eq!(
+            code_of(err),
+            (Code::FailedPrecondition, "ceremony_expired".into())
+        );
+    }
+    assert!(!secret.is_empty());
+}
+
+#[tokio::test]
+async fn a_change_is_refused_at_begin_before_any_passkey() {
+    let server = TestServer::start().await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let mut bos = device();
+    let bo = server.invite_with(&anna, "bo@example.se", &mut bos).await;
+    let annas_company = company(&server, &anna, "556016-0680").await;
+    let bos_company = company(&server, &bo, "556036-0793").await;
+    api_token(
+        &server,
+        &anna,
+        &mut annas,
+        &[(&annas_company, &["ledger:read"])],
+    )
+    .await;
+    let annas_token = only_token_id(&server, &anna).await;
+    api_token(&server, &bo, &mut bos, &[(&bos_company, &["ledger:read"])]).await;
+    let bos_token = only_token_id(&server, &bo).await;
+    let begin = |request: pb::ChangeApiTokenRequest| {
+        let mut auth = server.grpc();
+        let anna = anna.clone();
+        async move {
+            auth.begin_change_api_token(authed(request, &anna))
+                .await
+                .unwrap_err()
+        }
+    };
+
+    let mut empty_name = change_of(&annas_token, &annas_company, &["ledger:read"]);
+    empty_name.name = " ".into();
+    let errors = [
+        (
+            begin(empty_name).await,
+            (Code::InvalidArgument, "invalid_token_name"),
+        ),
+        (
+            begin(change_of(&annas_token, &annas_company, &[])).await,
+            (Code::InvalidArgument, "invalid_token_grants"),
+        ),
+        (
+            begin(change_of(&annas_token, &bos_company, &["ledger:read"])).await,
+            (Code::NotFound, "company_not_found"),
+        ),
+        (
+            begin(change_of(&bos_token, &annas_company, &["ledger:read"])).await,
+            (Code::NotFound, "api_token_not_found"),
+        ),
+        (
+            begin(change_of("nej", &annas_company, &["ledger:read"])).await,
+            (Code::NotFound, "api_token_not_found"),
+        ),
+    ];
+
+    for (err, (code, message)) in errors {
+        assert_eq!(code_of(err), (code, message.to_owned()));
+    }
+    let ceremonies: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM webauthn_ceremonies")
+        .fetch_one(&server.pool)
+        .await
+        .unwrap();
+    assert_eq!(ceremonies, 0);
+}
+
+#[tokio::test]
+async fn a_token_revoked_during_the_ceremony_is_not_changed() {
+    let server = TestServer::start().await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let id = company(&server, &anna, "556016-0680").await;
+    api_token(&server, &anna, &mut annas, &[(&id, &["ledger:read"])]).await;
+    let token_id = only_token_id(&server, &anna).await;
+    let mut auth = server.grpc();
+    let begin = auth
+        .begin_change_api_token(authed(change_of(&token_id, &id, &["ledger:write"]), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    auth.revoke_api_token(authed(pb::RevokeApiTokenRequest { token_id }, &anna))
+        .await
+        .unwrap();
+    let finish = pb::FinishApiTokenRequest {
+        credential_json: server.confirm(&mut annas, &begin),
+        ceremony_id: begin.ceremony_id,
+    };
+
+    let err = auth
+        .finish_change_api_token(authed(finish, &anna))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        code_of(err),
+        (Code::FailedPrecondition, "api_token_revoked".into())
+    );
+}
+
+#[tokio::test]
+async fn an_expired_token_gets_a_new_last_day() {
+    let server = TestServer::start().await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let id = company(&server, &anna, "556016-0680").await;
+    let me: uuid::Uuid = server
+        .grpc()
+        .get_status(authed(pb::GetStatusRequest {}, &anna))
+        .await
+        .unwrap()
+        .into_inner()
+        .current_user
+        .unwrap()
+        .id
+        .parse()
+        .unwrap();
+    let then = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48);
+    let (token_id, secret) = doris_identity::create_api_token(
+        &server.pool,
+        me,
+        "Gammal",
+        then + jiff::SignedDuration::from_hours(24),
+        vec![doris_identity::domain::Grant {
+            company_id: id.parse().unwrap(),
+            scopes: vec![doris_identity::domain::Scope::LedgerRead],
+        }],
+        then,
+    )
+    .await
+    .unwrap();
+    let mut ledger = server.ledger();
+    let before = ledger
+        .list_vouchers(bearer(vouchers(&id), &secret))
+        .await
+        .unwrap_err();
+
+    server
+        .change_token(
+            &anna,
+            &mut annas,
+            change_of(&token_id.to_string(), &id, &["ledger:read"]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        code_of(before),
+        (Code::Unauthenticated, "not_signed_in".into())
+    );
+    ledger
+        .list_vouchers(bearer(vouchers(&id), &secret))
+        .await
+        .unwrap();
 }

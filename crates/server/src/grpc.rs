@@ -1,7 +1,7 @@
 //! `doris.auth.v1.AuthService`: maps gRPC calls onto `doris_identity`, and
 //! carries the session in an HttpOnly cookie.
 
-use doris_identity::domain::{DomainError, Grant, Role, Scope, User};
+use doris_identity::domain::{DomainError, Grant, Role, Scope, TokenChange, TokenRequest, User};
 use doris_identity::{Auth, Error, SESSION_TTL};
 use doris_proto::auth::v1 as pb;
 use doris_proto::auth::v1::auth_service_server::AuthService;
@@ -35,6 +35,69 @@ impl AuthApi {
             Role::Admin => Ok(user),
             Role::Member => Err(Status::permission_denied("not_admin")),
         }
+    }
+
+    /// A token's name, last day and grants as the client sent them. Every
+    /// company must be one the user is a member of.
+    async fn token_change(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        expires_on: &str,
+        grants: &[pb::TokenGrant],
+    ) -> Result<TokenChange, Status> {
+        let expires_at = token_expiry(expires_on, Timestamp::now())?;
+        let mut parsed = Vec::with_capacity(grants.len());
+        for grant in grants {
+            let company_id: Uuid = grant
+                .company_id
+                .parse()
+                .map_err(|_| Status::not_found("company_not_found"))?;
+            self.member_of(user_id, company_id).await?;
+            let scopes = grant
+                .scopes
+                .iter()
+                .map(|s| Scope::parse(s))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| Status::invalid_argument("invalid_token_grants"))?;
+            parsed.push(Grant { company_id, scopes });
+        }
+        Ok(TokenChange {
+            name: name.to_owned(),
+            expires_at,
+            grants: parsed,
+        })
+    }
+
+    /// Membership has one source: the company module.
+    async fn member_of(&self, user_id: Uuid, company_id: Uuid) -> Result<(), Status> {
+        doris_company::get_company(&self.pool, company_id, user_id)
+            .await
+            .map_err(crate::company::status)?;
+        Ok(())
+    }
+
+    /// The token request a passkey just confirmed, with every company
+    /// checked again: the user may have left one meanwhile.
+    async fn confirmed(
+        &self,
+        user_id: Uuid,
+        req: &pb::FinishApiTokenRequest,
+    ) -> Result<TokenRequest, Status> {
+        let request = self
+            .auth
+            .finish_api_token(
+                user_id,
+                ceremony_id(&req.ceremony_id)?,
+                &credential(&req.credential_json)?,
+                Timestamp::now(),
+            )
+            .await
+            .map_err(finish_status)?;
+        for grant in &request.change().grants {
+            self.member_of(user_id, grant.company_id).await?;
+        }
+        Ok(request)
     }
 }
 
@@ -244,34 +307,39 @@ impl AuthService for AuthApi {
         Ok(Response::new(pb::ListInvitationsResponse { invitations }))
     }
 
-    async fn create_api_token(
+    async fn begin_create_api_token(
         &self,
         request: Request<pb::CreateApiTokenRequest>,
-    ) -> Result<Response<pb::CreateApiTokenResponse>, Status> {
+    ) -> Result<Response<pb::BeginCeremonyResponse>, Status> {
         let user = self.user(&request).await?;
         let req = request.into_inner();
-        let now = Timestamp::now();
-        let expires_at = token_expiry(&req.expires_on, now)?;
-        let mut grants = Vec::with_capacity(req.grants.len());
-        for grant in &req.grants {
-            let company_id: Uuid = grant
-                .company_id
-                .parse()
-                .map_err(|_| Status::not_found("company_not_found"))?;
-            // Only the user's own companies: membership has one source.
-            doris_company::get_company(&self.pool, company_id, user.id)
-                .await
-                .map_err(crate::company::status)?;
-            let scopes = grant
-                .scopes
-                .iter()
-                .map(|s| Scope::parse(s))
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| Status::invalid_argument("invalid_token_grants"))?;
-            grants.push(Grant { company_id, scopes });
-        }
+        let change = self
+            .token_change(user.id, &req.name, &req.expires_on, &req.grants)
+            .await?;
+        let (ceremony_id, options) = self
+            .auth
+            .begin_api_token(user.id, TokenRequest::Create { change }, Timestamp::now())
+            .await
+            .map_err(status)?;
+        ceremony_response(ceremony_id, &options)
+    }
+
+    async fn finish_create_api_token(
+        &self,
+        request: Request<pb::FinishApiTokenRequest>,
+    ) -> Result<Response<pb::CreateApiTokenResponse>, Status> {
+        let user = self.user(&request).await?;
+        let TokenRequest::Create { change } = self.confirmed(user.id, request.get_ref()).await?
+        else {
+            return Err(Status::failed_precondition("ceremony_expired"));
+        };
         let (token_id, secret) = doris_identity::create_api_token(
-            &self.pool, user.id, &req.name, expires_at, grants, now,
+            &self.pool,
+            user.id,
+            &change.name,
+            change.expires_at,
+            change.grants,
+            Timestamp::now(),
         )
         .await
         .map_err(status)?;
@@ -279,6 +347,44 @@ impl AuthService for AuthApi {
             token_id: token_id.to_string(),
             secret,
         }))
+    }
+
+    async fn begin_change_api_token(
+        &self,
+        request: Request<pb::ChangeApiTokenRequest>,
+    ) -> Result<Response<pb::BeginCeremonyResponse>, Status> {
+        let user = self.user(&request).await?;
+        let req = request.into_inner();
+        let token_id = api_token_id(&req.token_id)?;
+        let change = self
+            .token_change(user.id, &req.name, &req.expires_on, &req.grants)
+            .await?;
+        let (ceremony_id, options) = self
+            .auth
+            .begin_api_token(
+                user.id,
+                TokenRequest::Change { token_id, change },
+                Timestamp::now(),
+            )
+            .await
+            .map_err(status)?;
+        ceremony_response(ceremony_id, &options)
+    }
+
+    async fn finish_change_api_token(
+        &self,
+        request: Request<pb::FinishApiTokenRequest>,
+    ) -> Result<Response<pb::ChangeApiTokenResponse>, Status> {
+        let user = self.user(&request).await?;
+        let TokenRequest::Change { token_id, change } =
+            self.confirmed(user.id, request.get_ref()).await?
+        else {
+            return Err(Status::failed_precondition("ceremony_expired"));
+        };
+        doris_identity::change_api_token(&self.pool, user.id, token_id, change, Timestamp::now())
+            .await
+            .map_err(status)?;
+        Ok(Response::new(pb::ChangeApiTokenResponse {}))
     }
 
     async fn list_api_tokens(
@@ -308,11 +414,7 @@ impl AuthService for AuthApi {
         request: Request<pb::RevokeApiTokenRequest>,
     ) -> Result<Response<pb::RevokeApiTokenResponse>, Status> {
         let user = self.user(&request).await?;
-        let token_id: Uuid = request
-            .get_ref()
-            .token_id
-            .parse()
-            .map_err(|_| Status::not_found("api_token_not_found"))?;
+        let token_id = api_token_id(&request.get_ref().token_id)?;
         doris_identity::revoke_api_token(&self.pool, user.id, token_id)
             .await
             .map_err(status)?;
@@ -400,6 +502,11 @@ fn grant_message(grant: &Grant) -> pb::TokenGrant {
 /// When a token whose last day is `raw` (`YYYY-MM-DD`) stops working:
 /// midnight in Sweden after that day. The day is today at the earliest and
 /// 366 days off at most.
+fn api_token_id(raw: &str) -> Result<Uuid, Status> {
+    raw.parse()
+        .map_err(|_| Status::not_found("api_token_not_found"))
+}
+
 fn token_expiry(raw: &str, now: Timestamp) -> Result<Timestamp, Status> {
     use jiff::ToSpan;
     let invalid = || Status::invalid_argument("invalid_token_expiry");

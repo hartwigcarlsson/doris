@@ -173,6 +173,75 @@ impl TestServer {
             .await
     }
 
+    /// Like `invite`, keeping the new user's passkey on `device`.
+    pub async fn invite_with(&self, admin: &str, email: &str, device: &mut Device) -> String {
+        let invite = self
+            .grpc()
+            .create_invitation(authed(
+                pb::CreateInvitationRequest {
+                    email: email.into(),
+                },
+                admin,
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        self.sign_up(device, email, Some(&invite.token)).await
+    }
+
+    /// `device`'s assertion for a ceremony's request options, as the browser
+    /// gives it after the user touches the passkey.
+    pub fn confirm(&self, device: &mut Device, begin: &pb::BeginCeremonyResponse) -> String {
+        let options: RequestChallengeResponse = serde_json::from_str(&begin.options_json).unwrap();
+        let credential = device
+            .do_authentication(self.origin.clone(), options)
+            .unwrap();
+        serde_json::to_string(&credential).unwrap()
+    }
+
+    /// Creates a token: begins, confirms with `device`'s passkey, finishes.
+    pub async fn create_token(
+        &self,
+        session: &str,
+        device: &mut Device,
+        request: pb::CreateApiTokenRequest,
+    ) -> Result<pb::CreateApiTokenResponse, tonic::Status> {
+        let mut grpc = self.grpc();
+        let begin = grpc
+            .begin_create_api_token(authed(request, session))
+            .await?
+            .into_inner();
+        let finish = pb::FinishApiTokenRequest {
+            credential_json: self.confirm(device, &begin),
+            ceremony_id: begin.ceremony_id,
+        };
+        Ok(grpc
+            .finish_create_api_token(authed(finish, session))
+            .await?
+            .into_inner())
+    }
+
+    /// Changes a token: begins, confirms with `device`'s passkey, finishes.
+    pub async fn change_token(
+        &self,
+        session: &str,
+        device: &mut Device,
+        request: pb::ChangeApiTokenRequest,
+    ) -> Result<(), tonic::Status> {
+        let mut grpc = self.grpc();
+        let begin = grpc
+            .begin_change_api_token(authed(request, session))
+            .await?
+            .into_inner();
+        let finish = pb::FinishApiTokenRequest {
+            credential_json: self.confirm(device, &begin),
+            ceremony_id: begin.ceremony_id,
+        };
+        grpc.finish_change_api_token(authed(finish, session))
+            .await?;
+        Ok(())
+    }
+
     /// Registers through the API and returns the session cookie's token.
     pub async fn sign_up(&self, device: &mut Device, email: &str, token: Option<&str>) -> String {
         self.sign_up_as(device, email, "Anna", token).await
@@ -282,7 +351,7 @@ pub async fn company(server: &TestServer, session: &str, org_nr: &str) -> String
         .company_id
 }
 
-/// The day `days` from today in Sweden, as `CreateApiToken` takes it.
+/// The day `days` from today in Sweden, as `BeginCreateApiToken` takes it.
 pub fn in_days(days: i64) -> String {
     use jiff::ToSpan;
     let sweden = jiff::tz::TimeZone::get("Europe/Stockholm").unwrap();
@@ -290,12 +359,18 @@ pub fn in_days(days: i64) -> String {
     today.checked_add(days.days()).unwrap().to_string()
 }
 
-/// A 30-day token of `session`'s with these scopes per company; returns
-/// its secret.
-pub async fn api_token(server: &TestServer, session: &str, grants: &[(&str, &[&str])]) -> String {
+/// A 30-day token of `session`'s with these scopes per company, confirmed
+/// with `device`'s passkey; returns its secret.
+pub async fn api_token(
+    server: &TestServer,
+    session: &str,
+    device: &mut Device,
+    grants: &[(&str, &[&str])],
+) -> String {
     server
-        .grpc()
-        .create_api_token(authed(
+        .create_token(
+            session,
+            device,
             pb::CreateApiTokenRequest {
                 name: "Agent".into(),
                 expires_on: in_days(30),
@@ -307,11 +382,9 @@ pub async fn api_token(server: &TestServer, session: &str, grants: &[(&str, &[&s
                     })
                     .collect(),
             },
-            session,
-        ))
+        )
         .await
         .unwrap()
-        .into_inner()
         .secret
 }
 

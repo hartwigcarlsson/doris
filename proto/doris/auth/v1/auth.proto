@@ -26,8 +26,15 @@ service AuthService {
   // Require an admin session.
   rpc CreateInvitation(CreateInvitationRequest) returns (CreateInvitationResponse);
   rpc ListInvitations(ListInvitationsRequest) returns (ListInvitationsResponse);
-  // Require a session (never a token). A token is shown once, at creation.
-  rpc CreateApiToken(CreateApiTokenRequest) returns (CreateApiTokenResponse);
+  // Require a session (never a token). Creating and changing a token are
+  // ceremonies: Begin checks the request and returns WebAuthn request
+  // options; Finish takes the assertion from one of the user's own
+  // passkeys and carries out exactly what Begin was given. A token is shown
+  // once, by FinishCreateApiToken.
+  rpc BeginCreateApiToken(CreateApiTokenRequest) returns (BeginCeremonyResponse);
+  rpc FinishCreateApiToken(FinishApiTokenRequest) returns (CreateApiTokenResponse);
+  rpc BeginChangeApiToken(ChangeApiTokenRequest) returns (BeginCeremonyResponse);
+  rpc FinishChangeApiToken(FinishApiTokenRequest) returns (ChangeApiTokenResponse);
   rpc ListApiTokens(ListApiTokensRequest) returns (ListApiTokensResponse);
   // The owner, or an admin for anyone's token.
   rpc RevokeApiToken(RevokeApiTokenRequest) returns (RevokeApiTokenResponse);
@@ -156,6 +163,21 @@ message CreateApiTokenResponse {
   string token_id = 1;
   string secret = 2;
 }
+
+// Replaces the token's name, last day and grants; its secret stays.
+message ChangeApiTokenRequest {
+  string token_id = 1;
+  string name = 2;
+  string expires_on = 3; // YYYY-MM-DD: the last day the token works (Swedish time)
+  repeated TokenGrant grants = 4;
+}
+
+message FinishApiTokenRequest {
+  string ceremony_id = 1;
+  string credential_json = 2;
+}
+
+message ChangeApiTokenResponse {}
 
 message ApiToken {
   string id = 1;
