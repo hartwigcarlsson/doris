@@ -723,6 +723,28 @@ fn today_in_sweden(ts: Timestamp) -> Date {
     ts.to_zoned(sweden).date()
 }
 
+/// The action a passkey just confirmed, for any finish RPC.
+pub(crate) async fn confirmation(
+    auth: &Auth,
+    user_id: Uuid,
+    raw_ceremony_id: &str,
+    credential_json: &str,
+) -> Result<Confirmation, Status> {
+    auth.finish_confirmation(
+        user_id,
+        ceremony_id(raw_ceremony_id)?,
+        &credential(credential_json)?,
+        Timestamp::now(),
+    )
+    .await
+    .map_err(finish_status)
+}
+
+/// A confirmation of another kind than the finish RPC carries out.
+pub(crate) fn ceremony_expired() -> Status {
+    Status::failed_precondition("ceremony_expired")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{today_in_sweden, token_expiry};
@@ -772,26 +794,4 @@ mod tests {
             date(2026, 1, 1)
         );
     }
-}
-
-/// The action a passkey just confirmed, for any finish RPC.
-pub(crate) async fn confirmation(
-    auth: &Auth,
-    user_id: Uuid,
-    raw_ceremony_id: &str,
-    credential_json: &str,
-) -> Result<Confirmation, Status> {
-    auth.finish_confirmation(
-        user_id,
-        ceremony_id(raw_ceremony_id)?,
-        &credential(credential_json)?,
-        Timestamp::now(),
-    )
-    .await
-    .map_err(finish_status)
-}
-
-/// A confirmation of another kind than the finish RPC carries out.
-pub(crate) fn ceremony_expired() -> Status {
-    Status::failed_precondition("ceremony_expired")
 }

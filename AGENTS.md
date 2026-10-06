@@ -194,14 +194,21 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   creates them in the account menu (API-tokens); each has a last day at
   most a year off, ends at midnight in Sweden after it, and can be revoked
   by its owner or an admin. Creating and changing a token are passkey ceremonies
-  (`Auth::begin_api_token`/`finish_api_token`, kind `api_token` in
-  `webauthn_ceremonies`): Begin checks the request and asks for one of the
+  (`Auth::begin_confirmation`/`finish_confirmation`, kind `confirm` in
+  `webauthn_ceremonies`; the request is `FinishConfirmationRequest`): Begin checks the request and asks for one of the
   user's own passkeys, and Finish carries out exactly what Begin was given
   (`ApiTokenCreated` or `ApiTokenChanged`), after the server has checked
   each company's membership again. Only the owner changes a token (name,
   last day, grants; never its secret), and never a revoked one; revoking
   needs no passkey. Only its SHA-256 is stored (`api_tokens`, events in
   `api-token-{id}`); it is never logged.
+- Inviting someone (`BeginCreateInvitation`/`FinishCreateInvitation`) and
+  adding a member to a company (`BeginAddMember`/`FinishAddMember`) are
+  confirmed with one of the user's passkeys too, through the same
+  ceremony (`Ceremony::Confirm`, kind `confirm`,
+  `Auth::begin_confirmation`/`finish_confirmation`), so a stolen session
+  cannot give a second account of its own lasting access. Begin runs the
+  rules; finish carries out what was confirmed and checks again.
 - A token has scopes per company (`ledger|invoicing|payroll|vat:read|write`,
   `company:read`) and never more than its owner: membership is checked on
   every call, as for a session. `crates/server/src/access.rs` says what each
