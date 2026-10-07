@@ -170,7 +170,7 @@ async fn execute(cli: Cli, env: &Env, output: &mut Output<'_>) -> Result<(), Fai
     if let Area::Skill { action } = &cli.command {
         return commands::skill::run(action, output);
     }
-    check_year(year_of(&cli.command))?;
+    commands::check_year(year_of(&cli.command), "--year")?;
     let token = env
         .token
         .clone()
@@ -248,19 +248,6 @@ fn year_of(area: &Area) -> Option<&str> {
     }
 }
 
-/// `--year` is `ÅÅÅÅ` or a real `ÅÅÅÅ-MM-DD`; anything else is a usage error,
-/// found before any call.
-fn check_year(year: Option<&str>) -> Result<(), Failure> {
-    let Some(y) = year else { return Ok(()) };
-    let ok = (y.len() == 4 && y.bytes().all(|b| b.is_ascii_digit()))
-        || (y.len() == 10 && y.parse::<jiff::civil::Date>().is_ok());
-    ok.then_some(()).ok_or_else(|| {
-        Failure::usage(format!(
-            "Ogiltigt --year \"{y}\": skriv ett år (2026) eller ett startdatum (2026-07-01)."
-        ))
-    })
-}
-
 /// The fiscal year `today` falls in, or the one named: `wanted` is a year
 /// (matches the start's year) or a start date. `starts` lie in order.
 pub(crate) fn pick_year(starts: &[String], wanted: Option<&str>, today: &str) -> Option<String> {
@@ -293,9 +280,9 @@ mod tests {
     #[test]
     fn a_year_must_be_yyyy_or_a_real_date() {
         for ok in ["2026", "2026-07-01"] {
-            assert!(check_year(Some(ok)).is_ok(), "{ok}");
+            assert!(commands::check_year(Some(ok), "--year").is_ok(), "{ok}");
         }
-        assert!(check_year(None).is_ok());
+        assert!(commands::check_year(None, "--year").is_ok());
         for bad in [
             "26",
             "abcd",
@@ -305,7 +292,7 @@ mod tests {
             "20266",
             "",
         ] {
-            let f = check_year(Some(bad)).unwrap_err();
+            let f = commands::check_year(Some(bad), "--year").unwrap_err();
             assert_eq!((f.code.as_str(), f.exit), ("usage", 2), "{bad}");
             assert!(f.message.contains(&format!("\"{bad}\"")), "{}", f.message);
         }

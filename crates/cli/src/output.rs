@@ -35,6 +35,15 @@ impl Failure {
         }
     }
 
+    /// `{"error":{"code","message",…details}}`, as `--json` prints it.
+    pub fn to_json(&self) -> Value {
+        let mut error = json!({ "code": self.code, "message": self.message });
+        if let (Some(Value::Object(extra)), Some(object)) = (&self.details, error.as_object_mut()) {
+            object.extend(extra.clone());
+        }
+        json!({ "error": error })
+    }
+
     /// The server's refusal: its stable code, the shared Swedish text.
     /// Not reaching Doris is `connection_failed`; any other reply that is
     /// not a code is `internal`.
@@ -84,13 +93,7 @@ impl Output<'_> {
     /// Prints a failure and returns its exit code.
     pub fn fail(&mut self, failure: &Failure) -> i32 {
         if self.json {
-            let mut error = json!({ "code": failure.code, "message": failure.message });
-            if let (Some(Value::Object(extra)), Some(object)) =
-                (&failure.details, error.as_object_mut())
-            {
-                object.extend(extra.clone());
-            }
-            let _ = writeln!(self.out, "{}", json!({ "error": error }));
+            let _ = writeln!(self.out, "{}", failure.to_json());
         } else {
             let _ = writeln!(self.err, "{}", failure.message);
         }
@@ -137,6 +140,18 @@ mod tests {
         let v: Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(v["error"]["number"], 3);
         assert_eq!(v["error"]["code"], "dry_run_unsupported");
+    }
+
+    #[test]
+    fn a_failure_as_json_carries_code_message_and_details() {
+        let mut f = Failure::new("dry_run_unsupported");
+        f.details = Some(json!({"number": 3}));
+
+        let v = f.to_json();
+
+        assert_eq!(v["error"]["code"], "dry_run_unsupported");
+        assert_eq!(v["error"]["message"], f.message.as_str());
+        assert_eq!(v["error"]["number"], 3);
     }
 
     #[test]

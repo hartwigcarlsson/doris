@@ -64,10 +64,10 @@ pub struct NewVoucher {
 /// A voucher as typed: debit and credit in öre per line.
 #[derive(Debug, PartialEq)]
 pub struct Voucher {
-    date: String,
-    text: String,
-    lines: Vec<(u32, i64, i64)>,
-    attachments: Vec<PathBuf>,
+    pub(crate) date: String,
+    pub(crate) text: String,
+    pub(crate) lines: Vec<(u32, i64, i64)>,
+    pub(crate) attachments: Vec<PathBuf>,
 }
 
 fn bad_line(raw: &str) -> Failure {
@@ -117,7 +117,7 @@ fn voucher_from_flags(
 
 /// A JSON amount: kronor as a string or a number, no sign, two decimals at most.
 fn json_amount(value: Option<&Value>, field: &str) -> Result<i64, Failure> {
-    let bad = || Failure::usage(format!("Ogiltigt belopp i \"{field}\" i --input."));
+    let bad = || Failure::usage(format!("Ogiltigt belopp i \"{field}\"."));
     match value {
         None | Some(Value::Null) => Ok(0),
         Some(Value::String(s)) => parse_kronor(s).ok_or_else(bad),
@@ -127,8 +127,15 @@ fn json_amount(value: Option<&Value>, field: &str) -> Result<i64, Failure> {
 }
 
 fn voucher_from_json(raw: &str) -> Result<Voucher, Failure> {
-    let bad = |what: &str| Failure::usage(format!("Ogiltig --input: {what}."));
-    let value: Value = serde_json::from_str(raw).map_err(|e| bad(&e.to_string()))?;
+    let value: Value =
+        serde_json::from_str(raw).map_err(|e| Failure::usage(format!("Ogiltig --input: {e}.")))?;
+    voucher_from_value(&value, "Ogiltig --input")
+}
+
+/// A voucher as JSON (`{"date","text","lines","attachments"}`); messages
+/// start with `prefix` ("Ogiltig --input", "Ogiltigt argument").
+pub(crate) fn voucher_from_value(value: &Value, prefix: &str) -> Result<Voucher, Failure> {
+    let bad = |what: &str| Failure::usage(format!("{prefix}: {what}."));
     let field = |name: &str| {
         value[name]
             .as_str()
@@ -389,6 +396,16 @@ pub async fn new(
 ) -> Result<(), Failure> {
     let voucher = voucher_input(args)?;
     let files = read_attachments(&voucher.attachments)?;
+    record(context, output, voucher, files).await
+}
+
+/// Books `voucher` with `files` as its underlag (or rehearses it).
+pub(crate) async fn record(
+    context: &Context,
+    output: &mut Output<'_>,
+    voucher: Voucher,
+    files: Vec<lpb::NewAttachment>,
+) -> Result<(), Failure> {
     let company = super::company(context).await?;
     let lines: Vec<_> = voucher
         .lines
@@ -498,6 +515,34 @@ pub async fn correct(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_voucher_value_takes_amounts_as_strings_or_decimal_numbers() {
+        let v = json!({
+            "date": "2026-02-02", "text": "Kontorsmaterial",
+            "lines": [
+                {"account": 6110, "debit": 199.99},
+                {"account": 1930, "credit": "199,99"}
+            ]
+        });
+
+        let voucher = voucher_from_value(&v, "Ogiltigt argument").unwrap();
+
+        assert_eq!(voucher.lines, vec![(6110, 19999, 0), (1930, 0, 19999)]);
+        assert!(voucher.attachments.is_empty());
+    }
+
+    #[test]
+    fn a_bad_voucher_value_names_the_field() {
+        let f = voucher_from_value(
+            &json!({"date": "2026-02-02", "lines": []}),
+            "Ogiltigt argument",
+        )
+        .unwrap_err();
+
+        assert_eq!(f.code, "usage");
+        assert_eq!(f.message, "Ogiltigt argument: \"text\" saknas.");
+    }
 
     #[test]
     fn a_server_that_ignored_dry_run_is_an_error_with_the_number() {
