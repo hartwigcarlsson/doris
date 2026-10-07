@@ -14,6 +14,18 @@ docker compose up --build
 Öppna <http://localhost:3000>. Den första användaren som registrerar sig blir
 admin; därefter krävs en inbjudan från en admin.
 
+## AI-agenter (MCP)
+
+Doris är en MCP-server på `/mcp`. Skapa en API-token under API-tokens i
+kontomenyn, med så få behörigheter som möjligt, och anslut till exempel
+Claude Code:
+
+    claude mcp add --transport http doris https://doris.example.se/mcp \
+      --header "Authorization: Bearer doris_…"
+
+Verktygen är desamma som doris-cli:s kommandon. Connectors i claude.ai
+och Claude Desktop kräver OAuth och stöds inte än.
+
 ## Utveckling
 
 Krav: Rust med target `wasm32-unknown-unknown`, [Trunk](https://trunk-rs.github.io/trunk/),

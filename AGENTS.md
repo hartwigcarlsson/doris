@@ -32,7 +32,7 @@ spec in `docs/superpowers/specs/` and an implementation plan in
 ```
 proto/              .proto files (package doris.<area>.v1)
 migrations/         sqlx migrations, NNNN_name.sql, shared by all crates
-crates/cli          doris-cli: the command line for people and agents (API token)
+crates/cli          doris-cli: the command line and the MCP tools for people and agents (API token)
 skills/             agent skills for others to install (npx skills add, doris-cli skill)
 crates/company      doris-company: companies, members, fiscal year and accounting method
 crates/invoicing    doris-invoicing: customers, suppliers, and customer and supplier invoices
@@ -400,6 +400,28 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   repository. Claude Code finds it here through a symlink in
   `.claude/skills/`; `.claude/skills/verify` is `metadata.internal`, so
   `npx skills` doesn't offer it.
+- Every command except `skill` is also an MCP tool
+  (`crates/cli/src/tools.rs`, same function, same JSON); a test fails if a
+  command has no tool. `crates/cli/src/tools.md` is the agent's
+  instructions for the tools and changes with the skill.
+
+## MCP
+- `POST /mcp` (`crates/server/src/mcp.rs`) is MCP over Streamable HTTP
+  without sessions: one JSON answer per request, no SSE, no
+  `Mcp-Session-Id`. Versions 2026-07-28 (`server/discover`; the
+  `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` headers must match
+  the body) and 2025-11-25 (`initialize`). Requests up to 1 MiB.
+- Only `Authorization: Bearer` with an API token, never the session
+  cookie. A present `Origin` must be `DORIS_RP_ORIGIN` or in
+  `DORIS_CORS_ORIGINS` (403 otherwise). No OAuth yet, so claude.ai and
+  Desktop connectors can't connect; Claude Code and other clients that
+  send a header can.
+- `/mcp` checks only that the token is valid. Each tool runs doris-cli's
+  command (`doris_cli::tools::call`) over a transport into the server's
+  own gRPC router, so `auth_gate` checks scopes and records `via_token`
+  as for any token call. Never add a tool that bypasses that.
+- Each tool call runs on tokio's blocking pool (`spawn_blocking` +
+  `Handle::block_on`), because doris-cli's command futures are not `Send`.
 
 ## Frontend
 - `crates/web` is a Leptos 0.8 CSR app built with Trunk (`crates/web/Trunk.toml`
