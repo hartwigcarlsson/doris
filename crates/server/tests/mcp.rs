@@ -62,6 +62,8 @@ async fn discover_names_doris_its_versions_tools_and_instructions() {
     assert_eq!(result["resultType"], "complete");
     assert_eq!(result["supportedVersions"], json!([V2026, "2025-11-25"]));
     assert_eq!(result["capabilities"], json!({"tools": {}}));
+    assert_eq!(result["ttlMs"], 3_600_000);
+    assert_eq!(result["cacheScope"], "public");
     let info = &result["_meta"]["io.modelcontextprotocol/serverInfo"];
     assert_eq!(info["name"], "doris");
     assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
@@ -141,6 +143,8 @@ async fn tools_are_listed_and_ping_answers() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     assert!(names.contains(&"record_voucher") && names.contains(&"trial_balance"));
+    assert_eq!(tools["result"]["ttlMs"], 3_600_000);
+    assert_eq!(tools["result"]["cacheScope"], "public");
     assert_eq!(ping["result"]["resultType"], "complete");
 }
 

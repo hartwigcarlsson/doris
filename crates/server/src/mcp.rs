@@ -137,6 +137,15 @@ fn check_headers(headers: &HeaderMap, id: &Value, message: &Value) -> Result<(),
     Ok(())
 }
 
+/// 2026-07-28 requires caching hints on discover and list results. The
+/// tools and instructions are the same for every token and change only
+/// with Doris' version.
+fn cacheable(mut answer: Value) -> Value {
+    answer["ttlMs"] = json!(3_600_000);
+    answer["cacheScope"] = json!("public");
+    answer
+}
+
 fn server_info() -> Value {
     json!({"name": "doris", "version": env!("CARGO_PKG_VERSION")})
 }
@@ -199,7 +208,7 @@ async fn handle(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) ->
             let mut answer = about();
             answer["supportedVersions"] = json!(VERSIONS);
             answer["_meta"] = json!({"io.modelcontextprotocol/serverInfo": server_info()});
-            result(id, answer)
+            result(id, cacheable(answer))
         }
         "initialize" => {
             let mut answer = about();
@@ -208,7 +217,7 @@ async fn handle(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) ->
             result(id, answer)
         }
         "ping" => result(id, json!({})),
-        "tools/list" => result(id, json!({"tools": doris_cli::tools::list()})),
+        "tools/list" => result(id, cacheable(json!({"tools": doris_cli::tools::list()}))),
         "tools/call" => {
             let params = &message["params"];
             let Some(name) = params["name"].as_str() else {
