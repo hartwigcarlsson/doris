@@ -146,3 +146,10 @@ Resultat- och balansräkning, with the year before as comparison.
 ```
 `kind` is `heading` (`amount` null), `item` or `subtotal`. `previous` and
 `previous_fiscal_year_start` and `previous_difference` are `null` when there is no earlier year.
+
+## For AI agents
+A skill for agents that keep the books through doris-cli (rehearse with
+`--dry-run`, read failures by exit code, never retry a write blindly, moms and
+common BAS accounts) is in `.claude/skills/doris-bookkeeping/SKILL.md`. Claude
+Code picks it up in this repository; copy it to `~/.claude/skills/` to use it
+elsewhere.
