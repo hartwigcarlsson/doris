@@ -105,7 +105,17 @@ impl std::fmt::Debug for Env {
 
 impl Env {
     pub fn from_process() -> Self {
-        let var = |name| std::env::var(name).ok().filter(|v: &String| !v.is_empty());
+        Self::from_lookup(|name| std::env::var(name).ok())
+    }
+
+    /// Values are trimmed (a token read from a file ends with a newline);
+    /// blank ones count as unset.
+    fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Self {
+        let var = |name| {
+            lookup(name)
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
+        };
         Self {
             token: var("DORIS_TOKEN"),
             url: var("DORIS_URL"),
@@ -151,6 +161,7 @@ where
 }
 
 async fn execute(cli: Cli, env: &Env, output: &mut Output<'_>) -> Result<(), Failure> {
+    check_year(year_of(&cli.command))?;
     let token = env
         .token
         .clone()
@@ -212,6 +223,34 @@ async fn execute(cli: Cli, env: &Env, output: &mut Output<'_>) -> Result<(), Fai
     }
 }
 
+/// The `--year` a command will use (`ver new` ignores its own).
+fn year_of(area: &Area) -> Option<&str> {
+    use commands::report::ReportAction as R;
+    use commands::ver::VerAction as V;
+    match area {
+        Area::Ver {
+            action: V::List { year } | V::View { year, .. } | V::Correct { year, .. },
+        }
+        | Area::Report {
+            action: R::TrialBalance { year } | R::Ledger { year, .. } | R::Statements { year },
+        } => year.as_deref(),
+        _ => None,
+    }
+}
+
+/// `--year` is `ÅÅÅÅ` or a real `ÅÅÅÅ-MM-DD`; anything else is a usage error,
+/// found before any call.
+fn check_year(year: Option<&str>) -> Result<(), Failure> {
+    let Some(y) = year else { return Ok(()) };
+    let ok = (y.len() == 4 && y.bytes().all(|b| b.is_ascii_digit()))
+        || (y.len() == 10 && y.parse::<jiff::civil::Date>().is_ok());
+    ok.then_some(()).ok_or_else(|| {
+        Failure::usage(format!(
+            "Ogiltigt --year \"{y}\": skriv ett år (2026) eller ett startdatum (2026-07-01)."
+        ))
+    })
+}
+
 /// The fiscal year `today` falls in, or the one named: `wanted` is a year
 /// (matches the start's year) or a start date. `starts` lie in order.
 pub(crate) fn pick_year(starts: &[String], wanted: Option<&str>, today: &str) -> Option<String> {
@@ -228,6 +267,39 @@ pub(crate) fn pick_year(starts: &[String], wanted: Option<&str>, today: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_values_are_trimmed_and_blank_ones_are_unset() {
+        let env = Env::from_lookup(|name| match name {
+            "DORIS_TOKEN" => Some("doris_abc\n".into()),
+            "DORIS_URL" => Some("  https://x ".into()),
+            _ => Some("  \n".into()),
+        });
+        assert_eq!(env.token.as_deref(), Some("doris_abc"));
+        assert_eq!(env.url.as_deref(), Some("https://x"));
+        assert_eq!(env.company, None);
+    }
+
+    #[test]
+    fn a_year_must_be_yyyy_or_a_real_date() {
+        for ok in ["2026", "2026-07-01"] {
+            assert!(check_year(Some(ok)).is_ok(), "{ok}");
+        }
+        assert!(check_year(None).is_ok());
+        for bad in [
+            "26",
+            "abcd",
+            "2026-13-01",
+            "2026-02-30",
+            "2026-7-1",
+            "20266",
+            "",
+        ] {
+            let f = check_year(Some(bad)).unwrap_err();
+            assert_eq!((f.code.as_str(), f.exit), ("usage", 2), "{bad}");
+            assert!(f.message.contains(&format!("\"{bad}\"")), "{}", f.message);
+        }
+    }
 
     #[test]
     fn env_debug_hides_the_token() {

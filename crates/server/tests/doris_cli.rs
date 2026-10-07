@@ -799,6 +799,12 @@ async fn reports_read_the_books() {
         .unwrap();
     assert_eq!(bank["debit"], "1250.00");
     assert_eq!(bank["closing"], "1250.00");
+    assert_eq!(statements["difference"], "0.00");
+    assert_eq!(statements.get("previous_difference"), Some(&Value::Null));
+    assert_eq!(
+        statements.get("previous_fiscal_year_start"),
+        Some(&Value::Null)
+    );
     assert_eq!(ledger["account"], 1930);
     assert_eq!(ledger["entries"][0]["balance"], "1250.00");
     assert!(

@@ -26,8 +26,13 @@ cargo install --path crates/cli     # or: make dist  ->  target/dist/doris-cli
   rule in the real transaction and roll back, so nothing is saved and the
   call does not count as the token's use. On read commands it changes
   nothing and only adds `"dry_run": true` to object outputs; lists stay
-  arrays.
-- Every area takes `--year` (a year such as `2026`, or a start date; default
+  arrays; in text mode they end with the line
+  `(--dry-run: kommandot ändrar ingenting.)`. A server too old to know
+  `--dry-run` would book for real, so `ver new` and `ver correct` then fail
+  with `dry_run_unsupported` (exit 1; the JSON error also has `number` and
+  `fiscal_year_start` of what was booked).
+- Only `ver` (`list`, `view`, `correct`) and `report` take `--year` (a year such as
+  `2026`, or a start date; default
   the fiscal year containing today in Sweden), except `ver new`, which
   ignores it: the date decides the year.
 
@@ -40,12 +45,14 @@ Amounts in JSON are kronor strings (`"1250.00"`); text mode shows `1 250,00`.
 | 0 | Done |
 | 1 | The server refused (a rule, missing scope, not found) |
 | 2 | Usage: fix the arguments (also `company_ambiguous`) |
-| 3 | Token, URL or connection: `missing_token`, `missing_url`, `insecure_url`, `not_signed_in`, `connection_failed` |
+| 3 | Token, URL or connection: `missing_token`, `missing_url`, `insecure_url`, `bad_url`, `not_signed_in`, `connection_failed` |
 
 With `--json` a failure is `{"error":{"code":"voucher_unbalanced","message":"…"}}`
 on stdout; without it the Swedish message goes to stderr. Codes are the
 server's stable codes plus the client's own: `usage`, `missing_token`,
-`missing_url`, `insecure_url`, `connection_failed`, `internal`.
+`missing_url`, `insecure_url`, `bad_url`, `connection_failed`,
+`company_ambiguous`, `company_not_found`, `fiscal_year_not_found`,
+`voucher_not_found`, `dry_run_unsupported`, `internal`.
 
 ## Commands
 
@@ -135,7 +142,7 @@ Resultat- och balansräkning, with the year before as comparison.
 ```
 {"fiscal_year_start","previous_fiscal_year_start":null,
  "income_statement":[{"label":"Nettoomsättning","kind":"item","amount":"1000.00","previous":null}],
- "balance_sheet":[…],"difference":"0.00"}
+ "balance_sheet":[…],"difference":"0.00","previous_difference":null}
 ```
 `kind` is `heading` (`amount` null), `item` or `subtotal`. `previous` and
-`previous_fiscal_year_start` are `null` when there is no earlier year.
+`previous_fiscal_year_start` and `previous_difference` are `null` when there is no earlier year.

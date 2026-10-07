@@ -253,6 +253,33 @@ fn total(lines: &[lpb::VoucherLine]) -> i64 {
     lines.iter().map(|l| l.debit).sum()
 }
 
+/// An older server drops the unknown `dry_run` field and books for real:
+/// say so, with the number, instead of reporting success.
+fn check_dry_run(
+    requested: bool,
+    answered: bool,
+    number: u32,
+    start: &str,
+    what: &str,
+) -> Result<(), Failure> {
+    if !requested || answered {
+        return Ok(());
+    }
+    let mut failure = Failure::new("dry_run_unsupported");
+    // A rättelse cannot itself be corrected, so only a voucher gets the advice.
+    let advice = if what == "Verifikationen" {
+        format!("; rätta den med doris-cli ver correct {number}")
+    } else {
+        String::new()
+    };
+    failure.message = format!(
+        "Servern stöder inte --dry-run. {what} bokfördes som nummer {number} i räkenskapsåret {}{advice}.",
+        year_label(start)
+    );
+    failure.details = Some(json!({ "number": number, "fiscal_year_start": start }));
+    Err(failure)
+}
+
 /// `2026` when the year starts on 1 January, else the start date.
 fn year_label(start: &str) -> &str {
     start.strip_suffix("-01-01").unwrap_or(start)
@@ -386,6 +413,13 @@ pub async fn new(
         .await
         .map_err(|s| Failure::from_status(&s))?
         .into_inner();
+    check_dry_run(
+        context.dry_run,
+        answer.dry_run,
+        answer.number,
+        &answer.fiscal_year_start,
+        "Verifikationen",
+    )?;
     let value = json!({
         "dry_run": answer.dry_run, "fiscal_year_start": answer.fiscal_year_start,
         "number": answer.number, "date": voucher.date, "text": voucher.text,
@@ -435,6 +469,13 @@ pub async fn correct(
         .await
         .map_err(|s| Failure::from_status(&s))?
         .into_inner();
+    check_dry_run(
+        context.dry_run,
+        answer.dry_run,
+        answer.number,
+        &start,
+        "Rättelsen",
+    )?;
     let value = json!({
         "dry_run": answer.dry_run, "fiscal_year_start": start,
         "number": answer.number, "corrects": number,
@@ -457,6 +498,29 @@ pub async fn correct(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_server_that_ignored_dry_run_is_an_error_with_the_number() {
+        assert!(check_dry_run(false, false, 3, "2026-01-01", "Verifikationen").is_ok());
+        assert!(check_dry_run(true, true, 3, "2026-01-01", "Verifikationen").is_ok());
+        let f = check_dry_run(true, false, 3, "2026-01-01", "Verifikationen").unwrap_err();
+        assert_eq!((f.code.as_str(), f.exit), ("dry_run_unsupported", 1));
+        assert_eq!(
+            f.message,
+            "Servern stöder inte --dry-run. Verifikationen bokfördes som nummer 3 i räkenskapsåret 2026; rätta den med doris-cli ver correct 3."
+        );
+        assert_eq!(
+            f.details,
+            Some(json!({"number": 3, "fiscal_year_start": "2026-01-01"}))
+        );
+        let f = check_dry_run(true, false, 4, "2026-07-01", "Rättelsen").unwrap_err();
+        assert!(
+            f.message
+                .contains("Rättelsen bokfördes som nummer 4 i räkenskapsåret 2026-07-01."),
+            "{}",
+            f.message
+        );
+    }
 
     #[test]
     fn a_line_is_an_account_and_an_amount() {

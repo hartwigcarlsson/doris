@@ -17,10 +17,15 @@ pub fn checked_url(raw: &str) -> Result<http::Uri, Failure> {
     let uri: http::Uri = raw.parse().map_err(|_| Failure::new("insecure_url"))?;
     let local = matches!(uri.host(), Some("localhost" | "127.0.0.1"));
     match uri.scheme_str() {
-        Some("https") => Ok(uri),
-        Some("http") if local => Ok(uri),
-        _ => Err(Failure::new("insecure_url")),
+        Some("https") => {}
+        Some("http") if local => {}
+        _ => return Err(Failure::new("insecure_url")),
     }
+    // Only scheme and host: a path or query would be silently dropped.
+    if uri.path() != "/" || uri.query().is_some() {
+        return Err(Failure::new("bad_url"));
+    }
+    Ok(uri)
 }
 
 /// Talks to one Doris with one token.
@@ -99,5 +104,17 @@ mod tests {
             "insecure_url"
         );
         assert_eq!(checked_url("ftp://x").unwrap_err().code, "insecure_url");
+    }
+
+    #[test]
+    fn a_path_in_the_url_is_refused_not_dropped() {
+        assert!(checked_url("https://doris.example.se/").is_ok());
+        assert!(checked_url("https://doris.example.se:8443").is_ok());
+        let f = checked_url("https://doris.example.se/doris").unwrap_err();
+        assert_eq!((f.code.as_str(), f.exit), ("bad_url", 3));
+        assert_eq!(
+            checked_url("http://localhost:3000/x?y=1").unwrap_err().code,
+            "bad_url"
+        );
     }
 }

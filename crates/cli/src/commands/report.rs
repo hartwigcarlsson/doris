@@ -203,6 +203,7 @@ pub async fn statements(
             "income_statement": lines_json(&r.income_statement),
             "balance_sheet": lines_json(&r.balance_sheet),
             "difference": kronor(r.difference),
+            "previous_difference": r.previous_difference.map(kronor),
         }),
         text,
     );

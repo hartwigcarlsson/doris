@@ -65,6 +65,7 @@ pub async fn company(context: &Context) -> Result<cpb::CompanySummary, Failure> 
                     code: "company_ambiguous".into(),
                     message: format!("{}\n{}", message("company_ambiguous"), lines.join("\n")),
                     exit: 2,
+                    details: None,
                 })
             }
         },

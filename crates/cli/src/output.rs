@@ -11,6 +11,8 @@ pub struct Failure {
     pub code: String,
     pub message: String,
     pub exit: i32,
+    /// Extra fields for the JSON error object.
+    pub details: Option<Value>,
 }
 
 impl Failure {
@@ -19,6 +21,7 @@ impl Failure {
             code: code.to_owned(),
             message: message(code).to_owned(),
             exit: exit_code(code),
+            details: None,
         }
     }
 
@@ -28,6 +31,7 @@ impl Failure {
             code: "usage".into(),
             message: text.into(),
             exit: 2,
+            details: None,
         }
     }
 
@@ -54,7 +58,7 @@ impl Failure {
 pub fn exit_code(code: &str) -> i32 {
     match code {
         "usage" | "company_ambiguous" => 2,
-        "missing_token" | "missing_url" | "insecure_url" | "not_signed_in"
+        "missing_token" | "missing_url" | "insecure_url" | "bad_url" | "not_signed_in"
         | "connection_failed" => 3,
         _ => 1,
     }
@@ -80,8 +84,13 @@ impl Output<'_> {
     /// Prints a failure and returns its exit code.
     pub fn fail(&mut self, failure: &Failure) -> i32 {
         if self.json {
-            let error = json!({ "error": { "code": failure.code, "message": failure.message } });
-            let _ = writeln!(self.out, "{error}");
+            let mut error = json!({ "code": failure.code, "message": failure.message });
+            if let (Some(Value::Object(extra)), Some(object)) =
+                (&failure.details, error.as_object_mut())
+            {
+                object.extend(extra.clone());
+            }
+            let _ = writeln!(self.out, "{}", json!({ "error": error }));
         } else {
             let _ = writeln!(self.err, "{}", failure.message);
         }
@@ -107,9 +116,27 @@ mod tests {
             ("insecure_url", 3),
             ("not_signed_in", 3),
             ("connection_failed", 3),
+            ("bad_url", 3),
+            ("dry_run_unsupported", 1),
         ] {
             assert_eq!(exit_code(code), exit, "{code}");
         }
+    }
+
+    #[test]
+    fn details_join_the_json_error() {
+        let mut f = Failure::new("dry_run_unsupported");
+        f.details = Some(json!({"number": 3}));
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let mut o = Output {
+            json: true,
+            out: &mut out,
+            err: &mut err,
+        };
+        assert_eq!(o.fail(&f), 1);
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["error"]["number"], 3);
+        assert_eq!(v["error"]["code"], "dry_run_unsupported");
     }
 
     #[test]

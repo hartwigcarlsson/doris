@@ -177,6 +177,10 @@ pub fn message(code: &str) -> &'static str {
         "missing_token" => "Ange en API-token i DORIS_TOKEN.",
         "missing_url" => "Ange serverns adress i DORIS_URL.",
         "insecure_url" => "Använd https:// (http:// bara till localhost).",
+        "bad_url" => "DORIS_URL ska vara bara schema och värd, t.ex. https://doris.example.se.",
+        "dry_run_unsupported" => {
+            "Servern stöder inte --dry-run. Verifikationen kan ha bokförts på riktigt."
+        }
         "connection_failed" => "Kunde inte nå Doris. Kontrollera DORIS_URL och anslutningen.",
         "company_ambiguous" => "Token har flera bolag. Välj ett med --company eller DORIS_COMPANY.",
         _ => "Något gick fel. Försök igen.",
@@ -198,6 +202,13 @@ mod tests {
             "missing_scope",
             "token_not_allowed",
         ] {
+            assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
+        }
+    }
+
+    #[test]
+    fn client_codes_have_swedish_messages() {
+        for code in ["bad_url", "dry_run_unsupported"] {
             assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
         }
     }
