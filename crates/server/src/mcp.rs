@@ -9,18 +9,20 @@ use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use doris_cli::client::{Doris, Transport};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use tonic_web::GrpcWebClientLayer;
+use tower::util::BoxCloneSyncService;
+use tower::{BoxError, Layer, ServiceExt};
 
 const VERSIONS: [&str; 2] = ["2026-07-28", "2025-11-25"];
 const MAX_REQUEST: usize = 1 << 20;
 
 struct Mcp {
     pool: SqlitePool,
-    // Used by tools/call (Task 4).
-    #[allow(dead_code)]
     grpc: Router,
     origins: Vec<HeaderValue>,
 }
@@ -34,6 +36,17 @@ pub(crate) fn routes(pool: SqlitePool, grpc: Router, origins: Vec<HeaderValue>) 
             grpc,
             origins,
         }))
+}
+
+/// Calls into this server's own gRPC router, through `auth_gate` and
+/// gRPC-Web exactly as doris-cli does over the network, without a socket.
+fn transport(grpc: Router) -> Transport {
+    type Request = http::Request<tonic::body::Body>;
+    let service = ServiceExt::<Request>::map_response(
+        GrpcWebClientLayer::new().layer(grpc),
+        |r: http::Response<tonic_web::GrpcWebCall<axum::body::Body>>| r.map(tonic::body::Body::new),
+    );
+    BoxCloneSyncService::new(ServiceExt::<Request>::map_err(service, BoxError::from))
 }
 
 fn json_response(status: StatusCode, body: Value) -> Response {
@@ -196,6 +209,56 @@ async fn handle(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) ->
         }
         "ping" => result(id, json!({})),
         "tools/list" => result(id, json!({"tools": doris_cli::tools::list()})),
+        "tools/call" => {
+            let params = &message["params"];
+            let Some(name) = params["name"].as_str() else {
+                return error(StatusCode::OK, id, -32602, "Invalid params", None);
+            };
+            let Some(doris) = Doris::with_transport(secret, transport(mcp.grpc.clone())) else {
+                return unauthorized();
+            };
+            // rustc cannot prove doris-cli's futures `Send` (higher-ranked
+            // lifetimes through tonic's generic clients), and axum needs a
+            // `Send` handler, so the call runs on a blocking thread.
+            // ponytail: one blocking-pool thread per running tool call
+            // (tokio allows 512); a LocalSet worker if that ever matters.
+            let (tool, arguments) = (name.to_owned(), params["arguments"].clone());
+            let runtime = tokio::runtime::Handle::current();
+            let call = tokio::task::spawn_blocking(move || {
+                runtime.block_on(doris_cli::tools::call(doris, &tool, arguments))
+            });
+            let Ok(outcome) = call.await else {
+                return error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    id,
+                    -32603,
+                    "internal",
+                    None,
+                );
+            };
+            match outcome {
+                None => error(
+                    StatusCode::OK,
+                    id,
+                    -32602,
+                    &format!("Unknown tool: {name}"),
+                    None,
+                ),
+                Some(outcome) => {
+                    let (is_error, value) = match outcome {
+                        Ok(value) => (false, value),
+                        Err(value) => (true, value),
+                    };
+                    result(
+                        id,
+                        json!({
+                            "content": [{"type": "text", "text": value.to_string()}],
+                            "isError": is_error,
+                        }),
+                    )
+                }
+            }
+        }
         _ => error(StatusCode::NOT_FOUND, id, -32601, "Method not found", None),
     }
 }

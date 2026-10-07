@@ -325,3 +325,228 @@ async fn malformed_batched_unknown_and_oversized_requests_are_refused() {
     assert_eq!(big, 413);
     assert_eq!(get.status(), 405);
 }
+
+async fn tool(
+    server: &TestServer,
+    token: &str,
+    name: &str,
+    arguments: Value,
+) -> (bool, Value, String) {
+    let params = if arguments.is_null() {
+        json!({"name": name})
+    } else {
+        json!({"name": name, "arguments": arguments})
+    };
+    let body = message(json!(1), "tools/call", params);
+    let bearer = format!("Bearer {token}");
+    let response = post_json(
+        &format!("{}/mcp", server.base),
+        &[
+            ("authorization", bearer.as_str()),
+            ("mcp-protocol-version", V2026),
+            ("mcp-method", "tools/call"),
+            ("mcp-name", name),
+        ],
+        body.to_string().into_bytes(),
+    )
+    .await;
+    assert_eq!(response.status(), 200, "{}", response.body());
+    let raw = response.body().clone();
+    let answer: Value = serde_json::from_str(&raw).unwrap();
+    let result = &answer["result"];
+    let text = result["content"][0]["text"].as_str().unwrap();
+    (
+        result["isError"].as_bool().unwrap(),
+        serde_json::from_str(text).unwrap(),
+        raw,
+    )
+}
+
+fn sale() -> Value {
+    json!({
+        "date": "2026-02-02", "text": "Försäljning",
+        "lines": [
+            {"account": 1930, "debit": "1250.00"},
+            {"account": 3001, "credit": "1000.00"},
+            {"account": 2611, "credit": 250}
+        ]
+    })
+}
+
+#[tokio::test]
+async fn a_rehearsal_saves_nothing_and_the_booking_records_the_token() {
+    let server = TestServer::start().await;
+    let (_, _, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    let mut rehearsal = sale();
+    rehearsal["dry_run"] = json!(true);
+
+    let (failed, dry, _) = tool(&server, &token, "record_voucher", rehearsal).await;
+    let (_, before, _) = tool(&server, &token, "list_vouchers", json!({})).await;
+    let (_, booked, raw) = tool(&server, &token, "record_voucher", sale()).await;
+
+    assert!(!failed);
+    assert_eq!(
+        (dry["dry_run"].clone(), dry["number"].clone()),
+        (json!(true), json!(1))
+    );
+    assert_eq!(before, json!([]));
+    assert_eq!(
+        (booked["dry_run"].clone(), booked["number"].clone()),
+        (json!(false), json!(1))
+    );
+    assert_eq!(booked["attachments"], json!([]));
+    assert!(!raw.contains(&token));
+    let metadata: String = sqlx::query_scalar(
+        "SELECT metadata FROM events WHERE event_type = 'VoucherRecorded'
+         ORDER BY global_position DESC LIMIT 1",
+    )
+    .fetch_one(&server.pool)
+    .await
+    .unwrap();
+    let metadata: Value = serde_json::from_str(&metadata).unwrap();
+    assert!(metadata["via_token"].is_string());
+}
+
+#[tokio::test]
+async fn a_correction_points_at_the_original() {
+    let server = TestServer::start().await;
+    let (_, _, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    tool(&server, &token, "record_voucher", sale()).await;
+    let today = jiff::Zoned::now()
+        .with_time_zone(jiff::tz::TimeZone::get("Europe/Stockholm").unwrap())
+        .date();
+    let date = if today.year() == 2026 {
+        today.to_string()
+    } else {
+        "2026-12-31".into()
+    };
+
+    let (failed, corrected, _) = tool(
+        &server,
+        &token,
+        "correct_voucher",
+        json!({"number": 1, "date": date, "year": "2026"}),
+    )
+    .await;
+
+    assert!(!failed, "{corrected}");
+    assert_eq!(
+        (corrected["number"].clone(), corrected["corrects"].clone()),
+        (json!(2), json!(1))
+    );
+}
+
+#[tokio::test]
+async fn refusals_are_tool_errors_with_the_servers_code() {
+    let server = TestServer::start().await;
+    let (_, _, reader) = anna_with_token(&server, &["ledger:read"]).await;
+
+    let (failed, error, raw) = tool(&server, &reader, "record_voucher", sale()).await;
+
+    assert!(failed);
+    assert_eq!(error["error"]["code"], "missing_scope");
+    assert!(error["error"]["message"].as_str().unwrap().len() > 3);
+    assert!(!raw.contains(&reader));
+}
+
+#[tokio::test]
+async fn several_companies_need_a_choice_with_or_without_the_dash() {
+    let server = TestServer::start().await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let a = company(&server, &anna, "556016-0680").await;
+    let b = company(&server, &anna, "556036-0793").await;
+    let token = api_token(
+        &server,
+        &anna,
+        &mut annas,
+        &[(&a, &["ledger:read"]), (&b, &["ledger:read"])],
+    )
+    .await;
+
+    let (failed, ambiguous, _) = tool(&server, &token, "list_accounts", json!({})).await;
+    let (dashed_failed, _, _) = tool(
+        &server,
+        &token,
+        "list_accounts",
+        json!({"company": "556036-0793"}),
+    )
+    .await;
+    let (plain_failed, _, _) = tool(
+        &server,
+        &token,
+        "list_accounts",
+        json!({"company": "5560360793"}),
+    )
+    .await;
+
+    assert!(failed);
+    assert_eq!(ambiguous["error"]["code"], "company_ambiguous");
+    assert!(
+        ambiguous["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("556016-0680")
+    );
+    assert!(!dashed_failed && !plain_failed);
+}
+
+#[tokio::test]
+async fn a_tool_without_parameters_needs_no_arguments() {
+    let server = TestServer::start().await;
+    let (_, _, token) = anna_with_token(&server, &["ledger:read"]).await;
+
+    let (failed, me, _) = tool(&server, &token, "whoami", Value::Null).await;
+
+    assert!(!failed);
+    assert_eq!(me["email"], "anna@example.se");
+}
+
+#[tokio::test]
+async fn an_unknown_tool_is_invalid_params() {
+    let server = TestServer::start().await;
+    let (_, _, token) = anna_with_token(&server, &["ledger:read"]).await;
+
+    let (status, answer) = rpc(
+        &server,
+        &token,
+        json!(1),
+        "tools/call",
+        json!({"name": "delete_voucher", "arguments": {}}),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    assert_eq!(answer["error"]["code"], -32602);
+}
+
+#[tokio::test]
+async fn the_tools_answer_exactly_as_doris_cli_does() {
+    let server = TestServer::start().await;
+    let (_, _, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    tool(&server, &token, "record_voucher", sale()).await;
+    let env = doris_cli::Env {
+        token: Some(token.clone()),
+        url: Some(server.base.clone()),
+        company: None,
+    };
+    let cli = |args: &'static [&'static str]| {
+        let env = env.clone();
+        async move {
+            let mut out = Vec::new();
+            let mut all = vec!["doris-cli", "--json"];
+            all.extend_from_slice(args);
+            doris_cli::run(all, &env, &mut out, &mut Vec::new()).await;
+            serde_json::from_slice::<Value>(&out).unwrap()
+        }
+    };
+
+    let (_, vouchers, _) = tool(&server, &token, "list_vouchers", json!({"year": "2026"})).await;
+    let (_, balance, _) = tool(&server, &token, "trial_balance", json!({"year": "2026"})).await;
+
+    assert_eq!(vouchers, cli(&["ver", "list", "--year", "2026"]).await);
+    assert_eq!(
+        balance,
+        cli(&["report", "trial-balance", "--year", "2026"]).await
+    );
+}
