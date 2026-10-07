@@ -32,6 +32,16 @@ pub enum Error {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Metadata {
     pub actor: Option<String>,
+    /// The API token the actor used, if any. [`append`] fills it from
+    /// [`VIA_TOKEN`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via_token: Option<String>,
+}
+
+tokio::task_local! {
+    /// The API token the current request runs with. The server sets it for
+    /// the whole call, so every event appended meanwhile records it.
+    pub static VIA_TOKEN: String;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -143,7 +153,14 @@ pub async fn append(
             actual,
         });
     }
-    let metadata = serde_json::to_string(metadata)?;
+    let metadata = Metadata {
+        via_token: metadata
+            .via_token
+            .clone()
+            .or_else(|| VIA_TOKEN.try_with(Clone::clone).ok()),
+        ..metadata.clone()
+    };
+    let metadata = serde_json::to_string(&metadata)?;
     let mut recorded = Vec::with_capacity(events.len());
     for (version, event) in (expected_version + 1..).zip(events) {
         let row = sqlx::query(

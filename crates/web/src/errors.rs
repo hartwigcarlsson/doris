@@ -61,6 +61,13 @@ fn message(code: &str) -> &'static str {
         "account_inactive" => {
             "Kontot är inaktivt. Aktivera det i kontoplanen eller välj ett annat."
         }
+        "invalid_token_name" => "Namnet måste vara 1–100 tecken.",
+        "invalid_token_expiry" => "Välj en sista giltig dag från i dag och högst ett år fram.",
+        "invalid_token_grants" => "Ge token minst en behörighet.",
+        "api_token_not_found" => "Token finns inte.",
+        "api_token_revoked" => "Token är återkallad och kan inte ändras.",
+        "missing_scope" => "Token saknar behörighet för det här.",
+        "token_not_allowed" => "Det här kan inte göras med en token.",
         "invalid_voucher_text" => "Texten måste vara 1–200 tecken.",
         "invalid_voucher_lines" => "En verifikation ska ha 2–100 rader.",
         "invalid_amount" => "Varje rad ska ha ett belopp i antingen debet eller kredit.",
@@ -182,6 +189,21 @@ fn message(code: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn api_token_codes_have_swedish_messages() {
+        for code in [
+            "invalid_token_name",
+            "invalid_token_expiry",
+            "invalid_token_grants",
+            "api_token_not_found",
+            "api_token_revoked",
+            "missing_scope",
+            "token_not_allowed",
+        ] {
+            assert_ne!(message(code), "Något gick fel. Försök igen.", "{code}");
+        }
+    }
+
     #[test]
     fn agi_codes_have_swedish_messages() {
         assert_eq!(message("invalid_period"), "Ogiltig period.");

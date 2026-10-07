@@ -74,7 +74,8 @@ fn run_ref(company_id: &str, run: &str) -> pb::PayrollRunRef {
 #[tokio::test]
 async fn a_member_runs_payroll_from_employee_to_voucher_and_back() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.payroll();
     let asa = hire(&mut api, &anna, &id).await;
@@ -194,7 +195,8 @@ async fn a_member_runs_payroll_from_employee_to_voucher_and_back() {
 #[tokio::test]
 async fn the_lifecycle_and_the_pay_date_are_enforced() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.payroll();
     let asa = hire(&mut api, &anna, &id).await;
@@ -249,7 +251,8 @@ async fn the_lifecycle_and_the_pay_date_are_enforced() {
 #[tokio::test]
 async fn invalid_input_gets_stable_codes() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.payroll();
     let asa = hire(&mut api, &anna, &id).await;
@@ -328,9 +331,10 @@ async fn invalid_input_gets_stable_codes() {
 #[tokio::test]
 async fn strangers_and_signed_out_callers_find_nothing() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     let mut api = server.payroll();
 
     let stranger = api
@@ -407,7 +411,8 @@ fn computed(pay_date: &str, employee_id: &str) -> Option<pb::PayrollRunDraft> {
 async fn a_table_employees_tax_is_fetched_once_and_computed() {
     let fake = fake_skatteverket(tax_rows(2026)).await;
     let server = TestServer::start_with_tax_tables(&fake.url).await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.payroll();
     let asa = hire_with(&mut api, &anna, &id, "19800101-1231", table_33()).await;
@@ -464,7 +469,8 @@ async fn without_skatteverket_a_computed_tax_is_unavailable_but_a_typed_one_work
     let fake = fake_skatteverket(tax_rows(2026)).await;
     fake.broken.store(true, Ordering::SeqCst);
     let server = TestServer::start_with_tax_tables(&fake.url).await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.payroll();
     let asa = hire_with(&mut api, &anna, &id, "19800101-1231", table_33()).await;
@@ -506,7 +512,8 @@ async fn without_skatteverket_a_computed_tax_is_unavailable_but_a_typed_one_work
 async fn a_year_skatteverket_has_not_published_is_unavailable() {
     let fake = fake_skatteverket(tax_rows(2026)).await;
     let server = TestServer::start_with_tax_tables(&fake.url).await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.payroll();
     let asa = hire_with(&mut api, &anna, &id, "19800101-1231", table_33()).await;
@@ -531,7 +538,8 @@ async fn a_year_skatteverket_has_not_published_is_unavailable() {
 #[tokio::test]
 async fn tax_settings_are_checked_and_a_blank_tax_needs_one() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.payroll();
     let asa = hire_with(&mut api, &anna, &id, "19800101-1231", None).await;
@@ -603,7 +611,8 @@ async fn tax_settings_are_checked_and_a_blank_tax_needs_one() {
 async fn finalizing_a_blank_tax_run_fetches_the_year_and_locks_the_computed_tax() {
     let fake = fake_skatteverket(tax_rows(2026)).await;
     let server = TestServer::start_with_tax_tables(&fake.url).await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.payroll();
     let asa = hire_with(&mut api, &anna, &id, "19800101-1231", table_33()).await;
@@ -662,7 +671,8 @@ fn mark(company_id: &str, period: &str, fingerprint: &str) -> pb::MarkAgiSubmitt
 #[tokio::test]
 async fn a_month_is_declared_and_corrected() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.payroll();
     let asa = hire(&mut api, &anna, &id).await;
@@ -801,7 +811,8 @@ async fn a_month_is_declared_and_corrected() {
 #[tokio::test]
 async fn agi_input_is_checked() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.payroll();
 

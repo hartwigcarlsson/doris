@@ -16,7 +16,11 @@ service AuthService {
   rpc Logout(LogoutRequest) returns (LogoutResponse);
 
   // Require a session.
+  // BeginAddPasskey asks an existing passkey to confirm (request options);
+  // ContinueAddPasskey takes that assertion and returns creation options
+  // for the new passkey, which FinishAddPasskey saves.
   rpc BeginAddPasskey(BeginAddPasskeyRequest) returns (BeginCeremonyResponse);
+  rpc ContinueAddPasskey(ContinueAddPasskeyRequest) returns (BeginCeremonyResponse);
   rpc FinishAddPasskey(FinishAddPasskeyRequest) returns (FinishAddPasskeyResponse);
   rpc ListPasskeys(ListPasskeysRequest) returns (ListPasskeysResponse);
 
@@ -24,8 +28,22 @@ service AuthService {
   rpc GetInvitation(GetInvitationRequest) returns (GetInvitationResponse);
 
   // Require an admin session.
-  rpc CreateInvitation(CreateInvitationRequest) returns (CreateInvitationResponse);
+  // An admin invites someone, confirmed with one of the admin's passkeys.
+  rpc BeginCreateInvitation(CreateInvitationRequest) returns (BeginCeremonyResponse);
+  rpc FinishCreateInvitation(FinishConfirmationRequest) returns (CreateInvitationResponse);
   rpc ListInvitations(ListInvitationsRequest) returns (ListInvitationsResponse);
+  // Require a session (never a token). Creating and changing a token are
+  // ceremonies: Begin checks the request and returns WebAuthn request
+  // options; Finish takes the assertion from one of the user's own
+  // passkeys and carries out exactly what Begin was given. A token is shown
+  // once, by FinishCreateApiToken.
+  rpc BeginCreateApiToken(CreateApiTokenRequest) returns (BeginCeremonyResponse);
+  rpc FinishCreateApiToken(FinishConfirmationRequest) returns (CreateApiTokenResponse);
+  rpc BeginChangeApiToken(ChangeApiTokenRequest) returns (BeginCeremonyResponse);
+  rpc FinishChangeApiToken(FinishConfirmationRequest) returns (ChangeApiTokenResponse);
+  rpc ListApiTokens(ListApiTokensRequest) returns (ListApiTokensResponse);
+  // The owner, or an admin for anyone's token.
+  rpc RevokeApiToken(RevokeApiTokenRequest) returns (RevokeApiTokenResponse);
 }
 
 enum Role {
@@ -83,6 +101,11 @@ message BeginAddPasskeyRequest {
   string passkey_name = 1;
 }
 
+message ContinueAddPasskeyRequest {
+  string ceremony_id = 1;
+  string credential_json = 2;
+}
+
 message FinishAddPasskeyRequest {
   string ceremony_id = 1;
   string credential_json = 2;
@@ -132,3 +155,60 @@ message Invitation {
 message ListInvitationsResponse {
   repeated Invitation invitations = 1;
 }
+
+// Scopes are "ledger:read", "ledger:write", "invoicing:read",
+// "invoicing:write", "payroll:read", "payroll:write", "vat:read",
+// "vat:write" and "company:read".
+message TokenGrant {
+  string company_id = 1;
+  repeated string scopes = 2;
+}
+
+message CreateApiTokenRequest {
+  string name = 1;
+  string expires_on = 2; // YYYY-MM-DD: the last day the token works (Swedish time)
+  repeated TokenGrant grants = 3;
+}
+
+message CreateApiTokenResponse {
+  string token_id = 1;
+  string secret = 2;
+}
+
+// Replaces the token's name, last day and grants; its secret stays.
+message ChangeApiTokenRequest {
+  string token_id = 1;
+  string name = 2;
+  string expires_on = 3; // YYYY-MM-DD: the last day the token works (Swedish time)
+  repeated TokenGrant grants = 4;
+}
+
+// Finishes any passkey confirmation: the ceremony and the assertion.
+message FinishConfirmationRequest {
+  string ceremony_id = 1;
+  string credential_json = 2;
+}
+
+message ChangeApiTokenResponse {}
+
+message ApiToken {
+  string id = 1;
+  string name = 2;
+  repeated TokenGrant grants = 3;
+  string created_at = 4;
+  string expires_at = 5; // RFC 3339: the moment it stops working
+  optional string last_used_at = 6;
+  optional string revoked_at = 7;
+}
+
+message ListApiTokensRequest {}
+
+message ListApiTokensResponse {
+  repeated ApiToken tokens = 1;
+}
+
+message RevokeApiTokenRequest {
+  string token_id = 1;
+}
+
+message RevokeApiTokenResponse {}

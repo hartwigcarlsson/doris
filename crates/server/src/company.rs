@@ -6,10 +6,12 @@ use crate::bolagsverket::{Bolagsverket, LookupError};
 use crate::grpc::{self, signed_in_user};
 use doris_company::domain::{AccountingMethod, Address, Company, DomainError, LegalForm, OrgNr};
 use doris_company::{Error, NewCompany};
+use doris_identity::domain::Confirmation;
 use doris_proto::company::v1 as pb;
 use doris_proto::company::v1::company_service_server::CompanyService;
 use jiff::civil::Date;
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
@@ -17,11 +19,20 @@ pub struct CompanyApi {
     pool: SqlitePool,
     /// `None` when no Bolagsverket credentials are configured.
     bolagsverket: Option<Bolagsverket>,
+    auth: Arc<doris_identity::Auth>,
 }
 
 impl CompanyApi {
-    pub fn new(pool: SqlitePool, bolagsverket: Option<Bolagsverket>) -> Self {
-        Self { pool, bolagsverket }
+    pub fn new(
+        pool: SqlitePool,
+        bolagsverket: Option<Bolagsverket>,
+        auth: Arc<doris_identity::Auth>,
+    ) -> Self {
+        Self {
+            pool,
+            bolagsverket,
+            auth,
+        }
     }
 
     /// The company, if the signed-in user is a member of it.
@@ -30,12 +41,11 @@ impl CompanyApi {
         request: &Request<T>,
         company_id: &str,
     ) -> Result<(Company, Uuid), Status> {
-        let user = signed_in_user(&self.pool, request).await?;
-        let id: Uuid = company_id.parse().map_err(|_| company_not_found())?;
-        let company = doris_company::get_company(&self.pool, id, user.id)
+        let (id, user) = grpc::company_caller(&self.pool, request, company_id).await?;
+        let company = doris_company::get_company(&self.pool, id, user)
             .await
             .map_err(status)?;
-        Ok((company, user.id))
+        Ok((company, user))
     }
 }
 
@@ -113,10 +123,17 @@ impl CompanyService for CompanyApi {
         request: Request<pb::ListCompaniesRequest>,
     ) -> Result<Response<pb::ListCompaniesResponse>, Status> {
         let user = signed_in_user(&self.pool, &request).await?;
+        let token = request.extensions().get::<grpc::TokenCaller>().cloned();
         let companies = doris_company::list_companies(&self.pool, user.id)
             .await
             .map_err(status)?
             .into_iter()
+            // A token sees only the companies it was given.
+            .filter(|c| {
+                token
+                    .as_ref()
+                    .is_none_or(|t| t.access.grants.iter().any(|g| g.company_id == c.id))
+            })
             .map(|c| pb::CompanySummary {
                 id: c.id.to_string(),
                 org_nr: OrgNr::parse(&c.org_nr).map_or(c.org_nr.clone(), |o| o.formatted()),
@@ -150,10 +167,10 @@ impl CompanyService for CompanyApi {
         }))
     }
 
-    async fn add_member(
+    async fn begin_add_member(
         &self,
         request: Request<pb::AddMemberRequest>,
-    ) -> Result<Response<pb::AddMemberResponse>, Status> {
+    ) -> Result<Response<pb::BeginAddMemberResponse>, Status> {
         // Access first, so a non-member can't probe which emails exist.
         let (company, actor) = self
             .member_company(&request, &request.get_ref().company_id)
@@ -162,7 +179,39 @@ impl CompanyService for CompanyApi {
             .await
             .map_err(grpc::status)?
             .ok_or_else(|| Status::not_found("user_not_found"))?;
-        doris_company::add_member(&self.pool, company.id, actor, member.id)
+        let action = Confirmation::AddMember {
+            company_id: company.id,
+            email: member.email,
+        };
+        let (ceremony_id, options) = self
+            .auth
+            .begin_confirmation(actor, action, jiff::Timestamp::now())
+            .await
+            .map_err(grpc::status)?;
+        Ok(Response::new(pb::BeginAddMemberResponse {
+            ceremony_id: ceremony_id.to_string(),
+            options_json: serde_json::to_string(&options)
+                .map_err(|_| Status::internal("internal"))?,
+        }))
+    }
+
+    async fn finish_add_member(
+        &self,
+        request: Request<pb::FinishAddMemberRequest>,
+    ) -> Result<Response<pb::AddMemberResponse>, Status> {
+        let user = signed_in_user(&self.pool, &request).await?;
+        let req = request.get_ref();
+        let Confirmation::AddMember { company_id, email } =
+            grpc::confirmation(&self.auth, user.id, &req.ceremony_id, &req.credential_json).await?
+        else {
+            return Err(grpc::ceremony_expired());
+        };
+        let member = doris_identity::find_user_by_email(&self.pool, email.as_str())
+            .await
+            .map_err(grpc::status)?
+            .ok_or_else(|| Status::not_found("user_not_found"))?;
+        // add_member checks again that the user is a member.
+        doris_company::add_member(&self.pool, company_id, user.id, member.id)
             .await
             .map_err(status)?;
         Ok(Response::new(pb::AddMemberResponse {}))
@@ -255,7 +304,7 @@ pub(crate) fn domain_status(err: DomainError) -> Status {
     }
 }
 
-fn status(err: Error) -> Status {
+pub(crate) fn status(err: Error) -> Status {
     match err {
         Error::Domain(err) => domain_status(err),
         Error::AlreadyExists => Status::already_exists("company_exists"),

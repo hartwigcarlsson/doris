@@ -2,7 +2,7 @@
 //! Every call needs a session, and a company the caller isn't a member of
 //! looks exactly like one that doesn't exist.
 
-use crate::grpc::{signed_in_user, today};
+use crate::grpc::today;
 use doris_ledger::Error;
 use doris_ledger::domain::{Attachment, DomainError, RecordVoucher, Voucher, VoucherLine};
 use doris_ledger::statements::{LineKind, StatementLine};
@@ -38,9 +38,7 @@ impl LedgerApi {
         request: &Request<T>,
         company_id: &str,
     ) -> Result<(Uuid, Uuid), Status> {
-        let user = signed_in_user(&self.pool, request).await?;
-        let company: Uuid = company_id.parse().map_err(|_| company_not_found())?;
-        Ok((company, user.id))
+        crate::grpc::company_caller(&self.pool, request, company_id).await
     }
 }
 

@@ -1963,6 +1963,7 @@ async fn a_chart_from_before_records_its_boxes_at_the_next_write_once() {
         .collect::<Vec<_>>();
         let metadata = doris_eventstore::Metadata {
             actor: Some(anna.to_string()),
+            ..Default::default()
         };
         doris_eventstore::append(&mut tx, &format!("accounts-{id}"), 0, &events, &metadata)
             .await

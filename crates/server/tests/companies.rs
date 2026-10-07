@@ -36,7 +36,8 @@ fn code_of(err: tonic::Status) -> (Code, String) {
 #[tokio::test]
 async fn a_user_creates_lists_and_opens_a_company() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let mut api = server.companies();
 
     let id = api
@@ -84,7 +85,8 @@ async fn a_user_creates_lists_and_opens_a_company() {
 #[tokio::test]
 async fn create_rejects_invalid_input_with_stable_codes() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let mut api = server.companies();
     let mut unparseable = create("556016-0680", "Exempel AB");
     unparseable.fiscal_year_end = "31/12".into();
@@ -145,9 +147,15 @@ async fn every_company_rpc_needs_a_session() {
         api.get_company(pb::GetCompanyRequest { company_id: id() })
             .await
             .map(drop),
-        api.add_member(pb::AddMemberRequest {
+        api.begin_add_member(pb::AddMemberRequest {
             company_id: id(),
             email: "bo@example.se".into(),
+        })
+        .await
+        .map(drop),
+        api.finish_add_member(pb::FinishAddMemberRequest {
+            ceremony_id: "x".into(),
+            credential_json: "{}".into(),
         })
         .await
         .map(drop),
@@ -163,8 +171,9 @@ async fn every_company_rpc_needs_a_session() {
 #[tokio::test]
 async fn a_member_adds_a_colleague_who_then_sees_the_company() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     let mut api = server.companies();
     let id = api
         .create_company(authed(create("556016-0680", "Exempel AB"), &anna))
@@ -178,15 +187,10 @@ async fn a_member_adds_a_colleague_who_then_sees_the_company() {
         .await
         .unwrap()
         .into_inner();
-    api.add_member(authed(
-        pb::AddMemberRequest {
-            company_id: id.clone(),
-            email: "Bo@Example.se".into(),
-        },
-        &anna,
-    ))
-    .await
-    .unwrap();
+    server
+        .add_member(&anna, &mut annas, &id, "Bo@Example.se")
+        .await
+        .unwrap();
     let after = api
         .list_companies(authed(pb::ListCompaniesRequest {}, &bo))
         .await
@@ -203,7 +207,7 @@ async fn a_member_adds_a_colleague_who_then_sees_the_company() {
         .unwrap()
         .into_inner();
     let unknown = api
-        .add_member(authed(
+        .begin_add_member(authed(
             pb::AddMemberRequest {
                 company_id: id,
                 email: "nobody@example.se".into(),
@@ -223,8 +227,9 @@ async fn a_member_adds_a_colleague_who_then_sees_the_company() {
 #[tokio::test]
 async fn non_members_and_bad_ids_get_company_not_found() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     let mut api = server.companies();
     let id = api
         .create_company(authed(create("556016-0680", "Exempel AB"), &anna))
@@ -259,7 +264,7 @@ async fn non_members_and_bad_ids_get_company_not_found() {
             .unwrap_err();
         // Probing an unknown email must not reveal that it is unknown.
         let add = api
-            .add_member(authed(
+            .begin_add_member(authed(
                 pb::AddMemberRequest {
                     company_id,
                     email: "nobody@example.se".into(),
@@ -345,7 +350,8 @@ fn lookup(org_nr: &str) -> pb::LookupCompanyRequest {
 async fn lookup_prefills_from_bolagsverket_and_reuses_the_token() {
     let fake = fake_bolagsverket(&[]).await;
     let server = TestServer::start_with_bolagsverket(client_for(&fake)).await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let mut api = server.companies();
 
     let found = api
@@ -389,7 +395,8 @@ async fn lookup_prefills_from_bolagsverket_and_reuses_the_token() {
 async fn a_401_clears_the_cached_token() {
     let fake = fake_bolagsverket(&["t1"]).await;
     let server = TestServer::start_with_bolagsverket(client_for(&fake)).await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let mut api = server.companies();
 
     let first = api

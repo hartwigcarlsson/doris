@@ -1,7 +1,9 @@
 //! `doris.auth.v1.AuthService`: maps gRPC calls onto `doris_identity`, and
 //! carries the session in an HttpOnly cookie.
 
-use doris_identity::domain::{DomainError, Role, User};
+use doris_identity::domain::{
+    Confirmation, DomainError, Email, Grant, Role, Scope, TokenChange, TokenRequest, User,
+};
 use doris_identity::{Auth, Error, SESSION_TTL};
 use doris_proto::auth::v1 as pb;
 use doris_proto::auth::v1::auth_service_server::AuthService;
@@ -9,6 +11,7 @@ use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
@@ -16,11 +19,11 @@ pub const SESSION_COOKIE: &str = "doris_session";
 
 pub struct AuthApi {
     pool: SqlitePool,
-    auth: Auth,
+    auth: Arc<Auth>,
 }
 
 impl AuthApi {
-    pub fn new(pool: SqlitePool, auth: Auth) -> Self {
+    pub fn new(pool: SqlitePool, auth: Arc<Auth>) -> Self {
         Self { pool, auth }
     }
 
@@ -36,6 +39,64 @@ impl AuthApi {
             Role::Member => Err(Status::permission_denied("not_admin")),
         }
     }
+
+    /// A token's name, last day and grants as the client sent them. Every
+    /// company must be one the user is a member of.
+    async fn token_change(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        expires_on: &str,
+        grants: &[pb::TokenGrant],
+    ) -> Result<TokenChange, Status> {
+        let expires_at = token_expiry(expires_on, Timestamp::now())?;
+        let mut parsed = Vec::with_capacity(grants.len());
+        for grant in grants {
+            let company_id: Uuid = grant
+                .company_id
+                .parse()
+                .map_err(|_| Status::not_found("company_not_found"))?;
+            self.member_of(user_id, company_id).await?;
+            let scopes = grant
+                .scopes
+                .iter()
+                .map(|s| Scope::parse(s))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| Status::invalid_argument("invalid_token_grants"))?;
+            parsed.push(Grant { company_id, scopes });
+        }
+        Ok(TokenChange {
+            name: name.to_owned(),
+            expires_at,
+            grants: parsed,
+        })
+    }
+
+    /// Membership has one source: the company module.
+    async fn member_of(&self, user_id: Uuid, company_id: Uuid) -> Result<(), Status> {
+        doris_company::get_company(&self.pool, company_id, user_id)
+            .await
+            .map_err(crate::company::status)?;
+        Ok(())
+    }
+
+    /// The token request a passkey just confirmed, with every company
+    /// checked again: the user may have left one meanwhile.
+    async fn confirmed(
+        &self,
+        user_id: Uuid,
+        req: &pb::FinishConfirmationRequest,
+    ) -> Result<TokenRequest, Status> {
+        let Confirmation::ApiToken { request } =
+            confirmation(&self.auth, user_id, &req.ceremony_id, &req.credential_json).await?
+        else {
+            return Err(ceremony_expired());
+        };
+        for grant in &request.change().grants {
+            self.member_of(user_id, grant.company_id).await?;
+        }
+        Ok(request)
+    }
 }
 
 #[tonic::async_trait]
@@ -44,11 +105,14 @@ impl AuthService for AuthApi {
         &self,
         request: Request<pb::GetStatusRequest>,
     ) -> Result<Response<pb::GetStatusResponse>, Status> {
-        let current_user = match session_token(&request) {
-            Some(token) => doris_identity::session_user(&self.pool, &token, Timestamp::now())
-                .await
-                .map_err(status)?,
-            None => None,
+        let current_user = match request.extensions().get::<TokenCaller>() {
+            Some(token) => Some(token.user.clone()),
+            None => match session_token(&request) {
+                Some(token) => doris_identity::session_user(&self.pool, &token, Timestamp::now())
+                    .await
+                    .map_err(status)?,
+                None => None,
+            },
         };
         Ok(Response::new(pb::GetStatusResponse {
             bootstrap_required: doris_identity::bootstrap_required(&self.pool)
@@ -152,6 +216,25 @@ impl AuthService for AuthApi {
         ceremony_response(ceremony_id, &options)
     }
 
+    async fn continue_add_passkey(
+        &self,
+        request: Request<pb::ContinueAddPasskeyRequest>,
+    ) -> Result<Response<pb::BeginCeremonyResponse>, Status> {
+        let user = self.user(&request).await?;
+        let req = request.into_inner();
+        let (ceremony_id, options) = self
+            .auth
+            .continue_add_passkey(
+                user.id,
+                ceremony_id(&req.ceremony_id)?,
+                &credential(&req.credential_json)?,
+                Timestamp::now(),
+            )
+            .await
+            .map_err(finish_status)?;
+        ceremony_response(ceremony_id, &options)
+    }
+
     async fn finish_add_passkey(
         &self,
         request: Request<pb::FinishAddPasskeyRequest>,
@@ -206,14 +289,38 @@ impl AuthService for AuthApi {
         }))
     }
 
-    async fn create_invitation(
+    async fn begin_create_invitation(
         &self,
         request: Request<pb::CreateInvitationRequest>,
+    ) -> Result<Response<pb::BeginCeremonyResponse>, Status> {
+        let admin = self.admin(&request).await?;
+        let email = Email::parse(&request.get_ref().email).map_err(|e| status(Error::Domain(e)))?;
+        let (ceremony_id, options) = self
+            .auth
+            .begin_confirmation(
+                admin.id,
+                Confirmation::Invitation { email },
+                Timestamp::now(),
+            )
+            .await
+            .map_err(status)?;
+        ceremony_response(ceremony_id, &options)
+    }
+
+    async fn finish_create_invitation(
+        &self,
+        request: Request<pb::FinishConfirmationRequest>,
     ) -> Result<Response<pb::CreateInvitationResponse>, Status> {
         let admin = self.admin(&request).await?;
+        let req = request.get_ref();
+        let Confirmation::Invitation { email } =
+            confirmation(&self.auth, admin.id, &req.ceremony_id, &req.credential_json).await?
+        else {
+            return Err(ceremony_expired());
+        };
         let now = Timestamp::now();
         let (_, token) =
-            doris_identity::create_invitation(&self.pool, admin.id, &request.get_ref().email, now)
+            doris_identity::create_invitation(&self.pool, admin.id, email.as_str(), now)
                 .await
                 .map_err(status)?;
         Ok(Response::new(pb::CreateInvitationResponse {
@@ -240,6 +347,128 @@ impl AuthService for AuthApi {
             .collect();
         Ok(Response::new(pb::ListInvitationsResponse { invitations }))
     }
+
+    async fn begin_create_api_token(
+        &self,
+        request: Request<pb::CreateApiTokenRequest>,
+    ) -> Result<Response<pb::BeginCeremonyResponse>, Status> {
+        let user = self.user(&request).await?;
+        let req = request.into_inner();
+        let change = self
+            .token_change(user.id, &req.name, &req.expires_on, &req.grants)
+            .await?;
+        let (ceremony_id, options) = self
+            .auth
+            .begin_confirmation(
+                user.id,
+                Confirmation::ApiToken {
+                    request: TokenRequest::Create { change },
+                },
+                Timestamp::now(),
+            )
+            .await
+            .map_err(status)?;
+        ceremony_response(ceremony_id, &options)
+    }
+
+    async fn finish_create_api_token(
+        &self,
+        request: Request<pb::FinishConfirmationRequest>,
+    ) -> Result<Response<pb::CreateApiTokenResponse>, Status> {
+        let user = self.user(&request).await?;
+        let TokenRequest::Create { change } = self.confirmed(user.id, request.get_ref()).await?
+        else {
+            return Err(ceremony_expired());
+        };
+        let (token_id, secret) = doris_identity::create_api_token(
+            &self.pool,
+            user.id,
+            &change.name,
+            change.expires_at,
+            change.grants,
+            Timestamp::now(),
+        )
+        .await
+        .map_err(status)?;
+        Ok(Response::new(pb::CreateApiTokenResponse {
+            token_id: token_id.to_string(),
+            secret,
+        }))
+    }
+
+    async fn begin_change_api_token(
+        &self,
+        request: Request<pb::ChangeApiTokenRequest>,
+    ) -> Result<Response<pb::BeginCeremonyResponse>, Status> {
+        let user = self.user(&request).await?;
+        let req = request.into_inner();
+        let token_id = api_token_id(&req.token_id)?;
+        let change = self
+            .token_change(user.id, &req.name, &req.expires_on, &req.grants)
+            .await?;
+        let (ceremony_id, options) = self
+            .auth
+            .begin_confirmation(
+                user.id,
+                Confirmation::ApiToken {
+                    request: TokenRequest::Change { token_id, change },
+                },
+                Timestamp::now(),
+            )
+            .await
+            .map_err(status)?;
+        ceremony_response(ceremony_id, &options)
+    }
+
+    async fn finish_change_api_token(
+        &self,
+        request: Request<pb::FinishConfirmationRequest>,
+    ) -> Result<Response<pb::ChangeApiTokenResponse>, Status> {
+        let user = self.user(&request).await?;
+        let TokenRequest::Change { token_id, change } =
+            self.confirmed(user.id, request.get_ref()).await?
+        else {
+            return Err(ceremony_expired());
+        };
+        doris_identity::change_api_token(&self.pool, user.id, token_id, change, Timestamp::now())
+            .await
+            .map_err(status)?;
+        Ok(Response::new(pb::ChangeApiTokenResponse {}))
+    }
+
+    async fn list_api_tokens(
+        &self,
+        request: Request<pb::ListApiTokensRequest>,
+    ) -> Result<Response<pb::ListApiTokensResponse>, Status> {
+        let user = self.user(&request).await?;
+        let tokens = doris_identity::list_api_tokens(&self.pool, user.id)
+            .await
+            .map_err(status)?
+            .into_iter()
+            .map(|t| pb::ApiToken {
+                id: t.id.to_string(),
+                name: t.name,
+                grants: t.grants.iter().map(grant_message).collect(),
+                created_at: t.created_at,
+                expires_at: t.expires_at.to_string(),
+                last_used_at: t.last_used_at.map(|at| at.to_string()),
+                revoked_at: t.revoked_at,
+            })
+            .collect();
+        Ok(Response::new(pb::ListApiTokensResponse { tokens }))
+    }
+
+    async fn revoke_api_token(
+        &self,
+        request: Request<pb::RevokeApiTokenRequest>,
+    ) -> Result<Response<pb::RevokeApiTokenResponse>, Status> {
+        let user = self.user(&request).await?;
+        let token_id = api_token_id(&request.get_ref().token_id)?;
+        doris_identity::revoke_api_token(&self.pool, user.id, token_id)
+            .await
+            .map_err(status)?;
+        Ok(Response::new(pb::RevokeApiTokenResponse {}))
+    }
 }
 
 /// The signed-in user, or `Unauthenticated`. Shared by every service.
@@ -247,7 +476,57 @@ pub(crate) async fn signed_in_user<T>(
     pool: &SqlitePool,
     request: &Request<T>,
 ) -> Result<User, Status> {
+    if let Some(token) = request.extensions().get::<TokenCaller>() {
+        return Ok(token.user.clone());
+    }
     session_user(pool, request.metadata().as_ref()).await
+}
+
+/// A call made with an API token. `auth_gate` puts it in the request.
+#[derive(Clone)]
+pub(crate) struct TokenCaller {
+    pub user: User,
+    pub access: doris_identity::TokenAccess,
+    pub required: crate::access::Access,
+}
+
+/// The token in an `authorization: Bearer …` header. The scheme is
+/// case-insensitive. Another scheme (a proxy's `Basic`) is not ours and
+/// leaves the cookie in charge; a `Bearer` with an empty or garbled token
+/// is returned and fails as a token, never falling back to the cookie.
+pub(crate) fn bearer(headers: &http::HeaderMap) -> Option<String> {
+    let value = headers.get(http::header::AUTHORIZATION)?;
+    let value = value.to_str().unwrap_or_default().trim();
+    let (scheme, rest) = value.split_once(' ').unwrap_or((value, ""));
+    scheme
+        .eq_ignore_ascii_case("bearer")
+        .then(|| rest.trim().to_owned())
+}
+
+/// The company asked about and the caller. A token needs the call's scope
+/// for that company; membership is then checked by each module.
+pub(crate) async fn company_caller<T>(
+    pool: &SqlitePool,
+    request: &Request<T>,
+    company_id: &str,
+) -> Result<(Uuid, Uuid), Status> {
+    let user = signed_in_user(pool, request).await?;
+    let company: Uuid = company_id
+        .parse()
+        .map_err(|_| Status::not_found("company_not_found"))?;
+    if let Some(token) = request.extensions().get::<TokenCaller>() {
+        let grant = token
+            .access
+            .grants
+            .iter()
+            .find(|g| g.company_id == company)
+            .ok_or_else(|| Status::not_found("company_not_found"))?;
+        match token.required {
+            crate::access::Access::Company(scope) if grant.scopes.contains(&scope) => {}
+            _ => return Err(Status::permission_denied("missing_scope")),
+        }
+    }
+    Ok((company, user.id))
 }
 
 /// The user whose session cookie is in `headers`, or `Unauthenticated`.
@@ -260,6 +539,38 @@ pub(crate) async fn session_user(
         .await
         .map_err(status)?
         .ok_or_else(not_signed_in)
+}
+
+fn grant_message(grant: &Grant) -> pb::TokenGrant {
+    pb::TokenGrant {
+        company_id: grant.company_id.to_string(),
+        scopes: grant.scopes.iter().map(|s| s.as_str().to_owned()).collect(),
+    }
+}
+
+fn api_token_id(raw: &str) -> Result<Uuid, Status> {
+    raw.parse()
+        .map_err(|_| Status::not_found("api_token_not_found"))
+}
+
+/// When a token whose last day is `raw` (`YYYY-MM-DD`) stops working:
+/// midnight in Sweden after that day. The day is today at the earliest and
+/// 366 days off at most.
+fn token_expiry(raw: &str, now: Timestamp) -> Result<Timestamp, Status> {
+    use jiff::ToSpan;
+    let invalid = || Status::invalid_argument("invalid_token_expiry");
+    let last_day: Date = raw.parse().map_err(|_| invalid())?;
+    let today = today_in_sweden(now);
+    let latest = today.checked_add(366.days()).map_err(|_| invalid())?;
+    if last_day < today || last_day > latest {
+        return Err(invalid());
+    }
+    let sweden = TimeZone::get("Europe/Stockholm").expect("bundled tz database");
+    let midnight = last_day.tomorrow().map_err(|_| invalid())?;
+    Ok(midnight
+        .to_zoned(sweden)
+        .map_err(|_| invalid())?
+        .timestamp())
 }
 
 fn user_message(user: &User) -> pb::User {
@@ -330,7 +641,7 @@ fn set_cookie<T>(response: &mut Response<T>, token: &str, max_age: i64) {
     );
 }
 
-fn not_signed_in() -> Status {
+pub(crate) fn not_signed_in() -> Status {
     Status::unauthenticated("not_signed_in")
 }
 
@@ -347,6 +658,12 @@ fn finish_status(err: Error) -> Status {
 pub(crate) fn status(err: Error) -> Status {
     match err {
         Error::Domain(DomainError::NotAdmin) => Status::permission_denied("not_admin"),
+        Error::Domain(DomainError::NotTokenOwner) | Error::ApiTokenNotFound => {
+            Status::not_found("api_token_not_found")
+        }
+        Error::Domain(DomainError::TokenRevoked) => {
+            Status::failed_precondition("api_token_revoked")
+        }
         Error::Domain(err) => Status::invalid_argument(domain_code(err)),
         Error::AlreadyExists => Status::already_exists("already_exists"),
         Error::InvitationNotFound => Status::not_found("invitation_not_found"),
@@ -355,6 +672,7 @@ pub(crate) fn status(err: Error) -> Status {
             Status::failed_precondition("ceremony_expired")
         }
         Error::LoginFailed => Status::unauthenticated("login_failed"),
+        Error::CredentialRejected => Status::invalid_argument("credential_rejected"),
         Error::Webauthn(err) => {
             tracing::error!("webauthn: {err}");
             Status::internal("internal")
@@ -378,6 +696,11 @@ fn domain_code(err: DomainError) -> &'static str {
         DomainError::DuplicatePasskey => "duplicate_passkey",
         DomainError::UnknownPasskey => "unknown_passkey",
         DomainError::NotAdmin => "not_admin",
+        DomainError::InvalidTokenName => "invalid_token_name",
+        DomainError::InvalidTokenExpiry => "invalid_token_expiry",
+        DomainError::InvalidTokenGrants => "invalid_token_grants",
+        DomainError::NotTokenOwner => "api_token_not_found",
+        DomainError::TokenRevoked => "api_token_revoked",
     }
 }
 
@@ -400,10 +723,59 @@ fn today_in_sweden(ts: Timestamp) -> Date {
     ts.to_zoned(sweden).date()
 }
 
+/// The action a passkey just confirmed, for any finish RPC.
+pub(crate) async fn confirmation(
+    auth: &Auth,
+    user_id: Uuid,
+    raw_ceremony_id: &str,
+    credential_json: &str,
+) -> Result<Confirmation, Status> {
+    auth.finish_confirmation(
+        user_id,
+        ceremony_id(raw_ceremony_id)?,
+        &credential(credential_json)?,
+        Timestamp::now(),
+    )
+    .await
+    .map_err(finish_status)
+}
+
+/// A confirmation of another kind than the finish RPC carries out.
+pub(crate) fn ceremony_expired() -> Status {
+    Status::failed_precondition("ceremony_expired")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::today_in_sweden;
+    use super::{today_in_sweden, token_expiry};
     use jiff::civil::date;
+
+    #[test]
+    fn a_token_ends_at_midnight_in_sweden_after_its_last_day() {
+        let at = |s: &str| -> jiff::Timestamp { s.parse().unwrap() };
+        let now = at("2026-10-06T10:00:00Z");
+        // The last day today: the rest of today, until midnight in Sweden (summer time).
+        assert_eq!(
+            token_expiry("2026-10-06", now).unwrap(),
+            at("2026-10-06T22:00:00Z")
+        );
+        // In winter time, midnight is 23:00Z.
+        assert_eq!(
+            token_expiry("2026-12-01", now).unwrap(),
+            at("2026-12-01T23:00:00Z")
+        );
+        // The day before summer time starts ends at 23:00Z too.
+        assert_eq!(
+            token_expiry("2027-03-27", now).unwrap(),
+            at("2027-03-27T23:00:00Z")
+        );
+        // Today counts in Sweden: at 23:30Z on the 6th it is already the 7th.
+        assert!(token_expiry("2026-10-06", at("2026-10-06T23:30:00Z")).is_err());
+        assert!(token_expiry("2027-10-07", now).is_ok());
+        assert!(token_expiry("2027-10-08", now).is_err());
+        assert!(token_expiry("2026-10-05", now).is_err());
+        assert!(token_expiry("i morgon", now).is_err());
+    }
 
     #[test]
     fn today_is_the_date_in_sweden() {

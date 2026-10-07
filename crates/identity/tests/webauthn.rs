@@ -1,6 +1,10 @@
-use doris_identity::domain::{DomainError, Role, User};
-use doris_identity::{Auth, CEREMONY_TTL, Error, create_invitation, get_user, session_user};
-use jiff::Timestamp;
+use doris_identity::domain::{
+    Confirmation, DomainError, Email, Grant, Role, Scope, TokenChange, TokenRequest, User,
+};
+use doris_identity::{
+    Auth, CEREMONY_TTL, Error, create_invitation, get_user, list_invitations, session_user,
+};
+use jiff::{SignedDuration, Timestamp};
 use sqlx::SqlitePool;
 use url::Url;
 use webauthn_authenticator_rs::WebauthnAuthenticator;
@@ -386,6 +390,21 @@ async fn finish_registration_rechecks_the_invitation() {
     );
 }
 
+/// Confirms adding a passkey with `confirming` (an existing passkey of
+/// the user's) and returns the registration ceremony and its options.
+async fn confirm_add_passkey(
+    auth: &Auth,
+    user_id: uuid::Uuid,
+    confirming: &mut Authenticator,
+    name: &str,
+) -> (uuid::Uuid, webauthn_rs::prelude::CreationChallengeResponse) {
+    let (ceremony, options) = auth.begin_add_passkey(user_id, name, now()).await.unwrap();
+    let assertion = confirming.do_authentication(origin(), options).unwrap();
+    auth.continue_add_passkey(user_id, ceremony, &assertion, now())
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn a_user_can_add_a_second_passkey_and_log_in_with_either() {
     let (pool, auth) = setup().await;
@@ -393,10 +412,7 @@ async fn a_user_can_add_a_second_passkey_and_log_in_with_either() {
     let mut phone = authenticator();
     let (anna, _) = sign_up(&auth, &mut laptop, "anna@example.se", None).await;
 
-    let (ceremony, options) = auth
-        .begin_add_passkey(anna.id, "Telefon", now())
-        .await
-        .unwrap();
+    let (ceremony, options) = confirm_add_passkey(&auth, anna.id, &mut laptop, "Telefon").await;
     let credential = phone.do_registration(origin(), options).unwrap();
     auth.finish_add_passkey(anna.id, ceremony, &credential, now())
         .await
@@ -432,16 +448,14 @@ async fn a_user_can_add_a_second_passkey_and_log_in_with_either() {
 #[tokio::test]
 async fn an_add_passkey_ceremony_belongs_to_the_user_who_started_it() {
     let (pool, auth) = setup().await;
-    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
     let (_, token) = create_invitation(&pool, anna.id, "bo@example.se", now())
         .await
         .unwrap();
     let (bo, _) = sign_up(&auth, &mut authenticator(), "bo@example.se", Some(&token)).await;
 
-    let (ceremony, options) = auth
-        .begin_add_passkey(anna.id, "Telefon", now())
-        .await
-        .unwrap();
+    let (ceremony, options) = confirm_add_passkey(&auth, anna.id, &mut annas, "Telefon").await;
     let credential = authenticator().do_registration(origin(), options).unwrap();
     let err = auth
         .finish_add_passkey(bo.id, ceremony, &credential, now())
@@ -457,5 +471,507 @@ async fn an_add_passkey_ceremony_belongs_to_the_user_who_started_it() {
             .passkeys
             .len(),
         1
+    );
+}
+
+fn new_token() -> TokenRequest {
+    TokenRequest::Create {
+        change: TokenChange {
+            name: "Agent".into(),
+            expires_at: now() + SignedDuration::from_hours(24),
+            grants: vec![Grant {
+                company_id: uuid::Uuid::new_v4(),
+                scopes: vec![Scope::LedgerRead],
+            }],
+        },
+    }
+}
+
+async fn ceremonies(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM webauthn_ceremonies")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn passkey_uses(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE event_type = 'PasskeyUsed'")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_passkey_confirms_a_token_request() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+
+    let (ceremony, options) = auth
+        .begin_confirmation(
+            anna.id,
+            Confirmation::ApiToken {
+                request: new_token(),
+            },
+            now(),
+        )
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let confirmed = auth
+        .finish_confirmation(anna.id, ceremony, &assertion, now())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        &confirmed,
+        Confirmation::ApiToken { request: TokenRequest::Create { change } } if change.name == "Agent"
+    ));
+    assert_eq!(
+        passkey_uses(&pool).await,
+        1,
+        "the use (and counter) is recorded"
+    );
+    assert_eq!(ceremonies(&pool).await, 0);
+}
+
+#[tokio::test]
+async fn a_token_request_is_refused_before_the_authenticator_is_asked() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let mut bad = new_token();
+    if let TokenRequest::Create { change } = &mut bad {
+        change.name = " ".into();
+    }
+
+    let err = auth
+        .begin_confirmation(anna.id, Confirmation::ApiToken { request: bad }, now())
+        .await
+        .unwrap_err();
+    let someone_elses = auth
+        .begin_confirmation(
+            anna.id,
+            Confirmation::ApiToken {
+                request: TokenRequest::Change {
+                    token_id: uuid::Uuid::new_v4(),
+                    change: new_token().change().clone(),
+                },
+            },
+            now(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, Error::Domain(DomainError::InvalidTokenName)),
+        "{err:?}"
+    );
+    assert!(
+        matches!(someone_elses, Error::ApiTokenNotFound),
+        "{someone_elses:?}"
+    );
+    assert_eq!(ceremonies(&pool).await, 0);
+}
+
+#[tokio::test]
+async fn only_the_users_own_passkey_confirms_their_token_request() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let mut bos = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    sign_up(&auth, &mut bos, "bo@example.se", Some(&invitation)).await;
+
+    let (ceremony, _) = auth
+        .begin_confirmation(
+            anna.id,
+            Confirmation::ApiToken {
+                request: new_token(),
+            },
+            now(),
+        )
+        .await
+        .unwrap();
+    let (_, bos_options) = auth.begin_login("bo@example.se", now()).await.unwrap();
+    let bos_assertion = bos.do_authentication(origin(), bos_options).unwrap();
+    let err = auth
+        .finish_confirmation(anna.id, ceremony, &bos_assertion, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::CredentialRejected), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_token_ceremony_is_finished_once_by_the_user_who_began_it_within_five_minutes() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let (bo, _) = sign_up(
+        &auth,
+        &mut authenticator(),
+        "bo@example.se",
+        Some(&invitation),
+    )
+    .await;
+
+    // Finished by someone else: gone, as if it never was.
+    let (ceremony, options) = auth
+        .begin_confirmation(
+            anna.id,
+            Confirmation::ApiToken {
+                request: new_token(),
+            },
+            now(),
+        )
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let by_bo = auth
+        .finish_confirmation(bo.id, ceremony, &assertion, now())
+        .await
+        .unwrap_err();
+    let again = auth
+        .finish_confirmation(anna.id, ceremony, &assertion, now())
+        .await
+        .unwrap_err();
+
+    // Finished too late.
+    let (late, options) = auth
+        .begin_confirmation(
+            anna.id,
+            Confirmation::ApiToken {
+                request: new_token(),
+            },
+            now(),
+        )
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let expired = auth
+        .finish_confirmation(anna.id, late, &assertion, now() + CEREMONY_TTL)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(by_bo, Error::CeremonyNotFound), "{by_bo:?}");
+    assert!(matches!(again, Error::CeremonyNotFound), "{again:?}");
+    assert!(matches!(expired, Error::CeremonyExpired), "{expired:?}");
+}
+
+#[tokio::test]
+async fn logging_in_still_fails_the_same_way_for_a_wrong_passkey() {
+    // finish_login now shares the assertion check with token ceremonies.
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let mut bos = authenticator();
+    sign_up(&auth, &mut bos, "bo@example.se", Some(&invitation)).await;
+    let (_, token_options) = auth
+        .begin_confirmation(
+            anna.id,
+            Confirmation::ApiToken {
+                request: new_token(),
+            },
+            now(),
+        )
+        .await
+        .unwrap();
+    let annas_assertion = annas.do_authentication(origin(), token_options).unwrap();
+    let (bos_login, _) = auth.begin_login("bo@example.se", now()).await.unwrap();
+
+    let err = auth
+        .finish_login(bos_login, &annas_assertion, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::LoginFailed), "{err:?}");
+}
+
+#[tokio::test]
+async fn adding_a_passkey_needs_one_of_the_users_own() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let mut bos = authenticator();
+    sign_up(&auth, &mut bos, "bo@example.se", Some(&invitation)).await;
+
+    let (ceremony, _) = auth
+        .begin_add_passkey(anna.id, "Telefon", now())
+        .await
+        .unwrap();
+    let (_, bos_options) = auth.begin_login("bo@example.se", now()).await.unwrap();
+    let bos_assertion = bos.do_authentication(origin(), bos_options).unwrap();
+    let err = auth
+        .continue_add_passkey(anna.id, ceremony, &bos_assertion, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::CredentialRejected), "{err:?}");
+    assert_eq!(
+        get_user(&pool, anna.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .passkeys
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_confirmation_to_add_a_passkey_belongs_to_its_user_and_is_used_once() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let (bo, _) = sign_up(
+        &auth,
+        &mut authenticator(),
+        "bo@example.se",
+        Some(&invitation),
+    )
+    .await;
+
+    let (ceremony, options) = auth
+        .begin_add_passkey(anna.id, "Telefon", now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let by_bo = auth
+        .continue_add_passkey(bo.id, ceremony, &assertion, now())
+        .await
+        .unwrap_err();
+    let again = auth
+        .continue_add_passkey(anna.id, ceremony, &assertion, now())
+        .await
+        .unwrap_err();
+    let (late, options) = auth
+        .begin_add_passkey(anna.id, "Telefon", now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let expired = auth
+        .continue_add_passkey(anna.id, late, &assertion, now() + CEREMONY_TTL)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(by_bo, Error::CeremonyNotFound), "{by_bo:?}");
+    assert!(matches!(again, Error::CeremonyNotFound), "{again:?}");
+    assert!(matches!(expired, Error::CeremonyExpired), "{expired:?}");
+}
+
+#[tokio::test]
+async fn a_bad_passkey_name_is_refused_before_any_passkey_is_asked() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let err = auth
+        .begin_add_passkey(anna.id, "  ", now())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::Domain(DomainError::InvalidPasskeyName)),
+        "{err:?}"
+    );
+    let ceremonies: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM webauthn_ceremonies")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ceremonies, 0);
+}
+
+#[tokio::test]
+async fn a_registration_ceremony_cannot_be_continued() {
+    // Only a confirmation continues; anything else is gone.
+    let (_, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (ceremony, options) = auth
+        .begin_add_passkey(anna.id, "Telefon", now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+    let (registration, _) = auth
+        .continue_add_passkey(anna.id, ceremony, &assertion, now())
+        .await
+        .unwrap();
+    let (_, options) = auth
+        .begin_add_passkey(anna.id, "Surfplatta", now())
+        .await
+        .unwrap();
+    let assertion = annas.do_authentication(origin(), options).unwrap();
+
+    let err = auth
+        .continue_add_passkey(anna.id, registration, &assertion, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::CeremonyNotFound), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_passkey_cannot_be_added_by_skipping_the_confirmation() {
+    let (pool, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let (unconfirmed, _) = auth
+        .begin_add_passkey(anna.id, "Telefon", now())
+        .await
+        .unwrap();
+    // A real registration credential, from a second, confirmed ceremony.
+    let (_, options) = confirm_add_passkey(&auth, anna.id, &mut annas, "Surfplatta").await;
+    let credential = authenticator().do_registration(origin(), options).unwrap();
+
+    let err = auth
+        .finish_add_passkey(anna.id, unconfirmed, &credential, now())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::CeremonyNotFound), "{err:?}");
+    assert_eq!(
+        get_user(&pool, anna.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .passkeys
+            .len(),
+        1
+    );
+}
+
+fn email(raw: &str) -> Email {
+    Email::parse(raw).unwrap()
+}
+
+#[tokio::test]
+async fn an_invitation_and_a_new_member_are_confirmed_exactly_as_asked() {
+    let (_, auth) = setup().await;
+    let mut annas = authenticator();
+    let (anna, _) = sign_up(&auth, &mut annas, "anna@example.se", None).await;
+    let company_id = uuid::Uuid::new_v4();
+
+    for action in [
+        Confirmation::Invitation {
+            email: email("bo@example.se"),
+        },
+        Confirmation::AddMember {
+            company_id,
+            email: email("bo@example.se"),
+        },
+    ] {
+        let (ceremony, options) = auth
+            .begin_confirmation(anna.id, action.clone(), now())
+            .await
+            .unwrap();
+        let assertion = annas.do_authentication(origin(), options).unwrap();
+        let confirmed = auth
+            .finish_confirmation(anna.id, ceremony, &assertion, now())
+            .await
+            .unwrap();
+        assert_eq!(confirmed, action);
+    }
+}
+
+#[tokio::test]
+async fn beginning_an_invitation_confirmation_saves_no_invitation() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+
+    auth.begin_confirmation(
+        anna.id,
+        Confirmation::Invitation {
+            email: email("bo@example.se"),
+        },
+        now(),
+    )
+    .await
+    .unwrap();
+
+    assert!(list_invitations(&pool).await.unwrap().is_empty());
+    create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn an_invitation_is_refused_before_the_authenticator_is_asked() {
+    let (pool, auth) = setup().await;
+    let (anna, _) = sign_up(&auth, &mut authenticator(), "anna@example.se", None).await;
+    let (_, invitation) = create_invitation(&pool, anna.id, "bo@example.se", now())
+        .await
+        .unwrap();
+    let (bo, _) = sign_up(
+        &auth,
+        &mut authenticator(),
+        "bo@example.se",
+        Some(&invitation),
+    )
+    .await;
+    create_invitation(&pool, anna.id, "cecilia@example.se", now())
+        .await
+        .unwrap();
+
+    let by_member = auth
+        .begin_confirmation(
+            bo.id,
+            Confirmation::Invitation {
+                email: email("dan@example.se"),
+            },
+            now(),
+        )
+        .await
+        .unwrap_err();
+    let registered = auth
+        .begin_confirmation(
+            anna.id,
+            Confirmation::Invitation {
+                email: email("bo@example.se"),
+            },
+            now(),
+        )
+        .await
+        .unwrap_err();
+    let invited = auth
+        .begin_confirmation(
+            anna.id,
+            Confirmation::Invitation {
+                email: email("cecilia@example.se"),
+            },
+            now(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(by_member, Error::Domain(DomainError::NotAdmin)),
+        "{by_member:?}"
+    );
+    assert!(matches!(registered, Error::AlreadyExists), "{registered:?}");
+    assert!(matches!(invited, Error::AlreadyExists), "{invited:?}");
+    assert_eq!(ceremonies(&pool).await, 0);
+}
+
+#[tokio::test]
+async fn a_confirmation_is_stored_with_its_action() {
+    let action = Confirmation::AddMember {
+        company_id: uuid::Uuid::nil(),
+        email: email("bo@example.se"),
+    };
+    let json = serde_json::to_value(&action).unwrap();
+    assert_eq!(json["action"], "add_member");
+    assert_eq!(
+        serde_json::from_value::<Confirmation>(json).unwrap(),
+        action
     );
 }

@@ -85,10 +85,11 @@ impl TestServer {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let origin = Url::parse(&format!("http://localhost:{}", addr.port())).unwrap();
-        let auth = Auth::new(pool.clone(), "localhost", &origin).await.unwrap();
+        let auth =
+            std::sync::Arc::new(Auth::new(pool.clone(), "localhost", &origin).await.unwrap());
         let app = doris_server::router::<TestDist>(
-            AuthApi::new(pool.clone(), auth),
-            CompanyApi::new(pool.clone(), bolagsverket),
+            AuthApi::new(pool.clone(), auth.clone()),
+            CompanyApi::new(pool.clone(), bolagsverket, auth),
             LedgerApi::new(pool.clone()),
             PayrollApi::new(pool.clone(), TaxTables::new(tax_tables_url)),
             InvoicingApi::new(pool.clone()),
@@ -139,38 +140,157 @@ impl TestServer {
         CompanyServiceClient::with_origin(self.transport(), self.base.parse().unwrap())
     }
 
-    /// An admin invites `email`, who registers; returns the new user's session.
-    pub async fn invite(&self, admin: &str, email: &str) -> String {
-        let invite = self
-            .grpc()
-            .create_invitation(authed(
+    /// An admin invites `email`, confirming with `admin_device`'s passkey.
+    pub async fn create_invitation(
+        &self,
+        admin: &str,
+        admin_device: &mut Device,
+        email: &str,
+    ) -> Result<pb::CreateInvitationResponse, tonic::Status> {
+        let mut grpc = self.grpc();
+        let begin = grpc
+            .begin_create_invitation(authed(
                 pb::CreateInvitationRequest {
                     email: email.into(),
                 },
                 admin,
             ))
-            .await
-            .unwrap()
+            .await?
             .into_inner();
+        let finish = pb::FinishConfirmationRequest {
+            credential_json: self.confirm(admin_device, &begin),
+            ceremony_id: begin.ceremony_id,
+        };
+        Ok(grpc
+            .finish_create_invitation(authed(finish, admin))
+            .await?
+            .into_inner())
+    }
+
+    /// An admin invites `email`, who registers; returns the new user's session.
+    pub async fn invite(&self, admin: &str, admin_device: &mut Device, email: &str) -> String {
+        let invite = self
+            .create_invitation(admin, admin_device, email)
+            .await
+            .unwrap();
         self.sign_up(&mut device(), email, Some(&invite.token))
             .await
     }
 
     /// Like `invite`, for a test that tells people apart by name.
-    pub async fn invite_as(&self, admin: &str, email: &str, name: &str) -> String {
+    pub async fn invite_as(
+        &self,
+        admin: &str,
+        admin_device: &mut Device,
+        email: &str,
+        name: &str,
+    ) -> String {
         let invite = self
-            .grpc()
-            .create_invitation(authed(
-                pb::CreateInvitationRequest {
-                    email: email.into(),
-                },
-                admin,
-            ))
+            .create_invitation(admin, admin_device, email)
             .await
-            .unwrap()
-            .into_inner();
+            .unwrap();
         self.sign_up_as(&mut device(), email, name, Some(&invite.token))
             .await
+    }
+
+    /// Like `invite`, keeping the new user's passkey on `device`.
+    pub async fn invite_with(
+        &self,
+        admin: &str,
+        admin_device: &mut Device,
+        email: &str,
+        device: &mut Device,
+    ) -> String {
+        let invite = self
+            .create_invitation(admin, admin_device, email)
+            .await
+            .unwrap();
+        self.sign_up(device, email, Some(&invite.token)).await
+    }
+
+    /// A member adds `email` to a company, confirming with `device`'s passkey.
+    pub async fn add_member(
+        &self,
+        session: &str,
+        device: &mut Device,
+        company_id: &str,
+        email: &str,
+    ) -> Result<(), tonic::Status> {
+        use doris_proto::company::v1 as cpb;
+        let mut api = self.companies();
+        let begin = api
+            .begin_add_member(authed(
+                cpb::AddMemberRequest {
+                    company_id: company_id.into(),
+                    email: email.into(),
+                },
+                session,
+            ))
+            .await?
+            .into_inner();
+        let finish = cpb::FinishAddMemberRequest {
+            credential_json: self.confirm_options(device, &begin.options_json),
+            ceremony_id: begin.ceremony_id,
+        };
+        api.finish_add_member(authed(finish, session)).await?;
+        Ok(())
+    }
+
+    /// `device`'s assertion for WebAuthn request options, as the browser
+    /// gives it after the user touches the passkey.
+    pub fn confirm_options(&self, device: &mut Device, options_json: &str) -> String {
+        let options: RequestChallengeResponse = serde_json::from_str(options_json).unwrap();
+        let credential = device
+            .do_authentication(self.origin.clone(), options)
+            .unwrap();
+        serde_json::to_string(&credential).unwrap()
+    }
+
+    pub fn confirm(&self, device: &mut Device, begin: &pb::BeginCeremonyResponse) -> String {
+        self.confirm_options(device, &begin.options_json)
+    }
+
+    /// Creates a token: begins, confirms with `device`'s passkey, finishes.
+    pub async fn create_token(
+        &self,
+        session: &str,
+        device: &mut Device,
+        request: pb::CreateApiTokenRequest,
+    ) -> Result<pb::CreateApiTokenResponse, tonic::Status> {
+        let mut grpc = self.grpc();
+        let begin = grpc
+            .begin_create_api_token(authed(request, session))
+            .await?
+            .into_inner();
+        let finish = pb::FinishConfirmationRequest {
+            credential_json: self.confirm(device, &begin),
+            ceremony_id: begin.ceremony_id,
+        };
+        Ok(grpc
+            .finish_create_api_token(authed(finish, session))
+            .await?
+            .into_inner())
+    }
+
+    /// Changes a token: begins, confirms with `device`'s passkey, finishes.
+    pub async fn change_token(
+        &self,
+        session: &str,
+        device: &mut Device,
+        request: pb::ChangeApiTokenRequest,
+    ) -> Result<(), tonic::Status> {
+        let mut grpc = self.grpc();
+        let begin = grpc
+            .begin_change_api_token(authed(request, session))
+            .await?
+            .into_inner();
+        let finish = pb::FinishConfirmationRequest {
+            credential_json: self.confirm(device, &begin),
+            ceremony_id: begin.ceremony_id,
+        };
+        grpc.finish_change_api_token(authed(finish, session))
+            .await?;
+        Ok(())
     }
 
     /// Registers through the API and returns the session cookie's token.
@@ -248,6 +368,75 @@ pub fn authed<T>(message: T, session: &str) -> Request<T> {
             .unwrap(),
     );
     request
+}
+
+/// A request carrying an API token, as doris-cli sends it.
+pub fn bearer<T>(message: T, secret: &str) -> Request<T> {
+    let mut request = Request::new(message);
+    request
+        .metadata_mut()
+        .insert("authorization", format!("Bearer {secret}").parse().unwrap());
+    request
+}
+
+/// A company of `session`'s with the räkenskapsår 2026.
+pub async fn company(server: &TestServer, session: &str, org_nr: &str) -> String {
+    use doris_proto::company::v1 as cpb;
+    server
+        .companies()
+        .create_company(authed(
+            cpb::CreateCompanyRequest {
+                org_nr: org_nr.into(),
+                name: format!("Bolag {org_nr}"),
+                legal_form: cpb::LegalForm::Aktiebolag as i32,
+                address: None,
+                fiscal_year_start: "2026-01-01".into(),
+                fiscal_year_end: "2026-12-31".into(),
+                accounting_method: cpb::AccountingMethod::Invoice as i32,
+            },
+            session,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .company_id
+}
+
+/// The day `days` from today in Sweden, as `BeginCreateApiToken` takes it.
+pub fn in_days(days: i64) -> String {
+    use jiff::ToSpan;
+    let sweden = jiff::tz::TimeZone::get("Europe/Stockholm").unwrap();
+    let today = jiff::Timestamp::now().to_zoned(sweden).date();
+    today.checked_add(days.days()).unwrap().to_string()
+}
+
+/// A 30-day token of `session`'s with these scopes per company, confirmed
+/// with `device`'s passkey; returns its secret.
+pub async fn api_token(
+    server: &TestServer,
+    session: &str,
+    device: &mut Device,
+    grants: &[(&str, &[&str])],
+) -> String {
+    server
+        .create_token(
+            session,
+            device,
+            pb::CreateApiTokenRequest {
+                name: "Agent".into(),
+                expires_on: in_days(30),
+                grants: grants
+                    .iter()
+                    .map(|(company, scopes)| pb::TokenGrant {
+                        company_id: company.to_string(),
+                        scopes: scopes.iter().map(|s| s.to_string()).collect(),
+                    })
+                    .collect(),
+            },
+        )
+        .await
+        .unwrap()
+        .secret
 }
 
 pub fn set_cookie(metadata: &tonic::metadata::MetadataMap) -> Option<String> {

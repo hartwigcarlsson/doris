@@ -159,18 +159,12 @@ async fn failed_logins_look_the_same_for_known_and_unknown_emails() {
 #[tokio::test]
 async fn protected_calls_need_a_session_and_admin_calls_an_admin() {
     let server = TestServer::start().await;
-    let admin = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut admins = device();
+    let admin = server.sign_up(&mut admins, "anna@example.se", None).await;
     let invite = server
-        .grpc()
-        .create_invitation(authed(
-            pb::CreateInvitationRequest {
-                email: "bo@example.se".into(),
-            },
-            &admin,
-        ))
+        .create_invitation(&admin, &mut admins, "bo@example.se")
         .await
-        .unwrap()
-        .into_inner();
+        .unwrap();
     let member = server
         .sign_up(&mut device(), "bo@example.se", Some(&invite.token))
         .await;
@@ -187,7 +181,7 @@ async fn protected_calls_need_a_session_and_admin_calls_an_admin() {
         .unwrap_err();
     let by_member = server
         .grpc()
-        .create_invitation(authed(
+        .begin_create_invitation(authed(
             pb::CreateInvitationRequest {
                 email: "c@example.se".into(),
             },
@@ -219,19 +213,13 @@ async fn protected_calls_need_a_session_and_admin_calls_an_admin() {
 #[tokio::test]
 async fn an_admin_invites_a_member_who_registers_through_the_link() {
     let server = TestServer::start().await;
-    let admin = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut admins = device();
+    let admin = server.sign_up(&mut admins, "anna@example.se", None).await;
 
     let invite = server
-        .grpc()
-        .create_invitation(authed(
-            pb::CreateInvitationRequest {
-                email: "Bo@Example.se".into(),
-            },
-            &admin,
-        ))
+        .create_invitation(&admin, &mut admins, "Bo@Example.se")
         .await
-        .unwrap()
-        .into_inner();
+        .unwrap();
     let lookup = server
         .grpc()
         .get_invitation(pb::GetInvitationRequest {
@@ -279,7 +267,8 @@ async fn an_admin_invites_a_member_who_registers_through_the_link() {
 #[tokio::test]
 async fn a_signed_in_user_adds_and_lists_passkeys() {
     let server = TestServer::start().await;
-    let session = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut laptop = device();
+    let session = server.sign_up(&mut laptop, "anna@example.se", None).await;
     let mut phone = device();
     let mut grpc = server.grpc();
 
@@ -293,13 +282,24 @@ async fn a_signed_in_user_adds_and_lists_passkeys() {
         .await
         .unwrap()
         .into_inner();
-    let options: CreationChallengeResponse = serde_json::from_str(&begin.options_json).unwrap();
+    let confirmed = grpc
+        .continue_add_passkey(authed(
+            pb::ContinueAddPasskeyRequest {
+                credential_json: server.confirm(&mut laptop, &begin),
+                ceremony_id: begin.ceremony_id,
+            },
+            &session,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let options: CreationChallengeResponse = serde_json::from_str(&confirmed.options_json).unwrap();
     let credential = phone
         .do_registration(server.origin.clone(), options)
         .unwrap();
     grpc.finish_add_passkey(authed(
         pb::FinishAddPasskeyRequest {
-            ceremony_id: begin.ceremony_id,
+            ceremony_id: confirmed.ceremony_id,
             credential_json: serde_json::to_string(&credential).unwrap(),
         },
         &session,

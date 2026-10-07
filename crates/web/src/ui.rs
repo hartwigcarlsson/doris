@@ -432,11 +432,12 @@ pub enum IconName {
     ChevronDown,
     ChevronRight,
     Paperclip,
+    SquareTerminal,
 }
 
 impl IconName {
     #[cfg(test)]
-    const ALL: [IconName; 22] = [
+    const ALL: [IconName; 23] = [
         IconName::ReceiptText,
         IconName::Scale,
         IconName::ChartColumn,
@@ -459,6 +460,7 @@ impl IconName {
         IconName::ChevronDown,
         IconName::ChevronRight,
         IconName::Paperclip,
+        IconName::SquareTerminal,
     ];
 
     /// Shapes from lucide-static 1.52.0, with closing tags written out.
@@ -523,6 +525,9 @@ impl IconName {
             IconName::ChevronRight => r#"<path d="m9 18 6-6-6-6"></path>"#,
             IconName::Paperclip => {
                 r#"<path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"></path>"#
+            }
+            IconName::SquareTerminal => {
+                r#"<path d="m7 11 2-2-2-2"></path><path d="M11 13h4"></path><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>"#
             }
         }
     }

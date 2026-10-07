@@ -48,7 +48,7 @@ test("the header is one row with grouped menus", async ({ page, app }) => {
   expect(await linksIn(await openMenu(page, "Försäljning"))).toEqual(["Kundfakturor", "Kunder"]);
   expect(await linksIn(await openMenu(page, "Lön"))).toEqual(["Lönekörningar", "Anställda", "Arbetsgivardeklaration"]);
   const account = await openMenu(page, "Konto");
-  expect(await linksIn(account)).toEqual(["Företag", "Passkeys", "Inbjudningar"]);
+  expect(await linksIn(account)).toEqual(["Företag", "Passkeys", "API-tokens", "Inbjudningar"]);
   await expect(account.getByRole("button", { name: "Logga ut" })).toBeVisible();
   await expect(banner.getByText("AL", { exact: true })).toBeVisible();
 });
@@ -236,7 +236,7 @@ test("every signed-in view has one h1 and no page scrolls sideways", async ({ pa
     "/", "/companies", "/companies/new", "/accounts", "/vouchers", "/vouchers/new", "/customers", "/suppliers",
     "/customer-invoices", "/customer-invoices/new", "/agi",
     "/supplier-invoices", "/supplier-invoices/new", "/trial-balance", "/trial-balance/1930", "/financial-statements",
-    "/fiscal-years", "/vat", "/vat/202603", "/opening-balances", "/employees", "/payroll-runs", "/payroll-runs/new", "/settings/passkeys",
+    "/fiscal-years", "/vat", "/vat/202603", "/opening-balances", "/employees", "/payroll-runs", "/payroll-runs/new", "/settings/passkeys", "/settings/tokens", "/settings/tokens/new", "/settings/tokens/00000000-0000-0000-0000-000000000000",
     "/admin/invitations",
   ];
   for (const width of [1280, 390]) {

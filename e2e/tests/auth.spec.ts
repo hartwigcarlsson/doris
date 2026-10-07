@@ -1,4 +1,4 @@
-import { addAuthenticator, expect, expectSignedIn, goTo, logIn, openMenu, register, removeAuthenticator, test } from "./fixtures";
+import { addAuthenticator, expect, expectSignedIn, goTo, logIn, openMenu, register, removeAuthenticator, setPresence, test } from "./fixtures";
 
 test("the first user registers with a passkey and becomes admin", async ({ page, app }) => {
   await page.goto(app);
@@ -76,12 +76,19 @@ test("a user adds a second passkey and signs in with it", async ({ page, app, au
   await goTo(page, "Passkeys");
   await expect(page.getByText("Laptop")).toBeVisible();
 
-  // Switch to another device: only the "phone" authenticator is present now.
-  await removeAuthenticator(page, laptop);
-  await addAuthenticator(page);
+  // The laptop's passkey confirms, so it stays until the phone's is added.
+  // Chrome allows one internal authenticator, so the phone is a security key,
+  // silent until the laptop has confirmed (it would answer the confirmation
+  // too, without the key) and then the one that creates the new passkey.
+  const phone = await addAuthenticator(page, "usb");
+  await setPresence(page, phone, false);
   await page.getByLabel("Passkeyns namn").fill("Telefon");
+  const confirmed = page.waitForResponse((r) => r.url().includes("ContinueAddPasskey"));
   await page.getByRole("button", { name: "Lägg till passkey" }).click();
+  await confirmed;
+  await setPresence(page, phone, true);
   await expect(page.getByText("Telefon")).toBeVisible();
+  await removeAuthenticator(page, laptop);
 
   await (await openMenu(page, "Konto")).getByRole("button", { name: "Logga ut" }).click();
   await logIn(page, app, "anna@example.se");

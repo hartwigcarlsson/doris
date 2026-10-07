@@ -12,6 +12,7 @@ fn event(n: i64) -> NewEvent {
 fn actor() -> Metadata {
     Metadata {
         actor: Some("tester".into()),
+        ..Default::default()
     }
 }
 
@@ -134,4 +135,41 @@ async fn writers_wait_30_seconds_for_the_write_lock() {
         .await
         .unwrap();
     assert_eq!(ms, 30_000);
+}
+
+#[tokio::test]
+async fn events_appended_within_a_token_scope_record_the_token() {
+    let pool = open("sqlite::memory:").await.unwrap();
+    let mut tx = begin(&pool).await.unwrap();
+    let recorded = doris_eventstore::VIA_TOKEN
+        .scope(
+            "token-1".to_owned(),
+            append(&mut tx, "counter-1", 0, &[event(1)], &actor()),
+        )
+        .await
+        .unwrap();
+    append(&mut tx, "counter-1", 1, &[event(2)], &actor())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let events = load(&mut conn, "counter-1").await.unwrap();
+    assert_eq!(recorded[0].metadata.via_token.as_deref(), Some("token-1"));
+    assert_eq!(events[0].metadata.via_token.as_deref(), Some("token-1"));
+    assert_eq!(events[0].metadata.actor.as_deref(), Some("tester"));
+    assert_eq!(events[1].metadata, actor());
+}
+
+#[test]
+fn metadata_without_a_token_reads_and_writes_as_before() {
+    let old: Metadata = serde_json::from_str(r#"{"actor":"u1"}"#).unwrap();
+    assert_eq!(
+        old,
+        Metadata {
+            actor: Some("u1".into()),
+            via_token: None
+        }
+    );
+    assert_eq!(serde_json::to_string(&old).unwrap(), r#"{"actor":"u1"}"#);
 }

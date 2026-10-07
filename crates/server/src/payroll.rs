@@ -3,7 +3,7 @@
 //! looks exactly like one that doesn't exist. Personnummer and names are
 //! personal data and never logged.
 
-use crate::grpc::{now, signed_in_user, today};
+use crate::grpc::{now, today};
 use crate::skatteverket::TaxTables;
 use doris_ledger::domain::VoucherLine;
 use doris_payroll::agi::{AgiChange, AgiMonth, AgiStatus, Period};
@@ -62,11 +62,7 @@ impl PayrollApi {
         request: &Request<T>,
         company_id: &str,
     ) -> Result<(Uuid, Uuid), Status> {
-        let user = signed_in_user(&self.pool, request).await?;
-        let company: Uuid = company_id
-            .parse()
-            .map_err(|_| Status::not_found("company_not_found"))?;
-        Ok((company, user.id))
+        crate::grpc::company_caller(&self.pool, request, company_id).await
     }
 
     /// Employee names by id, for lines that carry only the id.

@@ -3,7 +3,7 @@
 //! exactly like one that doesn't exist. An org nr can be a personnummer:
 //! never logged.
 
-use crate::grpc::{signed_in_user, today};
+use crate::grpc::today;
 use doris_proto::vat::v1 as pb;
 use doris_proto::vat::v1::vat_service_server::VatService;
 use doris_vat::domain::{DomainError, VatStatus};
@@ -30,11 +30,7 @@ impl VatApi {
         request: &Request<T>,
         company_id: &str,
     ) -> Result<(Uuid, Uuid), Status> {
-        let user = signed_in_user(&self.pool, request).await?;
-        let company: Uuid = company_id
-            .parse()
-            .map_err(|_| Status::not_found("company_not_found"))?;
-        Ok((company, user.id))
+        crate::grpc::company_caller(&self.pool, request, company_id).await
     }
 }
 

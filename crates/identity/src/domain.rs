@@ -29,6 +29,16 @@ pub enum DomainError {
     UnknownPasskey,
     #[error("only admins may do this")]
     NotAdmin,
+    #[error("token name must be 1-100 characters")]
+    InvalidTokenName,
+    #[error("token must expire after now and within 368 days")]
+    InvalidTokenExpiry,
+    #[error("token needs each company once, each with a scope")]
+    InvalidTokenGrants,
+    #[error("only the owner or an admin may revoke a token")]
+    NotTokenOwner,
+    #[error("api token is revoked")]
+    TokenRevoked,
 }
 
 /// Normalized (trimmed, lowercase) email address.
@@ -376,4 +386,297 @@ pub fn create_invitation(
         created_by: creator.id,
         expires_at: now + INVITATION_TTL,
     })
+}
+
+/// A token lives at most a year: its last day may be at most 366 days after
+/// today, and it ends at the following midnight in Sweden. 368 days covers
+/// that and the hour that daylight saving time can add.
+pub const MAX_TOKEN_LIFETIME: SignedDuration = SignedDuration::from_hours(24 * 368);
+
+/// What an API token may do in one company. Stored as its string, so a
+/// scope added later changes no old event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Scope {
+    #[serde(rename = "ledger:read")]
+    LedgerRead,
+    #[serde(rename = "ledger:write")]
+    LedgerWrite,
+    #[serde(rename = "invoicing:read")]
+    InvoicingRead,
+    #[serde(rename = "invoicing:write")]
+    InvoicingWrite,
+    #[serde(rename = "payroll:read")]
+    PayrollRead,
+    #[serde(rename = "payroll:write")]
+    PayrollWrite,
+    #[serde(rename = "vat:read")]
+    VatRead,
+    #[serde(rename = "vat:write")]
+    VatWrite,
+    #[serde(rename = "company:read")]
+    CompanyRead,
+}
+
+impl Scope {
+    pub const ALL: [Scope; 9] = [
+        Scope::LedgerRead,
+        Scope::LedgerWrite,
+        Scope::InvoicingRead,
+        Scope::InvoicingWrite,
+        Scope::PayrollRead,
+        Scope::PayrollWrite,
+        Scope::VatRead,
+        Scope::VatWrite,
+        Scope::CompanyRead,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Scope::LedgerRead => "ledger:read",
+            Scope::LedgerWrite => "ledger:write",
+            Scope::InvoicingRead => "invoicing:read",
+            Scope::InvoicingWrite => "invoicing:write",
+            Scope::PayrollRead => "payroll:read",
+            Scope::PayrollWrite => "payroll:write",
+            Scope::VatRead => "vat:read",
+            Scope::VatWrite => "vat:write",
+            Scope::CompanyRead => "company:read",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.as_str() == raw)
+    }
+}
+
+/// The scopes a token has in one company.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grant {
+    pub company_id: Uuid,
+    pub scopes: Vec<Scope>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ApiTokenEvent {
+    /// When, and by whom, is in the event's envelope and metadata.
+    ApiTokenCreated {
+        token_id: Uuid,
+        user_id: Uuid,
+        name: String,
+        token_hash: String,
+        expires_at: Timestamp,
+        grants: Vec<Grant>,
+    },
+    ApiTokenRevoked {
+        revoked_by: Uuid,
+    },
+    /// The owner replaced its name, expiry and grants; the secret stays.
+    ApiTokenChanged {
+        name: String,
+        expires_at: Timestamp,
+        grants: Vec<Grant>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApiToken {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub name: String,
+    pub expires_at: Timestamp,
+    pub grants: Vec<Grant>,
+    pub revoked: bool,
+}
+
+impl ApiToken {
+    pub fn from_events<'a>(events: impl IntoIterator<Item = &'a ApiTokenEvent>) -> Option<Self> {
+        let mut token: Option<Self> = None;
+        for event in events {
+            match (event, token.as_mut()) {
+                (
+                    ApiTokenEvent::ApiTokenCreated {
+                        token_id,
+                        user_id,
+                        name,
+                        expires_at,
+                        grants,
+                        ..
+                    },
+                    _,
+                ) => {
+                    token = Some(Self {
+                        id: *token_id,
+                        user_id: *user_id,
+                        name: name.clone(),
+                        expires_at: *expires_at,
+                        grants: grants.clone(),
+                        revoked: false,
+                    });
+                }
+                (ApiTokenEvent::ApiTokenRevoked { .. }, Some(token)) => token.revoked = true,
+                (
+                    ApiTokenEvent::ApiTokenChanged {
+                        name,
+                        expires_at,
+                        grants,
+                    },
+                    Some(token),
+                ) => {
+                    token.name = name.clone();
+                    token.expires_at = *expires_at;
+                    token.grants = grants.clone();
+                }
+                (_, None) => {}
+            }
+        }
+        token
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NewApiToken {
+    pub token_id: Uuid,
+    pub name: String,
+    pub expires_at: Timestamp,
+    pub grants: Vec<Grant>,
+}
+
+/// A token's name, expiry and grants, as created or changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TokenChange {
+    pub name: String,
+    pub expires_at: Timestamp,
+    pub grants: Vec<Grant>,
+}
+
+/// What a passkey is asked to confirm about an API token.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum TokenRequest {
+    Create { change: TokenChange },
+    Change { token_id: Uuid, change: TokenChange },
+}
+
+/// What a passkey is asked to confirm: an action that gives someone access.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum Confirmation {
+    ApiToken {
+        request: TokenRequest,
+    },
+    Invitation {
+        email: Email,
+    },
+    /// The company module checks membership; identity only carries it.
+    AddMember {
+        company_id: Uuid,
+        email: Email,
+    },
+}
+
+impl TokenRequest {
+    pub fn change(&self) -> &TokenChange {
+        match self {
+            TokenRequest::Create { change } | TokenRequest::Change { change, .. } => change,
+        }
+    }
+}
+
+/// The change with its name trimmed and grants normalized, if it is valid
+/// at `now`.
+fn validated(change: TokenChange, now: Timestamp) -> Result<TokenChange, DomainError> {
+    let name = bounded_text(&change.name, 100).ok_or(DomainError::InvalidTokenName)?;
+    if change.expires_at <= now || change.expires_at > now + MAX_TOKEN_LIFETIME {
+        return Err(DomainError::InvalidTokenExpiry);
+    }
+    Ok(TokenChange {
+        name,
+        expires_at: change.expires_at,
+        grants: normalized(change.grants)?,
+    })
+}
+
+pub fn create_api_token(
+    owner: &User,
+    cmd: NewApiToken,
+    token_hash: String,
+    now: Timestamp,
+) -> Result<ApiTokenEvent, DomainError> {
+    let valid = validated(
+        TokenChange {
+            name: cmd.name,
+            expires_at: cmd.expires_at,
+            grants: cmd.grants,
+        },
+        now,
+    )?;
+    Ok(ApiTokenEvent::ApiTokenCreated {
+        token_id: cmd.token_id,
+        user_id: owner.id,
+        name: valid.name,
+        token_hash,
+        expires_at: valid.expires_at,
+        grants: valid.grants,
+    })
+}
+
+/// Only the owner changes a token, and never a revoked one. A change that
+/// changes nothing yields no events.
+pub fn change_api_token(
+    token: &ApiToken,
+    actor: &User,
+    change: TokenChange,
+    now: Timestamp,
+) -> Result<Vec<ApiTokenEvent>, DomainError> {
+    if token.user_id != actor.id {
+        return Err(DomainError::NotTokenOwner);
+    }
+    if token.revoked {
+        return Err(DomainError::TokenRevoked);
+    }
+    let valid = validated(change, now)?;
+    if valid.name == token.name
+        && valid.expires_at == token.expires_at
+        && valid.grants == token.grants
+    {
+        return Ok(vec![]);
+    }
+    Ok(vec![ApiTokenEvent::ApiTokenChanged {
+        name: valid.name,
+        expires_at: valid.expires_at,
+        grants: valid.grants,
+    }])
+}
+
+/// Companies in id order, each once; scopes sorted, each once.
+fn normalized(mut grants: Vec<Grant>) -> Result<Vec<Grant>, DomainError> {
+    grants.sort_by_key(|g| g.company_id);
+    let repeated = grants
+        .windows(2)
+        .any(|w| w[0].company_id == w[1].company_id);
+    if grants.is_empty() || repeated {
+        return Err(DomainError::InvalidTokenGrants);
+    }
+    for grant in &mut grants {
+        grant.scopes.sort();
+        grant.scopes.dedup();
+        if grant.scopes.is_empty() {
+            return Err(DomainError::InvalidTokenGrants);
+        }
+    }
+    Ok(grants)
+}
+
+/// Idempotent: revoking a revoked token yields no events.
+pub fn revoke_api_token(token: &ApiToken, actor: &User) -> Result<Vec<ApiTokenEvent>, DomainError> {
+    if token.user_id != actor.id && actor.role != Role::Admin {
+        return Err(DomainError::NotTokenOwner);
+    }
+    if token.revoked {
+        return Ok(vec![]);
+    }
+    Ok(vec![ApiTokenEvent::ApiTokenRevoked {
+        revoked_by: actor.id,
+    }])
 }

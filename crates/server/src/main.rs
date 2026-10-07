@@ -62,9 +62,11 @@ async fn run(config: Config) -> Result<(), String> {
     let pool = doris_eventstore::open(&config.database)
         .await
         .map_err(|e| format!("cannot open database {}: {e}", config.database))?;
-    let auth = Auth::new(pool.clone(), &config.rp_id, &config.rp_origin)
-        .await
-        .map_err(|e| format!("cannot set up WebAuthn for {}: {e}", config.rp_origin))?;
+    let auth = std::sync::Arc::new(
+        Auth::new(pool.clone(), &config.rp_id, &config.rp_origin)
+            .await
+            .map_err(|e| format!("cannot set up WebAuthn for {}: {e}", config.rp_origin))?,
+    );
     let cors_origins = config
         .cors_origins
         .into_iter()
@@ -90,8 +92,8 @@ async fn run(config: Config) -> Result<(), String> {
     let payroll = PayrollApi::new(pool.clone(), TaxTables::new(&config.tax_tables_url));
     let vat = VatApi::new(pool.clone());
     let app = doris_server::router::<WebDist>(
-        AuthApi::new(pool.clone(), auth),
-        CompanyApi::new(pool.clone(), bolagsverket),
+        AuthApi::new(pool.clone(), auth.clone()),
+        CompanyApi::new(pool.clone(), bolagsverket, auth),
         LedgerApi::new(pool.clone()),
         payroll,
         InvoicingApi::new(pool),

@@ -60,7 +60,8 @@ fn sale(company_id: &str, ore: i64) -> pb::RecordVoucherRequest {
 #[tokio::test]
 async fn a_member_keeps_the_chart_and_books_and_corrects_vouchers() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.ledger();
 
@@ -219,7 +220,8 @@ async fn a_member_keeps_the_chart_and_books_and_corrects_vouchers() {
 #[tokio::test]
 async fn ledger_errors_have_stable_codes() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.ledger();
     api.set_account_active(authed(
@@ -381,8 +383,9 @@ async fn ledger_errors_have_stable_codes() {
 #[tokio::test]
 async fn others_get_company_not_found_and_strangers_not_signed_in() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     let id = company(&server, &anna).await;
     let mut api = server.ledger();
     let not_found = (Code::NotFound, "company_not_found".to_owned());
@@ -481,7 +484,8 @@ fn ledger_of(
 #[tokio::test]
 async fn the_trial_balance_and_an_accounts_ledger_follow_the_vouchers() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.ledger();
     for ore in [125_000, 5_000] {
@@ -548,8 +552,9 @@ async fn the_trial_balance_and_an_accounts_ledger_follow_the_vouchers() {
 #[tokio::test]
 async fn the_reports_refuse_bad_input_and_non_members() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     let id = company(&server, &anna).await;
     let mut api = server.ledger();
     let invalid_date = (Code::InvalidArgument, "invalid_date".to_owned());
@@ -624,8 +629,9 @@ fn reopen_of(
 #[tokio::test]
 async fn opening_balances_and_a_closed_year_carry_into_the_next() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     // 2025 has ended by the time this runs.
     let id = company_starting(&server, &anna, "2025-01-01", "2025-12-31").await;
     let mut api = server.ledger();
@@ -725,7 +731,8 @@ async fn opening_balances_and_a_closed_year_carry_into_the_next() {
 #[tokio::test]
 async fn closing_errors_have_stable_codes() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     // 2024 and 2025 have both ended by the time this runs.
     let id = company_starting(&server, &anna, "2024-01-01", "2024-12-31").await;
     let mut api = server.ledger();
@@ -869,7 +876,8 @@ async fn refusal(
 #[tokio::test]
 async fn underlag_go_up_with_a_voucher_and_come_back_byte_for_byte() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.ledger();
     let big = pdf(10 * MIB);
@@ -960,7 +968,8 @@ async fn underlag_go_up_with_a_voucher_and_come_back_byte_for_byte() {
 #[tokio::test]
 async fn attachment_errors_have_stable_codes() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.ledger();
     let invalid = |code: &str| (Code::InvalidArgument, code.to_owned());
@@ -1060,7 +1069,7 @@ async fn attachment_errors_have_stable_codes() {
         ),
         (Code::NotFound, "attachment_not_found".into())
     );
-    let bertil = server.invite(&anna, "bertil@example.se").await;
+    let bertil = server.invite(&anna, &mut annas, "bertil@example.se").await;
     assert_eq!(
         code_of(api.get_attachment(authed(get, &bertil)).await.unwrap_err()),
         (Code::NotFound, "company_not_found".into())
@@ -1121,7 +1130,8 @@ fn statements_of(company_id: &str, fiscal_year_start: &str) -> pb::GetFinancialS
 #[tokio::test]
 async fn the_financial_statements_follow_the_vouchers() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.ledger();
     api.record_voucher(authed(sale(&id, 125_000), &anna))
@@ -1168,8 +1178,9 @@ async fn the_financial_statements_follow_the_vouchers() {
 #[tokio::test]
 async fn the_financial_statements_refuse_bad_input_and_non_members() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite(&anna, "bo@example.se").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server.invite(&anna, &mut annas, "bo@example.se").await;
     let id = company(&server, &anna).await;
     let mut api = server.ledger();
 
@@ -1210,18 +1221,14 @@ async fn the_financial_statements_refuse_bad_input_and_non_members() {
 #[tokio::test]
 async fn listed_vouchers_name_whoever_recorded_them() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
-    let bo = server.invite_as(&anna, "bo@example.se", "Bo Ek").await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let bo = server
+        .invite_as(&anna, &mut annas, "bo@example.se", "Bo Ek")
+        .await;
     let id = company(&server, &anna).await;
     server
-        .companies()
-        .add_member(authed(
-            doris_proto::company::v1::AddMemberRequest {
-                company_id: id.clone(),
-                email: "bo@example.se".into(),
-            },
-            &anna,
-        ))
+        .add_member(&anna, &mut annas, &id, "bo@example.se")
         .await
         .unwrap();
     let mut api = server.ledger();
@@ -1288,7 +1295,8 @@ fn set_box(company_id: &str, number: u32, vat_box: u32) -> pb::SetAccountVatBoxR
 #[tokio::test]
 async fn an_accounts_momsruta_is_listed_and_changed() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.ledger();
     let before = vat_boxes(&mut api, &anna, &id).await;

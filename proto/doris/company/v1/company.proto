@@ -13,7 +13,9 @@ service CompanyService {
   rpc ListCompanies(ListCompaniesRequest) returns (ListCompaniesResponse);
   rpc GetCompany(GetCompanyRequest) returns (Company);
   // Adds an existing user, by email, as a member.
-  rpc AddMember(AddMemberRequest) returns (AddMemberResponse);
+  // A member adds someone, confirmed with one of the member's passkeys.
+  rpc BeginAddMember(AddMemberRequest) returns (BeginAddMemberResponse);
+  rpc FinishAddMember(FinishAddMemberRequest) returns (AddMemberResponse);
   rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
 }
 
@@ -119,4 +121,15 @@ message Member {
 
 message ListMembersResponse {
   repeated Member members = 1;
+}
+
+// WebAuthn request options for the member's passkey (as in doris.auth.v1).
+message BeginAddMemberResponse {
+  string ceremony_id = 1;
+  string options_json = 2;
+}
+
+message FinishAddMemberRequest {
+  string ceremony_id = 1;
+  string credential_json = 2;
 }

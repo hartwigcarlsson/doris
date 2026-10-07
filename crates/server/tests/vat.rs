@@ -58,7 +58,8 @@ fn line(account: u32, debit: i64, credit: i64) -> lpb::VoucherLine {
 #[tokio::test]
 async fn a_member_declares_a_quarter_and_the_settlement_is_booked() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     server
         .ledger()
@@ -167,7 +168,8 @@ async fn a_member_declares_a_quarter_and_the_settlement_is_booked() {
 #[tokio::test]
 async fn vat_input_gets_stable_codes() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     let mut api = server.vat();
     for period in ["2025", "202513", "202511", "abcdef"] {
@@ -225,10 +227,11 @@ async fn vat_input_gets_stable_codes() {
 #[tokio::test]
 async fn strangers_and_signed_out_callers_find_nothing() {
     let server = TestServer::start().await;
-    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
     let id = company(&server, &anna).await;
     // An invited user who is not a member of Anna's company.
-    let bertil = server.invite(&anna, "bertil@example.se").await;
+    let bertil = server.invite(&anna, &mut annas, "bertil@example.se").await;
     server
         .ledger()
         .record_voucher(authed(

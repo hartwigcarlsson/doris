@@ -63,7 +63,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   together, as for member names and who recorded a voucher), never with
   SQL against its projections.
 - Operational data is **not** events and may be purged. That covers sessions
-  and WebAuthn ceremony state.
+  and WebAuthn ceremony state, and `api_token_usage` (when a token was last
+  used).
 - Voucher numbers run 1..=n per company and fiscal year without gaps (BFL
   5 kap.). The number is decided inside the write transaction
   (`last_number + 1`), never by the client and never ahead of time; the
@@ -169,7 +170,10 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 ## Authentication
 - WebAuthn/passkeys only (webauthn-rs). Never store or accept passwords.
 - A user is identified by email plus a display name, and can have several
-  passkeys.
+  passkeys. Adding a passkey needs an assertion from one of the user's
+  existing passkeys (`BeginAddPasskey` → `ContinueAddPasskey` →
+  `FinishAddPasskey`), so a stolen session cannot add its own and then use it
+  to confirm an API token.
 - The first user to register becomes admin. After that, registration requires
   an email-bound invitation that an admin creates.
 - WebAuthn ceremonies (`doris_identity::Auth`) keep their state server-side
@@ -185,6 +189,35 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `HttpOnly; Secure; SameSite=Strict`. Only a SHA-256 hash of the token is
   stored, and the same goes for invitation tokens.
 - Email is personal data: never log it.
+- API tokens (`doris_` + 256 random bits, sent as `authorization: Bearer
+  …`) let doris-cli and agents call the API without a passkey. A user
+  creates them in the account menu (API-tokens); each has a last day at
+  most a year off, ends at midnight in Sweden after it, and can be revoked
+  by its owner or an admin. Creating and changing a token are passkey ceremonies
+  (`Auth::begin_confirmation`/`finish_confirmation`, kind `confirm` in
+  `webauthn_ceremonies`; the request is `FinishConfirmationRequest`): Begin
+  checks the request and asks for one of the user's own passkeys, and Finish
+  carries out exactly what Begin was given
+  (`ApiTokenCreated` or `ApiTokenChanged`), after the server has checked
+  each company's membership again. Only the owner changes a token (name,
+  last day, grants; never its secret), and never a revoked one; revoking
+  needs no passkey. Only its SHA-256 is stored (`api_tokens`, events in
+  `api-token-{id}`); it is never logged.
+- Inviting someone (`BeginCreateInvitation`/`FinishCreateInvitation`) and
+  adding a member to a company (`BeginAddMember`/`FinishAddMember`) are
+  confirmed with one of the user's passkeys too, through the same
+  ceremony (`Ceremony::Confirm`, kind `confirm`,
+  `Auth::begin_confirmation`/`finish_confirmation`), so a stolen session
+  cannot give a second account of its own lasting access. Begin runs the
+  rules; finish carries out what was confirmed and checks again.
+- A token has scopes per company (`ledger|invoicing|payroll|vat:read|write`,
+  `company:read`) and never more than its owner: membership is checked on
+  every call, as for a session. `crates/server/src/access.rs` says what each
+  rpc needs from a token; an rpc missing there is closed to tokens, and a
+  test keeps it in step with `proto/`. `auth_gate` (`crates/server/src/lib.rs`)
+  authenticates the token, and every event appended in the call records it
+  as `via_token` in the metadata (`doris_eventstore::VIA_TOKEN`). A token
+  cannot manage tokens, invite, create companies or add members.
 
 ## API
 - The contract lives in `proto/doris/auth/v1/auth.proto`,
@@ -243,6 +276,13 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `customer_invoice_not_found`, `customer_inactive`,
   `duplicate_customer_invoice`, `customer_invoice_paid`,
   `customer_invoice_not_paid` and `customer_invoice_cancelled`.
+- `AuthService` also has `BeginCreateApiToken`, `FinishCreateApiToken`,
+  `BeginChangeApiToken`, `FinishChangeApiToken`, `ListApiTokens` and
+  `RevokeApiToken` (session only). Codes: `invalid_token_name`,
+  `invalid_token_expiry`, `invalid_token_grants`, `api_token_not_found`,
+  `api_token_revoked`, `missing_scope` (the token lacks the scope for that
+  company), `ceremony_expired`, `credential_rejected` and `token_not_allowed`
+  (the rpc is for sessions only).
 - `VatService` (`proto/doris/vat/v1/vat.proto`; codes mapped in
   `crates/server/src/vat.rs`): `SetVatPeriod`, `ListVatReturns`,
   `GetVatReturn`, `ExportVatFile` (eSKD 6.0, ISO-8859-1) and
@@ -251,6 +291,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   `vat_return_outdated`, `vat_return_unchanged` and `vat_not_registered`;
   `LedgerService.SetAccountVatBox` answers `invalid_vat_box`. Ledger
   refusals keep their codes.
+- `AuthService` also has `ContinueAddPasskey` (session only): it takes the
+  existing passkey's assertion and returns the creation options for the new one.
 - `LedgerService` also has `GetOpeningBalances`, `SetOpeningBalances`,
   `CloseFiscalYear` and `ReopenFiscalYear`. Their codes are
   `not_balance_sheet_account`, `duplicate_account`,
@@ -307,8 +349,8 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
   an external service. It is stored as twelve digits and never changed
   on an employee.
 - tonic reserves the size a frame header claims before a handler runs, so
-  `session_gate` (`crates/server/src/lib.rs`) answers `LedgerService` and
-  `InvoicingService` calls without a valid session with `not_signed_in` before the body is read. The
+  `auth_gate` (`crates/server/src/lib.rs`) answers `LedgerService` and
+  `InvoicingService` calls without a valid session or token with `not_signed_in` before the body is read. The
   handlers still check the session themselves.
 - A reverse proxy in front of Doris must allow request bodies of about
   21 MiB (nginx's default `client_max_body_size` is 1 MiB).

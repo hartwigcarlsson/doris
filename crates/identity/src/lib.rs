@@ -3,6 +3,7 @@
 //! Every write runs in one IMMEDIATE transaction: load state, decide, append,
 //! project. A UNIQUE violation in a projection rolls the whole write back.
 
+mod api_token;
 pub mod domain;
 mod projections;
 mod queries;
@@ -21,6 +22,11 @@ use serde::de::DeserializeOwned;
 use sqlx::{SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
+pub use api_token::{
+    API_TOKEN_PREFIX, ApiTokenSummary, TokenAccess, change_api_token, check_api_token_change,
+    check_new_api_token, create_api_token, list_api_tokens, revoke_api_token, token_user,
+    touch_api_token,
+};
 pub use projections::rebuild_projections;
 pub use queries::{
     InvitationSummary, PasskeySummary, bootstrap_required, invitation_email, list_invitations,
@@ -31,6 +37,7 @@ pub use webauthn::{Auth, CEREMONY_TTL};
 
 const USER_STREAM: &str = "user-";
 const INVITATION_STREAM: &str = "invitation-";
+const API_TOKEN_STREAM: &str = "api-token-";
 const SCHEMA_VERSION: i64 = 1;
 
 #[derive(Debug, thiserror::Error)]
@@ -43,6 +50,8 @@ pub enum Error {
     InvitationNotFound,
     #[error("user not found")]
     UserNotFound,
+    #[error("api token not found")]
+    ApiTokenNotFound,
     #[error("ceremony not found")]
     CeremonyNotFound,
     #[error("ceremony expired")]
@@ -50,6 +59,10 @@ pub enum Error {
     /// Deliberately vague: never reveals whether the email exists.
     #[error("login failed")]
     LoginFailed,
+    /// A passkey assertion that doesn't verify against the user's own
+    /// passkeys, outside login (where every failure is `LoginFailed`).
+    #[error("passkey not accepted")]
+    CredentialRejected,
     #[error(transparent)]
     Webauthn(#[from] webauthn_rs::prelude::WebauthnError),
     #[error(transparent)]
@@ -182,9 +195,34 @@ pub async fn create_invitation(
     email: &str,
     now: Timestamp,
 ) -> Result<(Uuid, String)> {
-    let email = Email::parse(email)?;
     let mut tx = doris_eventstore::begin(pool).await?;
-    let (creator, _) = load_user(&mut tx, creator_id)
+    let created = invitation_in(&mut tx, creator_id, email, now).await?;
+    tx.commit().await?;
+    Ok(created)
+}
+
+/// Runs every rule for an invitation without saving it, so a passkey
+/// ceremony can refuse before the authenticator is asked.
+pub async fn check_invitation(
+    pool: &SqlitePool,
+    creator_id: Uuid,
+    email: &str,
+    now: Timestamp,
+) -> Result<()> {
+    let mut tx = doris_eventstore::begin(pool).await?;
+    let checked = invitation_in(&mut tx, creator_id, email, now).await;
+    tx.rollback().await?;
+    checked.map(drop)
+}
+
+async fn invitation_in(
+    conn: &mut SqliteConnection,
+    creator_id: Uuid,
+    email: &str,
+    now: Timestamp,
+) -> Result<(Uuid, String)> {
+    let email = Email::parse(email)?;
+    let (creator, _) = load_user(conn, creator_id)
         .await?
         .ok_or(Error::UserNotFound)?;
 
@@ -195,7 +233,7 @@ pub async fn create_invitation(
     )
     .bind(email.as_str())
     .bind(now.as_second())
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
     if taken {
         return Err(Error::AlreadyExists);
@@ -204,15 +242,7 @@ pub async fn create_invitation(
     let id = Uuid::new_v4();
     let token = token::new_token();
     let event = domain::create_invitation(&creator, id, email, token::hash_token(&token), now)?;
-    commit(
-        &mut tx,
-        &invitation_stream(id),
-        0,
-        &[event],
-        Some(creator_id),
-    )
-    .await?;
-    tx.commit().await?;
+    commit(conn, &invitation_stream(id), 0, &[event], Some(creator_id)).await?;
     Ok((id, token))
 }
 
@@ -337,6 +367,7 @@ async fn commit<T: Serialize>(
         .collect::<Result<Vec<_>, _>>()?;
     let metadata = Metadata {
         actor: actor.map(|id| id.to_string()),
+        ..Default::default()
     };
     let recorded =
         doris_eventstore::append(conn, stream, expected_version, &new_events, &metadata).await?;
