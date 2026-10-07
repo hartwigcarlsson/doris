@@ -100,6 +100,8 @@ async fn run(config: Config) -> Result<(), String> {
         vat,
         cors_origins,
         config.serve_frontend,
+        HeaderValue::from_str(&config.rp_origin.origin().ascii_serialization())
+            .map_err(|_| format!("invalid DORIS_RP_ORIGIN {}", config.rp_origin))?,
     );
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await

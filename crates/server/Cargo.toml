@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 axum.workspace = true
 clap.workspace = true
+doris-cli.workspace = true
 doris-company.workspace = true
 doris-eventstore.workspace = true
 doris-identity.workspace = true
@@ -30,6 +31,7 @@ sqlx.workspace = true
 tokio.workspace = true
 tonic.workspace = true
 tonic-web.workspace = true
+tower = { workspace = true, features = ["util"] }
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -38,7 +40,6 @@ uuid.workspace = true
 webauthn-rs.workspace = true
 
 [dev-dependencies]
-doris-cli.workspace = true
 tempfile.workspace = true
 http-body-util.workspace = true
 hyper-util.workspace = true

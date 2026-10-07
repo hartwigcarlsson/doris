@@ -96,6 +96,7 @@ impl TestServer {
             VatApi::new(pool.clone()),
             cors_origins,
             serve_frontend,
+            HeaderValue::from_str(origin.as_str().trim_end_matches('/')).unwrap(),
         );
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         Self {
@@ -595,4 +596,28 @@ pub fn tax_rows(year: i16) -> Vec<Value> {
         rows.push(row(table, "30%", 1269001, None, [52; 6]));
     }
     rows
+}
+
+/// A POST with a body built at run time (for /mcp).
+pub async fn post_json(
+    url: &str,
+    headers: &[(&str, &str)],
+    body: Vec<u8>,
+) -> http::Response<String> {
+    use http_body_util::{BodyExt, Full};
+    let client = Client::builder(TokioExecutor::new()).build_http::<Full<axum::body::Bytes>>();
+    let mut request = http::Request::builder()
+        .method(http::Method::POST)
+        .uri(url)
+        .header("content-type", "application/json");
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let response = client
+        .request(request.body(Full::new(body.into())).unwrap())
+        .await
+        .unwrap();
+    let (parts, body) = response.into_parts();
+    let bytes = body.collect().await.unwrap().to_bytes();
+    http::Response::from_parts(parts, String::from_utf8_lossy(&bytes).into_owned())
 }

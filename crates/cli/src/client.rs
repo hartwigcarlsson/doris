@@ -6,10 +6,17 @@ use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use tonic::Request;
-use tonic_web::{GrpcWebCall, GrpcWebClientLayer, GrpcWebClientService};
+use tonic_web::GrpcWebClientLayer;
+use tower::util::BoxCloneSyncService;
+use tower::{BoxError, ServiceExt};
 
-pub type Transport =
-    GrpcWebClientService<Client<HttpsConnector<HttpConnector>, GrpcWebCall<tonic::body::Body>>>;
+/// How requests reach Doris: over HTTPS for the CLI, or inside the
+/// server's own process for its MCP tools.
+pub type Transport = BoxCloneSyncService<
+    http::Request<tonic::body::Body>,
+    http::Response<tonic::body::Body>,
+    BoxError,
+>;
 
 /// `https://` anywhere; `http://` only to this machine, so a token never
 /// crosses a network in the clear.
@@ -32,23 +39,40 @@ pub fn checked_url(raw: &str) -> Result<http::Uri, Failure> {
 pub struct Doris {
     pub origin: http::Uri,
     token: String,
+    transport: Transport,
 }
 
 impl Doris {
     /// `None` when the token cannot go in a header.
     pub fn new(origin: http::Uri, token: String) -> Option<Self> {
-        let ok = !token.is_empty() && token.bytes().all(|b| b.is_ascii_graphic());
-        ok.then_some(Self { origin, token })
-    }
-
-    pub fn transport(&self) -> Transport {
         let mut http = HttpConnector::new();
         http.enforce_http(false);
         let client =
             Client::builder(TokioExecutor::new()).build(HttpsConnector::new_with_connector(http));
-        tower::ServiceBuilder::new()
+        let service = tower::ServiceBuilder::new()
             .layer(GrpcWebClientLayer::new())
             .service(client)
+            .map_response(|r| r.map(tonic::body::Body::new))
+            .map_err(BoxError::from);
+        Self::with(origin, token, BoxCloneSyncService::new(service))
+    }
+
+    /// Calls through `transport` instead of the network.
+    pub fn with_transport(token: String, transport: Transport) -> Option<Self> {
+        Self::with(
+            http::Uri::from_static("http://doris.internal"),
+            token,
+            transport,
+        )
+    }
+
+    fn with(origin: http::Uri, token: String, transport: Transport) -> Option<Self> {
+        let ok = !token.is_empty() && token.bytes().all(|b| b.is_ascii_graphic());
+        ok.then_some(Self {
+            origin,
+            token,
+            transport,
+        })
     }
 
     /// A request carrying the token. The token goes nowhere else.
@@ -63,7 +87,7 @@ impl Doris {
 
     pub fn auth(&self) -> doris_proto::auth::v1::auth_service_client::AuthServiceClient<Transport> {
         doris_proto::auth::v1::auth_service_client::AuthServiceClient::with_origin(
-            self.transport(),
+            self.transport.clone(),
             self.origin.clone(),
         )
     }
@@ -72,7 +96,7 @@ impl Doris {
         &self,
     ) -> doris_proto::company::v1::company_service_client::CompanyServiceClient<Transport> {
         doris_proto::company::v1::company_service_client::CompanyServiceClient::with_origin(
-            self.transport(),
+            self.transport.clone(),
             self.origin.clone(),
         )
     }
@@ -82,7 +106,7 @@ impl Doris {
         &self,
     ) -> doris_proto::ledger::v1::ledger_service_client::LedgerServiceClient<Transport> {
         doris_proto::ledger::v1::ledger_service_client::LedgerServiceClient::with_origin(
-            self.transport(),
+            self.transport.clone(),
             self.origin.clone(),
         )
         .max_decoding_message_size(11 << 20)

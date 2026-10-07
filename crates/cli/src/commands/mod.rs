@@ -97,3 +97,34 @@ pub async fn fiscal_year(
         .to_string();
     crate::pick_year(&starts, wanted, &today).ok_or_else(|| Failure::new("fiscal_year_not_found"))
 }
+
+/// A year is `ÅÅÅÅ` or a real `ÅÅÅÅ-MM-DD`; anything else is a usage
+/// error, found before any call. `label` is how the caller names it.
+pub(crate) fn check_year(year: Option<&str>, label: &str) -> Result<(), Failure> {
+    let Some(y) = year else { return Ok(()) };
+    let ok = (y.len() == 4 && y.bytes().all(|b| b.is_ascii_digit()))
+        || (y.len() == 10 && y.parse::<jiff::civil::Date>().is_ok());
+    ok.then_some(()).ok_or_else(|| {
+        Failure::usage(format!(
+            "Ogiltigt {label} \"{y}\": skriv ett år (2026) eller ett startdatum (2026-07-01)."
+        ))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_year;
+
+    #[test]
+    fn the_year_check_names_the_field_it_was_given() {
+        assert!(check_year(Some("2026"), "--year").is_ok());
+        assert!(check_year(Some("2026-07-01"), "year").is_ok());
+        let f = check_year(Some("26"), "year").unwrap_err();
+        assert_eq!(f.code, "usage");
+        assert!(
+            f.message.starts_with("Ogiltigt year \"26\""),
+            "{}",
+            f.message
+        );
+    }
+}
