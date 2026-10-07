@@ -4,6 +4,7 @@ pub mod amount;
 pub mod client;
 mod commands;
 pub mod output;
+pub mod tools;
 
 use clap::{Parser, Subcommand};
 use client::{Doris, checked_url};
@@ -13,7 +14,7 @@ use std::io::Write;
 
 #[derive(Parser)]
 #[command(name = "doris-cli", version, about = "Doris bokföring från terminalen")]
-struct Cli {
+pub(crate) struct Cli {
     /// Svara med exakt ett JSON-värde (fel också som JSON), för program och agenter.
     #[arg(long, global = true)]
     json: bool,
