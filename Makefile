@@ -32,14 +32,16 @@ dev:
 dist:
 	cd crates/web && trunk build --release --cargo-profile wasm-release
 	cargo build --release -p doris-server
+	cargo build --release -p doris-cli
 	mkdir -p $(DIST)
 	@# rm first: on macOS, overwriting a binary that has run keeps its old
 	@# code signature cached, and the new one is killed on start (SIGKILL).
-	rm -f $(DIST)/doris
+	rm -f $(DIST)/doris $(DIST)/doris-cli
 	cp target/release/doris $(DIST)/doris
+	cp target/release/doris-cli $(DIST)/doris-cli
 	tar -czf $(DIST)/doris-web-$(VERSION).tar.gz -C crates/web/dist .
 	@tar -tzf $(DIST)/doris-web-$(VERSION).tar.gz | grep -qx './index.html' || \
 		{ echo "dist: tarball missing ./index.html"; exit 1; }
 	@tar -tzf $(DIST)/doris-web-$(VERSION).tar.gz | grep -q '_bg\.wasm$$' || \
 		{ echo "dist: tarball missing *_bg.wasm"; exit 1; }
-	@echo "built $(DIST)/doris and $(DIST)/doris-web-$(VERSION).tar.gz"
+	@echo "built $(DIST)/doris, $(DIST)/doris-cli and $(DIST)/doris-web-$(VERSION).tar.gz"

@@ -54,6 +54,11 @@ enum Area {
         #[command(subcommand)]
         action: commands::ver::VerAction,
     },
+    /// Rapporter: saldobalans, huvudbok, resultat- och balansräkning.
+    Report {
+        #[command(subcommand)]
+        action: commands::report::ReportAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -187,6 +192,20 @@ async fn execute(cli: Cli, env: &Env, output: &mut Output<'_>) -> Result<(), Fai
                 VerAction::New(args) => ver::new(&context, output, &args).await,
                 VerAction::Correct { number, date, year } => {
                     ver::correct(&context, output, number, &date, year.as_deref()).await
+                }
+            }
+        }
+        Area::Report { action } => {
+            use commands::report::{self, ReportAction};
+            match action {
+                ReportAction::TrialBalance { year } => {
+                    report::trial_balance(&context, output, year.as_deref()).await
+                }
+                ReportAction::Ledger { account, year } => {
+                    report::ledger(&context, output, account, year.as_deref()).await
+                }
+                ReportAction::Statements { year } => {
+                    report::statements(&context, output, year.as_deref()).await
                 }
             }
         }

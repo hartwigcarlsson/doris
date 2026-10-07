@@ -735,3 +735,78 @@ async fn the_texts_are_exact() {
     );
     assert_eq!(fix.out, "Verifikation 1 rättad med verifikation 2.\n");
 }
+
+#[tokio::test]
+async fn reports_read_the_books() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    cli(
+        &server,
+        Some(&token),
+        &[
+            "ver",
+            "new",
+            "--date",
+            "2026-02-02",
+            "--text",
+            "Försäljning",
+            "--debit",
+            "1930=1250",
+            "--credit",
+            "3001=1000",
+            "--credit",
+            "2611=250",
+        ],
+    )
+    .await;
+
+    let balance = json(
+        &cli(
+            &server,
+            Some(&token),
+            &["report", "trial-balance", "--year", "2026", "--json"],
+        )
+        .await,
+    );
+    let ledger = json(
+        &cli(
+            &server,
+            Some(&token),
+            &["report", "ledger", "1930", "--year", "2026", "--json"],
+        )
+        .await,
+    );
+    let statements = json(
+        &cli(
+            &server,
+            Some(&token),
+            &["report", "statements", "--year", "2026", "--json"],
+        )
+        .await,
+    );
+    let text = cli(
+        &server,
+        Some(&token),
+        &["report", "trial-balance", "--year", "2026"],
+    )
+    .await;
+
+    let bank = balance["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["account"] == 1930)
+        .unwrap();
+    assert_eq!(bank["debit"], "1250.00");
+    assert_eq!(bank["closing"], "1250.00");
+    assert_eq!(ledger["account"], 1930);
+    assert_eq!(ledger["entries"][0]["balance"], "1250.00");
+    assert!(
+        statements["income_statement"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l["kind"] == "item")
+    );
+    assert!(text.out.contains("1 250,00"), "{}", text.out);
+}
