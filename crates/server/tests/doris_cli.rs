@@ -169,3 +169,36 @@ async fn bad_arguments_exit_2_with_one_json_error() {
     assert_eq!(unknown.code, 2);
     assert_eq!(json(&unknown)["error"]["code"], "usage");
 }
+
+#[tokio::test]
+async fn dry_run_keeps_lists_lists_and_flags_objects() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read"]).await;
+
+    let accounts = json(
+        &cli(
+            &server,
+            Some(&token),
+            &["account", "list", "--dry-run", "--json"],
+        )
+        .await,
+    );
+    let status = json(
+        &cli(
+            &server,
+            Some(&token),
+            &["auth", "status", "--dry-run", "--json"],
+        )
+        .await,
+    );
+    let text = cli(&server, Some(&token), &["account", "list", "--dry-run"]).await;
+
+    assert!(accounts.is_array());
+    assert_eq!(status["dry_run"], true);
+    assert!(
+        text.out
+            .ends_with("(--dry-run: kommandot ändrar ingenting.)\n"),
+        "{}",
+        text.out
+    );
+}

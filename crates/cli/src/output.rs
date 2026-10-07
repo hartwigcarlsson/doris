@@ -32,23 +32,22 @@ impl Failure {
     }
 
     /// The server's refusal: its stable code, the shared Swedish text.
+    /// Not reaching Doris is `connection_failed`; any other reply that is
+    /// not a code is `internal`.
     pub fn from_status(status: &tonic::Status) -> Self {
-        if is_connection_failure(status) {
-            return Self::new("connection_failed");
+        let message = status.message();
+        let is_code = !message.is_empty()
+            && message
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if is_code {
+            return Self::new(message);
         }
-        Self::new(status.message())
+        match status.code() {
+            tonic::Code::Unavailable | tonic::Code::Unknown => Self::new("connection_failed"),
+            _ => Self::new("internal"),
+        }
     }
-}
-
-/// Server refusals carry a snake_case code as the message; anything else
-/// (tonic's transport errors, a proxy's HTML) means we never reached Doris.
-fn is_connection_failure(status: &tonic::Status) -> bool {
-    let message = status.message();
-    let is_code = !message.is_empty()
-        && message
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
-    !is_code
 }
 
 /// 1: the books refused; 2: fix the arguments; 3: fix the token or connection.
@@ -111,5 +110,24 @@ mod tests {
         ] {
             assert_eq!(exit_code(code), exit, "{code}");
         }
+    }
+
+    #[test]
+    fn statuses_are_told_apart() {
+        use tonic::{Code, Status};
+        let internal = Failure::from_status(&Status::new(
+            Code::ResourceExhausted,
+            "message length too large",
+        ));
+        assert_eq!((internal.code.as_str(), internal.exit), ("internal", 1));
+        let down = Failure::from_status(&Status::unavailable("error trying to connect"));
+        assert_eq!((down.code.as_str(), down.exit), ("connection_failed", 3));
+        let unknown = Failure::from_status(&Status::unknown(""));
+        assert_eq!(unknown.code, "connection_failed");
+        let refused = Failure::from_status(&Status::invalid_argument("voucher_unbalanced"));
+        assert_eq!(
+            (refused.code.as_str(), refused.exit),
+            ("voucher_unbalanced", 1)
+        );
     }
 }

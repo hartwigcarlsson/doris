@@ -19,13 +19,12 @@ pub struct Context {
 }
 
 impl Context {
-    /// A reading command prints `value`, flagging --dry-run (which changes nothing there).
+    /// A reading command prints `value`, flagging --dry-run (which changes
+    /// nothing there) in objects; lists stay lists.
     pub fn print(&self, output: &mut Output<'_>, mut value: Value, mut text: String) {
         if self.dry_run {
             if let Some(object) = value.as_object_mut() {
                 object.insert("dry_run".into(), json!(true));
-            } else {
-                value = json!({ "dry_run": true, "result": value });
             }
             text.push_str("(--dry-run: kommandot ändrar ingenting.)\n");
         }

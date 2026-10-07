@@ -14,13 +14,13 @@ use std::io::Write;
 #[derive(Parser)]
 #[command(name = "doris-cli", version, about = "Doris bokföring från terminalen")]
 struct Cli {
-    /// Answer with one JSON value (and errors as JSON), for programs and agents.
+    /// Svara med exakt ett JSON-värde (fel också som JSON), för program och agenter.
     #[arg(long, global = true)]
     json: bool,
-    /// The company: org nr or id. Defaults to DORIS_COMPANY, or the only one.
+    /// Företaget: organisationsnummer eller id. Standard är DORIS_COMPANY, annars det enda företaget.
     #[arg(long, global = true)]
     company: Option<String>,
-    /// Run every rule on the server and show what would happen; save nothing.
+    /// Kör alla regler på servern och visa vad som skulle hända; spara ingenting.
     #[arg(long, global = true)]
     dry_run: bool,
     #[command(subcommand)]
@@ -29,12 +29,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Area {
-    /// Who the token belongs to.
+    /// Vem token tillhör.
     Auth {
         #[command(subcommand)]
         action: AuthAction,
     },
-    /// The companies the token reaches.
+    /// Företagen som token når.
     Company {
         #[command(subcommand)]
         action: CompanyAction,
@@ -44,7 +44,7 @@ enum Area {
         #[command(subcommand)]
         action: YearAction,
     },
-    /// The chart of accounts.
+    /// Kontoplanen.
     Account {
         #[command(subcommand)]
         action: AccountAction,
@@ -53,28 +53,44 @@ enum Area {
 
 #[derive(Subcommand)]
 enum AuthAction {
+    /// Visa vem token tillhör.
     Status,
 }
 #[derive(Subcommand)]
 enum CompanyAction {
+    /// Lista företagen.
     List,
+    /// Visa ett företag.
     View,
 }
 #[derive(Subcommand)]
 enum YearAction {
+    /// Lista räkenskapsåren.
     List,
 }
 #[derive(Subcommand)]
 enum AccountAction {
+    /// Lista kontona.
     List,
 }
 
 /// The environment doris-cli reads: the token, the server, the company.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Env {
     pub token: Option<String>,
     pub url: Option<String>,
     pub company: Option<String>,
+}
+
+impl std::fmt::Debug for Env {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let token = self.token.as_ref().map(|_| "<redacted>");
+        f.debug_struct("Env")
+            .field("token", &token)
+            .field("url", &self.url)
+            .field("company", &self.company)
+            .finish()
+    }
 }
 
 impl Env {
@@ -176,6 +192,18 @@ pub(crate) fn pick_year(starts: &[String], wanted: Option<&str>, today: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_debug_hides_the_token() {
+        let env = Env {
+            token: Some("doris_secret".into()),
+            url: Some("https://x".into()),
+            company: None,
+        };
+        let shown = format!("{env:?}");
+        assert!(!shown.contains("doris_secret"), "{shown}");
+        assert!(shown.contains("<redacted>"), "{shown}");
+    }
 
     #[test]
     fn a_year_is_its_start_year_or_its_start_date() {
