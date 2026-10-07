@@ -31,6 +31,11 @@ use tonic_web::GrpcWebLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+/// Marks a response as a dry run: nothing was saved, so the call does not
+/// count as the token's use.
+#[derive(Clone, Copy)]
+pub(crate) struct DryRun;
+
 pub use company::CompanyApi;
 pub use grpc::{AuthApi, SESSION_COOKIE};
 pub use invoicing::InvoicingApi;
@@ -115,7 +120,8 @@ async fn auth_gate(
         let response = doris_eventstore::VIA_TOKEN
             .scope(token_id.to_string(), next.run(request))
             .await;
-        if let Err(err) = doris_identity::touch_api_token(&pool, token_id, now).await {
+        let dry_run = response.extensions().get::<DryRun>().is_some();
+        if !dry_run && let Err(err) = doris_identity::touch_api_token(&pool, token_id, now).await {
             tracing::warn!("api token usage: {err}");
         }
         return response;

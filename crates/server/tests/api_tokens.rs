@@ -262,6 +262,7 @@ fn sale(company: &str) -> lpb::RecordVoucherRequest {
             },
         ],
         attachments: vec![],
+        dry_run: false,
     }
 }
 
@@ -979,4 +980,30 @@ async fn an_expired_token_gets_a_new_last_day() {
         .list_vouchers(bearer(vouchers(&id), &secret))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn a_dry_run_with_a_token_does_not_count_as_use() {
+    let server = TestServer::start().await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let id = company(&server, &anna, "556016-0680").await;
+    let secret = api_token(&server, &anna, &mut annas, &[(&id, &["ledger:write"])]).await;
+    let mut request = sale(&id);
+    request.dry_run = true;
+
+    server
+        .ledger()
+        .record_voucher(bearer(request, &secret))
+        .await
+        .unwrap();
+
+    let listed = server
+        .grpc()
+        .list_api_tokens(authed(pb::ListApiTokensRequest {}, &anna))
+        .await
+        .unwrap()
+        .into_inner()
+        .tokens;
+    assert_eq!(listed[0].last_used_at, None);
 }

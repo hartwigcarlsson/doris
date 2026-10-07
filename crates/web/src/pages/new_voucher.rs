@@ -99,6 +99,7 @@ pub fn NewVoucher() -> impl IntoView {
                 text: text.get_untracked(),
                 lines: request_lines,
                 attachments: files.get_untracked(),
+                dry_run: false,
             };
             let result = ledger_api().record_voucher(request).await;
             busy.set(false);

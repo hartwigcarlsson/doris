@@ -74,6 +74,7 @@ async fn a_member_declares_a_quarter_and_the_settlement_is_booked() {
                     line(2611, 0, 25_000),
                 ],
                 attachments: vec![],
+                dry_run: false,
             },
             &anna,
         ))
@@ -245,6 +246,7 @@ async fn strangers_and_signed_out_callers_find_nothing() {
                     line(2611, 0, 25_000),
                 ],
                 attachments: vec![],
+                dry_run: false,
             },
             &anna,
         ))

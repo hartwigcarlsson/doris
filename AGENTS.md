@@ -32,6 +32,8 @@ spec in `docs/superpowers/specs/` and an implementation plan in
 ```
 proto/              .proto files (package doris.<area>.v1)
 migrations/         sqlx migrations, NNNN_name.sql, shared by all crates
+crates/cli          doris-cli: the command line for people and agents (API token)
+skills/             agent skills for others to install (npx skills add, doris-cli skill)
 crates/company      doris-company: companies, members, fiscal year and accounting method
 crates/invoicing    doris-invoicing: customers, suppliers, and customer and supplier invoices
 crates/eventstore   doris-eventstore: append-only event log, DB open + migrations
@@ -374,6 +376,30 @@ e2e/                Playwright tests (virtual WebAuthn authenticator)
 - Use `localhost` (not `127.0.0.1`) in dev and e2e: the RP id is `localhost`,
   and Chromium only accepts `Secure` cookies over plain http on `localhost`.
 - `DORIS_LISTEN` defaults to `127.0.0.1:3000`; containers need `0.0.0.0:3000`.
+
+## doris-cli
+- `crates/cli` is a gh-style command line (`doris-cli <area> <action>`) over
+  the same gRPC-Web API, for people and AI agents. It reads `DORIS_TOKEN`
+  (an API token, never printed or logged), `DORIS_URL` (required; `http://`
+  only to localhost) and `DORIS_COMPANY` (optional).
+- Every command takes `--json`: exactly one JSON value on stdout, errors as
+  `{"error":{"code","message"}}`, amounts as kronor strings ("1250.00").
+  Exit codes: 1 the server refused, 2 usage, 3 token or connection.
+- `--dry-run` is checked on the server: `RecordVoucher`/`CorrectVoucher`
+  take `dry_run`, run everything in the same transaction and roll back; the
+  call does not count as the token's use.
+- The Swedish error texts live in `doris_proto::messages`, shared with the
+  web app. Commands grow area by area (invoicing, payroll, VAT next); their
+  JSON shapes are in `skills/doris-bookkeeping/reference.md`.
+- The agent skill `skills/doris-bookkeeping/` (SKILL.md + reference.md)
+  changes with the commands: it is built into the binary (`doris-cli skill
+  show|install`), installable with `npx skills add hartwigcarlsson/doris`, and
+  `make dist` copies it to `target/dist/skills/`. Tests in
+  `crates/cli/src/commands/skill.rs` fail if it names a flag doris-cli
+  doesn't have, if reference.md misses a command, or if it points into the
+  repository. Claude Code finds it here through a symlink in
+  `.claude/skills/`; `.claude/skills/verify` is `metadata.internal`, so
+  `npx skills` doesn't offer it.
 
 ## Frontend
 - `crates/web` is a Leptos 0.8 CSR app built with Trunk (`crates/web/Trunk.toml`

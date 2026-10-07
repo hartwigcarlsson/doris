@@ -834,6 +834,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "doris-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "doris-proto",
+ "http",
+ "hyper-tls",
+ "hyper-util",
+ "jiff",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tonic-web",
+ "tower",
+]
+
+[[package]]
 name = "doris-company"
 version = "0.1.0"
 dependencies = [
@@ -948,6 +966,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "doris-cli",
  "doris-company",
  "doris-eventstore",
  "doris-identity",

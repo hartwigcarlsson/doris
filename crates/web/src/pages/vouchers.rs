@@ -393,6 +393,7 @@ fn VoucherRow(
                 fiscal_year_start: year.start,
                 number,
                 date: date.get_untracked(),
+                dry_run: false,
             };
             let company = request.company_id.clone();
             let result = ledger_api().correct_voucher(request).await;
