@@ -54,6 +54,7 @@ fn sale(company_id: &str, ore: i64) -> pb::RecordVoucherRequest {
             },
         ],
         attachments: vec![],
+        dry_run: false,
     }
 }
 
@@ -160,7 +161,8 @@ async fn a_member_keeps_the_chart_and_books_and_corrects_vouchers() {
         booked,
         pb::RecordVoucherResponse {
             fiscal_year_start: "2026-01-01".into(),
-            number: 1
+            number: 1,
+            ..Default::default()
         }
     );
     let corrected = api
@@ -170,6 +172,7 @@ async fn a_member_keeps_the_chart_and_books_and_corrects_vouchers() {
                 fiscal_year_start: "2026-01-01".into(),
                 number: 1,
                 date: "2026-01-16".into(),
+                dry_run: false,
             },
             &anna,
         ))
@@ -243,6 +246,7 @@ async fn ledger_errors_have_stable_codes() {
             fiscal_year_start: "2026-01-01".into(),
             number: 1,
             date: "2026-01-15".into(),
+            dry_run: false,
         },
         &anna,
     ))
@@ -297,6 +301,7 @@ async fn ledger_errors_have_stable_codes() {
         fiscal_year_start: "2026-01-01".into(),
         number,
         date: date.into(),
+        dry_run: false,
     };
     for (request, expected) in [
         (
@@ -447,6 +452,7 @@ async fn others_get_company_not_found_and_strangers_not_signed_in() {
             fiscal_year_start: "2026-01-01".into(),
             number: 1,
             date: "2026-01-15".into(),
+            dry_run: false,
         })
         .await
         .map(drop),
@@ -1319,4 +1325,99 @@ async fn an_accounts_momsruta_is_listed_and_changed() {
         code_of(err),
         (Code::InvalidArgument, "invalid_vat_box".into())
     );
+}
+
+#[tokio::test]
+async fn record_voucher_with_dry_run_answers_but_saves_nothing() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.ledger();
+    let mut request = sale(&id, 12_500);
+    request.dry_run = true;
+    request.attachments = vec![upload("kvitto.pdf", pdf(1000))];
+
+    let preview = api
+        .record_voucher(authed(request, &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    let vouchers = api
+        .list_vouchers(authed(
+            pb::ListVouchersRequest {
+                company_id: id.clone(),
+                fiscal_year_start: "2026-01-01".into(),
+            },
+            &anna,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .vouchers;
+    let real = api
+        .record_voucher(authed(sale(&id, 12_500), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(preview.dry_run);
+    assert_eq!(preview.number, 1);
+    assert_eq!(preview.attachments.len(), 1);
+    assert_eq!(preview.attachments[0].file_name, "kvitto.pdf");
+    assert!(vouchers.is_empty());
+    assert!(!real.dry_run);
+    assert_eq!(real.number, 1);
+}
+
+#[tokio::test]
+async fn a_dry_run_is_refused_like_a_real_run() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.ledger();
+    let mut unbalanced = sale(&id, 100);
+    unbalanced.lines[1].credit = 99;
+    let mut dry = unbalanced.clone();
+    dry.dry_run = true;
+
+    let real = api
+        .record_voucher(authed(unbalanced, &anna))
+        .await
+        .unwrap_err();
+    let preview = api.record_voucher(authed(dry, &anna)).await.unwrap_err();
+
+    assert_eq!(code_of(preview), code_of(real));
+}
+
+#[tokio::test]
+async fn correct_voucher_with_dry_run_saves_nothing() {
+    let server = TestServer::start().await;
+    let anna = server.sign_up(&mut device(), "anna@example.se", None).await;
+    let id = company(&server, &anna).await;
+    let mut api = server.ledger();
+    api.record_voucher(authed(sale(&id, 100), &anna))
+        .await
+        .unwrap();
+    let correct = |dry_run| pb::CorrectVoucherRequest {
+        company_id: id.clone(),
+        fiscal_year_start: "2026-01-01".into(),
+        number: 1,
+        date: "2026-01-16".into(),
+        dry_run,
+    };
+
+    let preview = api
+        .correct_voucher(authed(correct(true), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+    let real = api
+        .correct_voucher(authed(correct(false), &anna))
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(preview.dry_run);
+    assert_eq!((preview.number, real.number), (2, 2));
+    assert!(!real.dry_run);
 }

@@ -6,12 +6,12 @@ use doris_ledger::statements::StatementLine;
 use doris_ledger::vat_box::VatBox;
 use doris_ledger::{
     Error, NewAttachment, VoucherRef, account_ledger, add_account, add_attachment, attachment_data,
-    check_accounts_in, close_fiscal_year, correct_voucher, corrected_vouchers_in,
-    financial_statements, get_attachment, link_attachment_in, list_accounts, list_fiscal_years,
-    list_vouchers, opening_balances, rebuild_projections, record_voucher, record_voucher_in,
-    record_voucher_with_attachments, rename_account, reopen_fiscal_year, set_account_active,
-    set_account_vat_box, set_opening_balances, store_attachment_in, trial_balance,
-    vat_box_totals_in,
+    check_accounts_in, close_fiscal_year, correct_voucher, correct_voucher_or_preview,
+    corrected_vouchers_in, financial_statements, get_attachment, link_attachment_in, list_accounts,
+    list_fiscal_years, list_vouchers, opening_balances, rebuild_projections, record_voucher,
+    record_voucher_in, record_voucher_or_preview, record_voucher_with_attachments, rename_account,
+    reopen_fiscal_year, set_account_active, set_account_vat_box, set_opening_balances,
+    store_attachment_in, trial_balance, vat_box_totals_in,
 };
 use jiff::civil::Date;
 use sqlx::SqlitePool;
@@ -1989,4 +1989,149 @@ async fn a_chart_from_before_records_its_boxes_at_the_next_write_once() {
         .unwrap()
         .vat_box;
     assert_eq!(box_3004.map(VatBox::get), Some(5));
+}
+
+async fn count(pool: &SqlitePool, sql: &'static str) -> i64 {
+    sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+}
+
+#[tokio::test]
+async fn a_dry_run_books_nothing_but_answers_as_if_it_had() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    let events = count(&pool, "SELECT COUNT(*) FROM events").await;
+
+    let (voucher, added) = record_voucher_or_preview(
+        &pool,
+        id,
+        anna,
+        sale("2025-03-01", 100),
+        vec![file("kvitto.pdf", "a")],
+        today,
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(voucher.number, 1);
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0].sha256.len(), 64);
+    assert!(
+        list_vouchers(&pool, id, anna, d("2025-01-01"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM events").await, events);
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM attachment_files").await,
+        0
+    );
+    let (real, _) = record_voucher_or_preview(
+        &pool,
+        id,
+        anna,
+        sale("2025-03-01", 100),
+        vec![],
+        today,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(real.number, 1);
+}
+
+#[tokio::test]
+async fn a_dry_run_refuses_exactly_like_a_real_one() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    let unbalanced = RecordVoucher {
+        lines: vec![
+            VoucherLine::new(1930, 100, 0).unwrap(),
+            VoucherLine::new(3001, 0, 99).unwrap(),
+        ],
+        ..sale("2025-03-01", 100)
+    };
+    let empty = NewAttachment {
+        file_name: "tom.pdf".into(),
+        data: vec![],
+    };
+    let open = second_company(&pool, anna).await;
+    close_fiscal_year(&pool, id, anna, d("2025-01-01"), today)
+        .await
+        .unwrap();
+
+    for dry_run in [true, false] {
+        assert!(matches!(
+            record_voucher_or_preview(
+                &pool,
+                open,
+                anna,
+                unbalanced.clone(),
+                vec![],
+                today,
+                dry_run
+            )
+            .await,
+            Err(Error::Domain(DomainError::VoucherUnbalanced))
+        ));
+        assert!(matches!(
+            record_voucher_or_preview(
+                &pool,
+                id,
+                anna,
+                sale("2025-03-01", 100),
+                vec![],
+                today,
+                dry_run
+            )
+            .await,
+            Err(Error::Domain(DomainError::FiscalYearClosed))
+        ));
+    }
+    for dry_run in [true, false] {
+        assert!(matches!(
+            record_voucher_or_preview(
+                &pool,
+                open,
+                anna,
+                sale("2025-03-01", 100),
+                vec![empty.clone()],
+                today,
+                dry_run
+            )
+            .await,
+            Err(Error::Domain(DomainError::EmptyAttachment))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn a_dry_run_correction_saves_nothing() {
+    let pool = db().await;
+    let anna = Uuid::new_v4();
+    let id = company(&pool, anna).await;
+    let today = d(TODAY);
+    let start = d("2025-01-01");
+    record_voucher(&pool, id, anna, sale("2025-03-01", 100), today)
+        .await
+        .unwrap();
+
+    let preview =
+        correct_voucher_or_preview(&pool, id, anna, start, 1, d("2025-12-31"), today, true)
+            .await
+            .unwrap();
+
+    assert_eq!(preview.number, 2);
+    let vouchers = list_vouchers(&pool, id, anna, start).await.unwrap();
+    assert_eq!(vouchers.len(), 1);
+    assert_eq!(vouchers[0].corrected_by, None);
+    let real = correct_voucher_or_preview(&pool, id, anna, start, 1, d("2025-12-31"), today, false)
+        .await
+        .unwrap();
+    assert_eq!(real.number, 2);
 }

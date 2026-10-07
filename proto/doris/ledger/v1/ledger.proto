@@ -118,11 +118,15 @@ message RecordVoucherRequest {
   string text = 3;
   repeated VoucherLine lines = 4;
   repeated NewAttachment attachments = 5;
+  // Run every rule and answer as if booked, then save nothing.
+  bool dry_run = 6;
 }
 
 message RecordVoucherResponse {
   string fiscal_year_start = 1;
   uint32 number = 2;
+  bool dry_run = 3;
+  repeated Attachment attachments = 4;
 }
 
 message CorrectVoucherRequest {
@@ -130,10 +134,12 @@ message CorrectVoucherRequest {
   string fiscal_year_start = 2;
   uint32 number = 3;
   string date = 4;
+  bool dry_run = 5;
 }
 
 message CorrectVoucherResponse {
   uint32 number = 1;
+  bool dry_run = 2;
 }
 
 message ListVouchersRequest {

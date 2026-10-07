@@ -275,6 +275,32 @@ pub async fn correct_voucher(
     date: Date,
     today: Date,
 ) -> Result<VoucherRef> {
+    correct_voucher_or_preview(
+        pool,
+        company_id,
+        actor,
+        fiscal_year_start,
+        number,
+        date,
+        today,
+        false,
+    )
+    .await
+}
+
+/// [`correct_voucher`], or with `dry_run` the same run rolled back: the
+/// answer is what a real correction would get, and nothing is saved.
+#[allow(clippy::too_many_arguments)]
+pub async fn correct_voucher_or_preview(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    fiscal_year_start: Date,
+    number: u32,
+    date: Date,
+    today: Date,
+    dry_run: bool,
+) -> Result<VoucherRef> {
     let mut tx = doris_eventstore::begin(pool).await?;
     let voucher = correct_voucher_in(
         &mut tx,
@@ -286,7 +312,11 @@ pub async fn correct_voucher(
         today,
     )
     .await?;
-    tx.commit().await?;
+    if dry_run {
+        tx.rollback().await?;
+    } else {
+        tx.commit().await?;
+    }
     Ok(voucher)
 }
 
@@ -325,24 +355,48 @@ pub async fn record_voucher_with_attachments(
     attachments: Vec<NewAttachment>,
     today: Date,
 ) -> Result<VoucherRef> {
+    record_voucher_or_preview(pool, company_id, actor, cmd, attachments, today, false)
+        .await
+        .map(|(voucher, _)| voucher)
+}
+
+/// Books a voucher with its underlag in one transaction and returns what
+/// was attached. With `dry_run`, everything runs (numbering, rules, file
+/// checks) and is then rolled back: nothing is saved.
+pub async fn record_voucher_or_preview(
+    pool: &SqlitePool,
+    company_id: Uuid,
+    actor: Uuid,
+    cmd: RecordVoucher,
+    attachments: Vec<NewAttachment>,
+    today: Date,
+    dry_run: bool,
+) -> Result<(VoucherRef, Vec<Attachment>)> {
     let mut tx = doris_eventstore::begin(pool).await?;
     let voucher = record_voucher_in(&mut tx, company_id, actor, cmd, today).await?;
+    let mut added = Vec::with_capacity(attachments.len());
     // ponytail: each add_attachment_in reloads membership and the year's
     // ledger; fine for a few files, load them once if vouchers get many.
     for attachment in attachments {
-        add_attachment_in(
-            &mut tx,
-            company_id,
-            actor,
-            voucher.fiscal_year_start,
-            voucher.number,
-            attachment,
-            today,
-        )
-        .await?;
+        added.push(
+            add_attachment_in(
+                &mut tx,
+                company_id,
+                actor,
+                voucher.fiscal_year_start,
+                voucher.number,
+                attachment,
+                today,
+            )
+            .await?,
+        );
     }
-    tx.commit().await?;
-    Ok(voucher)
+    if dry_run {
+        tx.rollback().await?;
+    } else {
+        tx.commit().await?;
+    }
+    Ok((voucher, added))
 }
 
 /// Adds an underlag to voucher `number` of the fiscal year starting on

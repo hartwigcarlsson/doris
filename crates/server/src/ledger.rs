@@ -136,26 +136,34 @@ impl LedgerService for LedgerApi {
     ) -> Result<Response<pb::RecordVoucherResponse>, Status> {
         let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
         let req = request.into_inner();
+        let dry_run = req.dry_run;
         let cmd = RecordVoucher {
             date: date(&req.date)?,
             text: req.text,
             lines: domain_lines(&req.lines)?,
         };
         let attachments = new_attachments(req.attachments)?;
-        let booked = doris_ledger::record_voucher_with_attachments(
+        let (booked, added) = doris_ledger::record_voucher_or_preview(
             &self.pool,
             company,
             user,
             cmd,
             attachments,
             today(),
+            dry_run,
         )
         .await
         .map_err(status)?;
-        Ok(Response::new(pb::RecordVoucherResponse {
+        let mut response = Response::new(pb::RecordVoucherResponse {
             fiscal_year_start: booked.fiscal_year_start.to_string(),
             number: booked.number,
-        }))
+            dry_run,
+            attachments: added.iter().map(attachment_message).collect(),
+        });
+        if dry_run {
+            response.extensions_mut().insert(crate::DryRun);
+        }
+        Ok(response)
     }
 
     async fn add_attachment(
@@ -213,7 +221,8 @@ impl LedgerService for LedgerApi {
     ) -> Result<Response<pb::CorrectVoucherResponse>, Status> {
         let (company, user) = self.caller(&request, &request.get_ref().company_id).await?;
         let req = request.into_inner();
-        let booked = doris_ledger::correct_voucher(
+        let dry_run = req.dry_run;
+        let booked = doris_ledger::correct_voucher_or_preview(
             &self.pool,
             company,
             user,
@@ -221,12 +230,18 @@ impl LedgerService for LedgerApi {
             req.number,
             date(&req.date)?,
             today(),
+            dry_run,
         )
         .await
         .map_err(status)?;
-        Ok(Response::new(pb::CorrectVoucherResponse {
+        let mut response = Response::new(pb::CorrectVoucherResponse {
             number: booked.number,
-        }))
+            dry_run,
+        });
+        if dry_run {
+            response.extensions_mut().insert(crate::DryRun);
+        }
+        Ok(response)
     }
 
     async fn list_vouchers(
