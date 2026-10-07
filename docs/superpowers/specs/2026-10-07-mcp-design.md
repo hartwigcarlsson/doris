@@ -263,9 +263,11 @@ TDD som vanligt: ett rött test i taget.
 - Saknad, okänd, återkallad och utgången token ger 401. Bara cookie ger
   401. Främmande `Origin` ger 403, och `DORIS_RP_ORIGIN` godtas.
 - `tools/list` innehåller de tolv verktygen.
-- `record_voucher` med `dry_run: true` sparar ingenting och uppdaterar
-  inte tokenens senaste användning. Samma anrop utan `dry_run` bokför, och
-  händelsen har `via_token` i metadata.
+- `record_voucher` med `dry_run: true` sparar ingenting. Samma anrop utan
+  `dry_run` bokför, och händelsen har `via_token` i metadata. (Tokenens
+  senaste användning uppdateras även vid `dry_run`, eftersom verktyget
+  först slår upp företaget med `ListCompanies`, precis som `ver new
+  --dry-run` i CLI:t.)
 - `correct_voucher` skapar en rättelse som pekar på originalet.
 - En token med bara `ledger:read` får `isError` med `missing_scope` från
   `record_voucher`.
