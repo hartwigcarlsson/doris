@@ -39,6 +39,9 @@ dist:
 	rm -f $(DIST)/doris $(DIST)/doris-cli
 	cp target/release/doris $(DIST)/doris
 	cp target/release/doris-cli $(DIST)/doris-cli
+	rm -rf $(DIST)/skills
+	mkdir -p $(DIST)/skills
+	cp -R skills/doris-bookkeeping $(DIST)/skills/doris-bookkeeping
 	tar -czf $(DIST)/doris-web-$(VERSION).tar.gz -C crates/web/dist .
 	@tar -tzf $(DIST)/doris-web-$(VERSION).tar.gz | grep -qx './index.html' || \
 		{ echo "dist: tarball missing ./index.html"; exit 1; }

@@ -1,6 +1,8 @@
 ---
 name: verify
 description: Build and run Doris (release binary with embedded frontend) and drive it through the browser and the gRPC-Web socket to verify a change at runtime.
+metadata:
+  internal: true
 ---
 
 # Verifying Doris at runtime

@@ -18,138 +18,23 @@ cargo install --path crates/cli     # or: make dist  ->  target/dist/doris-cli
 | `DORIS_URL` | The server (required): `https://…`, or `http://` only for localhost. Only scheme, host and optional port: a path is not supported. |
 | `DORIS_COMPANY` | Organisation number or id (optional). Default: the token's only company; with several, the command fails with `company_ambiguous` (exit 2) and lists them. |
 
-## Global flags
-
-- `--json`: exactly one JSON value on stdout, errors included.
-- `--company <ORGNR|ID>`: overrides `DORIS_COMPANY`.
-- `--dry-run`: checked on the server. `ver new` and `ver correct` run every
-  rule in the real transaction and roll back, so nothing is saved and the
-  call does not count as the token's use. On read commands it changes
-  nothing and only adds `"dry_run": true` to object outputs; lists stay
-  arrays; in text mode they end with the line
-  `(--dry-run: kommandot ändrar ingenting.)`. A server too old to know
-  `--dry-run` would book for real, so `ver new` and `ver correct` then fail
-  with `dry_run_unsupported` (exit 1; the JSON error also has `number` and
-  `fiscal_year_start` of what was booked).
-- Only `ver` (`list`, `view`, `correct`) and `report` take `--year` (a year such as
-  `2026`, or a start date; default
-  the fiscal year containing today in Sweden), except `ver new`, which
-  ignores it: the date decides the year.
-
-Amounts in JSON are kronor strings (`"1250.00"`); text mode shows `1 250,00`.
-
-## Exit codes and errors
-
-| Exit | Meaning |
-|---|---|
-| 0 | Done |
-| 1 | The server refused (a rule, missing scope, not found) |
-| 2 | Usage: fix the arguments (also `company_ambiguous`) |
-| 3 | Token, URL or connection: `missing_token`, `missing_url`, `insecure_url`, `bad_url`, `not_signed_in`, `connection_failed` |
-
-With `--json` a failure is `{"error":{"code":"voucher_unbalanced","message":"…"}}`
-on stdout; without it the Swedish message goes to stderr. Codes are the
-server's stable codes plus the client's own: `usage`, `missing_token`,
-`missing_url`, `insecure_url`, `bad_url`, `connection_failed`,
-`company_ambiguous`, `company_not_found`, `fiscal_year_not_found`,
-`voucher_not_found`, `dry_run_unsupported`, `internal`.
-
-## Commands
-
-Each example shows text mode, then the `--json` form.
-
-### `auth status`
-```
-$ doris-cli auth status
-Anna Andersson <anna@example.se>
-{"name":"Anna Andersson","email":"anna@example.se"}
-```
-
-### `company list`, `company view`
-```
-556016-0680  Exempel AB
-[{"id":"…","org_nr":"556016-0680","name":"Exempel AB"}]
-{"id","org_nr","name","legal_form","accounting_method","fiscal_year_start","fiscal_year_end"}
-```
-
-### `year list`
-```
-2026-01-01 – 2026-12-31  Öppet
-[{"start":"2026-01-01","end":"2026-12-31","closed":false}]
-```
-
-### `account list`
-```
-1930  Företagskonto
-[{"number":1930,"name":"Företagskonto","active":true}]
-```
-
-### `ver list [--year]`
-Newest first.
-```
-   1  2026-02-02     1 000,00  Inköp
-[{"number":1,"date":"2026-02-02","text":"Inköp","total":"1000.00","corrects":null,
-  "corrected_by":null,"attachments":0,"recorded_at":"…","recorded_by":"Anna Andersson"}]
-```
-
-### `ver view NUMBER [--year]`
-```
-{"fiscal_year_start","number","date","text",
- "lines":[{"account":6110,"debit":"800.00","credit":"0.00"}],
- "corrects","corrected_by",
- "attachments":[{"file_name","sha256","size","content_type"}],
- "recorded_at","recorded_by"}
-```
-
-### `ver new`
-```
-doris-cli ver new --date 2026-02-02 --text Inköp --debit 6110=800 --debit 2641=200 --credit 1930=1000 [--attach kvitto.pdf]
-Verifikation 1 i räkenskapsåret 2026 bokförd (2026-02-02, 1 000,00 kr, 0 underlag).
-{"dry_run":false,"fiscal_year_start":"2026-01-01","number":1,"date","text","lines":[…],"attachments":[…]}
-```
-`--dry-run` answers "Skulle bokföras som verifikation N …" and saves
-nothing. `--input FILE|-` takes the whole voucher as JSON
-(`{"date","text","lines":[{"account","debit","credit"}],"attachments":["path"]}`;
-amounts as strings or numbers). Attachment paths in `--input` are relative to
-the current directory. Underlag are PDF, JPEG or PNG, at most 10 MiB each and
-20 MiB together. `--year` is ignored.
-
-### `ver correct NUMBER --date DATE [--year]`
-```
-Verifikation 1 rättad med verifikation 2.
-{"dry_run":false,"fiscal_year_start":"2026-01-01","number":2,"corrects":1}
-```
-
-### `report trial-balance [--year]`
-```
-Konto  Namn                                    IB         Debet        Kredit            UB
-1930   Företagskonto                         0,00      1 250,00          0,00      1 250,00
-{"fiscal_year_start":"2026-01-01","rows":[{"account":1930,"name":"Företagskonto",
-  "opening":"0.00","debit":"1250.00","credit":"0.00","closing":"1250.00"}]}
-```
-`closing` is `opening + debit − credit`.
-
-### `report ledger ACCOUNT [--year]`
-```
-Ingående balans 0,00
-2026-02-02     1      1 250,00          0,00      1 250,00  Försäljning
-{"fiscal_year_start","account":1930,"opening":"0.00",
- "entries":[{"date","number","text","debit","credit","balance"}]}
-```
-
-### `report statements [--year]`
-Resultat- och balansräkning, with the year before as comparison.
-```
-{"fiscal_year_start","previous_fiscal_year_start":null,
- "income_statement":[{"label":"Nettoomsättning","kind":"item","amount":"1000.00","previous":null}],
- "balance_sheet":[…],"difference":"0.00","previous_difference":null}
-```
-`kind` is `heading` (`amount` null), `item` or `subtotal`. `previous` and
-`previous_fiscal_year_start` and `previous_difference` are `null` when there is no earlier year.
+## Reference
+Global flags, exit codes, error codes and the JSON form of every command are
+in [`skills/doris-bookkeeping/reference.md`](../../skills/doris-bookkeeping/reference.md),
+which ships with the agent skill.
 
 ## For AI agents
-A skill for agents that keep the books through doris-cli (rehearse with
-`--dry-run`, read failures by exit code, never retry a write blindly, moms and
-common BAS accounts) is in `.claude/skills/doris-bookkeeping/SKILL.md`. Claude
-Code picks it up in this repository; copy it to `~/.claude/skills/` to use it
-elsewhere.
+The skill `doris-bookkeeping` (`skills/doris-bookkeeping/`) teaches an agent to
+keep the books through doris-cli: rehearse with `--dry-run`, read failures by
+exit code, never retry a write blindly, moms and common BAS accounts. Install
+it in one of three ways:
+
+```
+npx skills add hartwigcarlsson/doris --skill doris-bookkeeping   # 40+ agents (skills.sh)
+doris-cli skill install [DIR]       # from the binary; default ~/.agents/skills
+doris-cli skill show                # print it, e.g. for a system prompt
+```
+
+or copy the folder into your agent's skills directory. The skill is built into
+the binary, so `doris-cli skill` always matches the CLI's version. Claude Code
+finds it in this repository through `.claude/skills/doris-bookkeeping`.

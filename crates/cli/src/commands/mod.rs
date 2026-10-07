@@ -4,6 +4,7 @@ pub mod account;
 pub mod auth;
 pub mod company;
 pub mod report;
+pub mod skill;
 pub mod ver;
 pub mod year;
 

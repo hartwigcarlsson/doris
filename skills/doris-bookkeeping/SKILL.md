@@ -11,7 +11,8 @@ mistake costs a rättelse and a new voucher, visible forever. So every write
 is rehearsed with `--dry-run`, every answer is read as JSON, and every
 failure is classified by its exit code before anything is retried.
 
-Commands, flags and JSON shapes: `crates/cli/README.md` and `doris-cli --help`.
+Commands, flags, error codes and JSON shapes: [reference.md](reference.md), and
+`doris-cli --help`.
 Use only commands `--help` lists; there is no other way in (e.g. no command adds
 underlag to a booked voucher).
 
@@ -25,7 +26,7 @@ doris-cli --json report trial-balance | ledger KONTO | statements [--year 2026]
 ```
 Global flags (`--json`, `--dry-run`, `--company`) go anywhere; `--year` goes after
 the action (`ver list --year 2026`) and is the year the räkenskapsår starts (or
-its start date). Field names in the JSON answers: see the README.
+its start date). Field names in the JSON answers: [reference.md](reference.md).
 
 ## Booking a voucher
 1. `doris-cli --json account list` and `year list`: the accounts exist and are active, the year is open.

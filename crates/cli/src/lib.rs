@@ -59,6 +59,11 @@ enum Area {
         #[command(subcommand)]
         action: commands::report::ReportAction,
     },
+    /// Skillen för AI-agenter som bokför med doris-cli.
+    Skill {
+        #[command(subcommand)]
+        action: commands::skill::SkillAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -161,6 +166,10 @@ where
 }
 
 async fn execute(cli: Cli, env: &Env, output: &mut Output<'_>) -> Result<(), Failure> {
+    // The skill is built in: it needs no token and no server.
+    if let Area::Skill { action } = &cli.command {
+        return commands::skill::run(action, output);
+    }
     check_year(year_of(&cli.command))?;
     let token = env
         .token
@@ -220,6 +229,7 @@ async fn execute(cli: Cli, env: &Env, output: &mut Output<'_>) -> Result<(), Fai
                 }
             }
         }
+        Area::Skill { .. } => unreachable!("answered before the token is read"),
     }
 }
 
