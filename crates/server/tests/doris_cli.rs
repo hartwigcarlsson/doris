@@ -536,3 +536,202 @@ async fn too_large_underlag_is_refused_before_sending() {
     assert_eq!(refused.code, 1);
     assert_eq!(json(&refused)["error"]["code"], "attachment_too_large");
 }
+
+#[tokio::test]
+async fn the_total_of_underlag_is_limited_to_20_mib() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b, c) = (
+        dir.path().join("a.pdf"),
+        dir.path().join("b.pdf"),
+        dir.path().join("c.pdf"),
+    );
+    for file in [&a, &b, &c] {
+        std::fs::write(file, pdf(10 << 20)).unwrap();
+    }
+
+    let refused = cli(
+        &server,
+        Some(&token),
+        &[
+            "ver",
+            "new",
+            "--date",
+            "2026-02-02",
+            "--text",
+            "x",
+            "--debit",
+            "6110=1",
+            "--credit",
+            "1930=1",
+            "--attach",
+            a.to_str().unwrap(),
+            "--attach",
+            b.to_str().unwrap(),
+            "--attach",
+            c.to_str().unwrap(),
+            "--dry-run",
+            "--json",
+        ],
+    )
+    .await;
+
+    assert_eq!(refused.code, 1);
+    assert_eq!(json(&refused)["error"]["code"], "attachment_too_large");
+}
+
+#[tokio::test]
+async fn a_missing_attach_file_is_a_usage_error_naming_the_path() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+
+    let refused = cli(
+        &server,
+        Some(&token),
+        &[
+            "ver",
+            "new",
+            "--date",
+            "2026-02-02",
+            "--text",
+            "x",
+            "--debit",
+            "6110=1",
+            "--credit",
+            "1930=1",
+            "--attach",
+            "/finns/inte/kvitto.pdf",
+        ],
+    )
+    .await;
+
+    assert_eq!(refused.code, 2);
+    assert!(
+        refused.err.contains("/finns/inte/kvitto.pdf"),
+        "{}",
+        refused.err
+    );
+    let as_json = cli(
+        &server,
+        Some(&token),
+        &[
+            "ver",
+            "new",
+            "--date",
+            "2026-02-02",
+            "--text",
+            "x",
+            "--debit",
+            "6110=1",
+            "--credit",
+            "1930=1",
+            "--attach",
+            "/finns/inte/kvitto.pdf",
+            "--json",
+        ],
+    )
+    .await;
+    assert_eq!(json(&as_json)["error"]["code"], "usage");
+}
+
+#[tokio::test]
+async fn corrections_link_both_ways_and_others_are_null() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    cli(
+        &server,
+        Some(&token),
+        &[
+            "ver",
+            "new",
+            "--date",
+            "2026-02-02",
+            "--text",
+            "Fel",
+            "--debit",
+            "6110=100",
+            "--credit",
+            "1930=100",
+        ],
+    )
+    .await;
+
+    let before = json(&cli(&server, Some(&token), &["ver", "list", "--json"]).await);
+    cli(
+        &server,
+        Some(&token),
+        &["ver", "correct", "1", "--date", "2026-02-03"],
+    )
+    .await;
+    let after = json(&cli(&server, Some(&token), &["ver", "list", "--json"]).await);
+
+    assert_eq!(before[0]["corrects"], Value::Null);
+    assert_eq!(before[0]["corrected_by"], Value::Null);
+    assert_eq!(
+        (after[0]["number"].as_u64(), after[0]["corrects"].as_u64()),
+        (Some(2), Some(1))
+    );
+    assert_eq!(after[0]["corrected_by"], Value::Null);
+    assert_eq!(
+        (
+            after[1]["number"].as_u64(),
+            after[1]["corrected_by"].as_u64()
+        ),
+        (Some(1), Some(2))
+    );
+    assert_eq!(after[1]["corrects"], Value::Null);
+}
+
+#[tokio::test]
+async fn the_texts_are_exact() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    let new = |extra: &'static [&'static str]| {
+        let mut args = vec![
+            "ver",
+            "new",
+            "--date",
+            "2026-02-02",
+            "--text",
+            "Kontor",
+            "--debit",
+            "6110=800",
+            "--debit",
+            "2641=200",
+            "--credit",
+            "1930=1000",
+        ];
+        args.extend_from_slice(extra);
+        args
+    };
+
+    let dry = cli(&server, Some(&token), &new(&["--dry-run"])).await;
+    let booked = cli(&server, Some(&token), &new(&[])).await;
+    let dry_fix = cli(
+        &server,
+        Some(&token),
+        &["ver", "correct", "1", "--date", "2026-02-03", "--dry-run"],
+    )
+    .await;
+    let fix = cli(
+        &server,
+        Some(&token),
+        &["ver", "correct", "1", "--date", "2026-02-03"],
+    )
+    .await;
+
+    assert_eq!(
+        dry.out,
+        "Skulle bokföras som verifikation 1 i räkenskapsåret 2026 (2026-02-02, 1 000,00 kr, 0 underlag). Ingenting sparades.\n"
+    );
+    assert_eq!(
+        booked.out,
+        "Verifikation 1 i räkenskapsåret 2026 bokförd (2026-02-02, 1 000,00 kr, 0 underlag).\n"
+    );
+    assert_eq!(
+        dry_fix.out,
+        "Skulle rättas med verifikation 2. Ingenting sparades.\n"
+    );
+    assert_eq!(fix.out, "Verifikation 1 rättad med verifikation 2.\n");
+}

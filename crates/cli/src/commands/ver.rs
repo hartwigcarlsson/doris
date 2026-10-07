@@ -140,10 +140,13 @@ fn voucher_from_json(raw: &str) -> Result<Voucher, Failure> {
         .as_array()
         .ok_or_else(|| bad("\"lines\" saknas"))?
     {
-        let account = l["account"]
-            .as_u64()
-            .and_then(|a| u32::try_from(a).ok())
-            .ok_or_else(|| bad("\"account\" saknas"))?;
+        let account = match &l["account"] {
+            Value::Null => return Err(bad("\"account\" saknas")),
+            a => a
+                .as_u64()
+                .and_then(|a| u32::try_from(a).ok())
+                .ok_or_else(|| bad("\"account\" måste vara ett heltal"))?,
+        };
         lines.push((
             account,
             json_amount(l.get("debit"), "debit")?,
@@ -490,6 +493,53 @@ mod tests {
         assert_eq!(from_json, from_flags);
         let too_fine = r#"{"date":"d","text":"t","lines":[{"account":1,"debit":1.234}]}"#;
         assert_eq!(voucher_from_json(too_fine).unwrap_err().code, "usage");
+    }
+
+    #[test]
+    fn json_amounts_are_kronor_without_sign_and_with_two_decimals() {
+        for bad in [r#""-80""#, "-80", r#""1.234""#, "1.234", "true"] {
+            let raw =
+                format!(r#"{{"date":"d","text":"t","lines":[{{"account":1,"debit":{bad}}}]}}"#);
+            assert_eq!(voucher_from_json(&raw).unwrap_err().code, "usage", "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_json_account_must_be_an_integer() {
+        let raw = r#"{"date":"d","text":"t","lines":[{"account":"6110","debit":1}]}"#;
+        let failure = voucher_from_json(raw).unwrap_err();
+        assert_eq!(failure.code, "usage");
+        assert!(
+            failure.message.contains("måste vara ett heltal"),
+            "{failure:?}"
+        );
+    }
+
+    #[test]
+    fn underlag_over_the_limits_are_refused_before_anything_is_sent() {
+        let dir = std::env::temp_dir().join(format!("doris-cli-underlag-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = |name: &str, size: usize| {
+            let path = dir.join(name);
+            std::fs::write(&path, vec![b'x'; size]).unwrap();
+            path
+        };
+        let (big, a, b, c) = (
+            file("big.pdf", FILE_LIMIT + 1),
+            file("a.pdf", FILE_LIMIT),
+            file("b.pdf", FILE_LIMIT),
+            file("c.pdf", 1),
+        );
+        assert_eq!(
+            read_attachments(&[big]).unwrap_err().code,
+            "attachment_too_large"
+        );
+        assert_eq!(read_attachments(&[a.clone(), b.clone()]).unwrap().len(), 2);
+        assert_eq!(
+            read_attachments(&[a, b, c]).unwrap_err().code,
+            "attachment_too_large"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
