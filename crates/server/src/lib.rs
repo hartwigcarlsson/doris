@@ -7,6 +7,7 @@ mod company;
 mod grpc;
 mod invoicing;
 mod ledger;
+mod mcp;
 mod payroll;
 pub mod skatteverket;
 mod vat;
@@ -55,9 +56,10 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
     vat: VatApi,
     cors_origins: Vec<HeaderValue>,
     serve_frontend: bool,
+    rp_origin: HeaderValue,
 ) -> Router {
     let pool = ledger.pool.clone();
-    let mut app = Routes::new(AuthServiceServer::new(api))
+    let grpc = Routes::new(AuthServiceServer::new(api))
         .add_service(CompanyServiceServer::new(companies))
         .add_service(
             LedgerServiceServer::new(ledger)
@@ -73,9 +75,15 @@ pub fn router<E: RustEmbed + Send + Sync + 'static>(
         )
         .add_service(VatServiceServer::new(vat))
         .into_axum_router()
-        .layer(axum::middleware::from_fn_with_state(pool, auth_gate))
+        .layer(axum::middleware::from_fn_with_state(
+            pool.clone(),
+            auth_gate,
+        ))
         .layer(GrpcWebLayer::new())
         .layer(axum::middleware::map_response(hide_internal_messages));
+    let mut origins = cors_origins.clone();
+    origins.push(rp_origin);
+    let mut app = grpc.clone().merge(mcp::routes(pool, grpc, origins));
     app = if serve_frontend {
         // Compressed on the fly: brotli cuts the wasm to about a third.
         app.fallback_service(get(assets::serve::<E>).layer(CompressionLayer::new()))

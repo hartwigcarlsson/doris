@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 axum.workspace = true
 clap.workspace = true
+doris-cli.workspace = true
 doris-company.workspace = true
 doris-eventstore.workspace = true
 doris-identity.workspace = true
@@ -38,7 +39,6 @@ uuid.workspace = true
 webauthn-rs.workspace = true
 
 [dev-dependencies]
-doris-cli.workspace = true
 tempfile.workspace = true
 http-body-util.workspace = true
 hyper-util.workspace = true
