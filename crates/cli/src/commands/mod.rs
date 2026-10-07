@@ -3,6 +3,7 @@
 pub mod account;
 pub mod auth;
 pub mod company;
+pub mod ver;
 pub mod year;
 
 use crate::client::Doris;
@@ -71,7 +72,6 @@ pub async fn company(context: &Context) -> Result<cpb::CompanySummary, Failure> 
 
 /// The fiscal year's start date: --year (a year or a start date), or the
 /// year today (in Sweden) falls in.
-#[allow(dead_code)] // used by the ver and report commands that follow
 pub async fn fiscal_year(
     context: &Context,
     company_id: &str,

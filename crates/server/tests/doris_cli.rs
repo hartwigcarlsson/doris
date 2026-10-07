@@ -202,3 +202,337 @@ async fn dry_run_keeps_lists_lists_and_flags_objects() {
         text.out
     );
 }
+
+fn pdf(size: usize) -> Vec<u8> {
+    let mut data = b"%PDF-1.7\n".to_vec();
+    data.resize(size, b'x');
+    data
+}
+
+#[tokio::test]
+async fn a_voucher_is_booked_and_shown() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let receipt = dir.path().join("kvitto.pdf");
+    std::fs::write(&receipt, pdf(2000)).unwrap();
+    let receipt = receipt.to_str().unwrap();
+    let new = [
+        "ver",
+        "new",
+        "--year",
+        "2026",
+        "--date",
+        "2026-02-02",
+        "--text",
+        "Kontorsmaterial",
+        "--debit",
+        "6110=800",
+        "--debit",
+        "2641=200",
+        "--credit",
+        "1930=1000",
+        "--attach",
+        receipt,
+    ];
+
+    let text = cli(&server, Some(&token), &new).await;
+    let mut with_json = new.to_vec();
+    with_json.push("--json");
+    let second = json(&cli(&server, Some(&token), &with_json).await);
+    let listed = json(
+        &cli(
+            &server,
+            Some(&token),
+            &["ver", "list", "--year", "2026", "--json"],
+        )
+        .await,
+    );
+    let viewed = json(
+        &cli(
+            &server,
+            Some(&token),
+            &["ver", "view", "1", "--year", "2026", "--json"],
+        )
+        .await,
+    );
+
+    assert_eq!(text.code, 0, "{}", text.err);
+    assert!(text.out.contains("Verifikation 1"), "{}", text.out);
+    assert_eq!(second["dry_run"], false);
+    assert_eq!(second["number"], 2);
+    assert_eq!(second["fiscal_year_start"], "2026-01-01");
+    assert_eq!(
+        second["lines"][0],
+        serde_json::json!({"account": 6110, "debit": "800.00", "credit": "0.00"})
+    );
+    assert_eq!(second["attachments"][0]["file_name"], "kvitto.pdf");
+    assert_eq!(listed.as_array().unwrap().len(), 2);
+    assert_eq!(listed[0]["number"], 2, "newest first");
+    assert_eq!(viewed["text"], "Kontorsmaterial");
+    assert_eq!(viewed["lines"][2]["credit"], "1000.00");
+    assert_eq!(viewed["attachments"][0]["file_name"], "kvitto.pdf");
+}
+
+#[tokio::test]
+async fn a_dry_run_shows_the_number_and_books_nothing() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    let args = [
+        "ver",
+        "new",
+        "--year",
+        "2026",
+        "--date",
+        "2026-02-02",
+        "--text",
+        "Prov",
+        "--debit",
+        "6110=100",
+        "--credit",
+        "1930=100",
+        "--dry-run",
+    ];
+
+    let text = cli(&server, Some(&token), &args).await;
+    let mut with_json = args.to_vec();
+    with_json.push("--json");
+    let preview = json(&cli(&server, Some(&token), &with_json).await);
+    let listed = json(
+        &cli(
+            &server,
+            Some(&token),
+            &["ver", "list", "--year", "2026", "--json"],
+        )
+        .await,
+    );
+
+    assert_eq!(text.code, 0, "{}", text.err);
+    assert!(
+        text.out.contains("Skulle bokföras som verifikation 1"),
+        "{}",
+        text.out
+    );
+    assert_eq!(preview["dry_run"], true);
+    assert_eq!(preview["number"], 1);
+    assert_eq!(listed, serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn a_voucher_is_corrected_and_refusals_exit_1() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    cli(
+        &server,
+        Some(&token),
+        &[
+            "ver",
+            "new",
+            "--year",
+            "2026",
+            "--date",
+            "2026-02-02",
+            "--text",
+            "Fel",
+            "--debit",
+            "6110=100",
+            "--credit",
+            "1930=100",
+        ],
+    )
+    .await;
+
+    let dry = json(
+        &cli(
+            &server,
+            Some(&token),
+            &[
+                "ver",
+                "correct",
+                "1",
+                "--year",
+                "2026",
+                "--date",
+                "2026-02-03",
+                "--dry-run",
+                "--json",
+            ],
+        )
+        .await,
+    );
+    let real = json(
+        &cli(
+            &server,
+            Some(&token),
+            &[
+                "ver",
+                "correct",
+                "1",
+                "--year",
+                "2026",
+                "--date",
+                "2026-02-03",
+                "--json",
+            ],
+        )
+        .await,
+    );
+    let unbalanced = cli(
+        &server,
+        Some(&token),
+        &[
+            "ver",
+            "new",
+            "--year",
+            "2026",
+            "--date",
+            "2026-02-02",
+            "--text",
+            "Obalans",
+            "--debit",
+            "6110=100",
+            "--credit",
+            "1930=99",
+            "--json",
+        ],
+    )
+    .await;
+    let missing = cli(
+        &server,
+        Some(&token),
+        &["ver", "view", "9", "--year", "2026", "--json"],
+    )
+    .await;
+
+    assert_eq!(
+        (dry["dry_run"].as_bool(), dry["number"].as_u64()),
+        (Some(true), Some(2))
+    );
+    assert_eq!(
+        (
+            real["dry_run"].as_bool(),
+            real["number"].as_u64(),
+            real["corrects"].as_u64()
+        ),
+        (Some(false), Some(2), Some(1))
+    );
+    assert_eq!(unbalanced.code, 1);
+    assert_eq!(json(&unbalanced)["error"]["code"], "voucher_unbalanced");
+    assert_eq!(missing.code, 1);
+    assert_eq!(json(&missing)["error"]["code"], "voucher_not_found");
+}
+
+#[tokio::test]
+async fn a_read_only_token_cannot_book() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read"]).await;
+
+    let refused = cli(
+        &server,
+        Some(&token),
+        &[
+            "ver",
+            "new",
+            "--year",
+            "2026",
+            "--date",
+            "2026-02-02",
+            "--text",
+            "x",
+            "--debit",
+            "6110=1",
+            "--credit",
+            "1930=1",
+            "--json",
+        ],
+    )
+    .await;
+
+    assert_eq!(refused.code, 1);
+    assert_eq!(json(&refused)["error"]["code"], "missing_scope");
+}
+
+#[tokio::test]
+async fn a_voucher_comes_from_json_input() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("ver.json");
+    std::fs::write(
+        &input,
+        r#"{"date":"2026-02-02","text":"Från JSON","lines":[
+        {"account":6110,"debit":"100"},{"account":1930,"credit":"100"}]}"#,
+    )
+    .unwrap();
+
+    let booked = json(
+        &cli(
+            &server,
+            Some(&token),
+            &[
+                "ver",
+                "new",
+                "--year",
+                "2026",
+                "--input",
+                input.to_str().unwrap(),
+                "--json",
+            ],
+        )
+        .await,
+    );
+    let mixed = cli(
+        &server,
+        Some(&token),
+        &[
+            "ver",
+            "new",
+            "--input",
+            input.to_str().unwrap(),
+            "--text",
+            "x",
+            "--json",
+        ],
+    )
+    .await;
+
+    assert_eq!(booked["text"], "Från JSON");
+    assert_eq!(mixed.code, 2);
+    assert_eq!(json(&mixed)["error"]["code"], "usage");
+}
+
+#[tokio::test]
+async fn too_large_underlag_is_refused_before_sending() {
+    let server = TestServer::start().await;
+    let (_, token) = anna_with_token(&server, &["ledger:read", "ledger:write"]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let big = dir.path().join("stor.pdf");
+    std::fs::write(&big, pdf((10 << 20) + 1)).unwrap();
+
+    let refused = cli(
+        &server,
+        Some(&token),
+        &[
+            "ver",
+            "new",
+            "--year",
+            "2026",
+            "--date",
+            "2026-02-02",
+            "--text",
+            "x",
+            "--debit",
+            "6110=1",
+            "--credit",
+            "1930=1",
+            "--attach",
+            big.to_str().unwrap(),
+            "--json",
+            "--dry-run",
+        ],
+    )
+    .await;
+
+    assert_eq!(refused.code, 1);
+    assert_eq!(json(&refused)["error"]["code"], "attachment_too_large");
+}

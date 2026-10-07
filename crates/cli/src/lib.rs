@@ -49,6 +49,11 @@ enum Area {
         #[command(subcommand)]
         action: AccountAction,
     },
+    /// Verifikationer.
+    Ver {
+        #[command(subcommand)]
+        action: commands::ver::VerAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -172,12 +177,24 @@ async fn execute(cli: Cli, env: &Env, output: &mut Output<'_>) -> Result<(), Fai
         Area::Account {
             action: AccountAction::List,
         } => commands::account::list(&context, output).await,
+        Area::Ver { action } => {
+            use commands::ver::{self, VerAction};
+            match action {
+                VerAction::List { year } => ver::list(&context, output, year.as_deref()).await,
+                VerAction::View { number, year } => {
+                    ver::view(&context, output, number, year.as_deref()).await
+                }
+                VerAction::New(args) => ver::new(&context, output, &args).await,
+                VerAction::Correct { number, date, year } => {
+                    ver::correct(&context, output, number, &date, year.as_deref()).await
+                }
+            }
+        }
     }
 }
 
 /// The fiscal year `today` falls in, or the one named: `wanted` is a year
 /// (matches the start's year) or a start date. `starts` lie in order.
-#[allow(dead_code)] // used by `fiscal_year`
 pub(crate) fn pick_year(starts: &[String], wanted: Option<&str>, today: &str) -> Option<String> {
     match wanted {
         Some(w) if w.len() == 4 => starts
