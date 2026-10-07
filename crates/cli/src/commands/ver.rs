@@ -116,8 +116,8 @@ fn voucher_from_flags(
 }
 
 /// A JSON amount: kronor as a string or a number, no sign, two decimals at most.
-fn json_amount(value: Option<&Value>, field: &str) -> Result<i64, Failure> {
-    let bad = || Failure::usage(format!("Ogiltigt belopp i \"{field}\"."));
+fn json_amount(value: Option<&Value>, field: &str, prefix: &str) -> Result<i64, Failure> {
+    let bad = || Failure::usage(format!("{prefix}: ogiltigt belopp i \"{field}\"."));
     match value {
         None | Some(Value::Null) => Ok(0),
         Some(Value::String(s)) => parse_kronor(s).ok_or_else(bad),
@@ -147,6 +147,12 @@ pub(crate) fn voucher_from_value(value: &Value, prefix: &str) -> Result<Voucher,
         .as_array()
         .ok_or_else(|| bad("\"lines\" saknas"))?
     {
+        if let Some(unknown) = l.as_object().and_then(|o| {
+            o.keys()
+                .find(|k| !["account", "debit", "credit"].contains(&k.as_str()))
+        }) {
+            return Err(bad(&format!("okänt fält \"{unknown}\" i en rad")));
+        }
         let account = match &l["account"] {
             Value::Null => return Err(bad("\"account\" saknas")),
             a => a
@@ -156,8 +162,8 @@ pub(crate) fn voucher_from_value(value: &Value, prefix: &str) -> Result<Voucher,
         };
         lines.push((
             account,
-            json_amount(l.get("debit"), "debit")?,
-            json_amount(l.get("credit"), "credit")?,
+            json_amount(l.get("debit"), "debit", prefix)?,
+            json_amount(l.get("credit"), "credit", prefix)?,
         ));
     }
     let attachments = match value.get("attachments") {
@@ -611,6 +617,22 @@ mod tests {
                 format!(r#"{{"date":"d","text":"t","lines":[{{"account":1,"debit":{bad}}}]}}"#);
             assert_eq!(voucher_from_json(&raw).unwrap_err().code, "usage", "{bad}");
         }
+    }
+
+    #[test]
+    fn a_line_with_an_unknown_key_is_refused_and_a_bad_amount_names_its_source() {
+        let raw = r#"{"date":"d","text":"t","lines":[{"account":6110,"debet":"800"}]}"#;
+        let failure = voucher_from_json(raw).unwrap_err();
+        assert_eq!(failure.code, "usage");
+        assert_eq!(
+            failure.message,
+            "Ogiltig --input: okänt fält \"debet\" i en rad."
+        );
+        let raw = r#"{"date":"d","text":"t","lines":[{"account":1,"debit":"-1"}]}"#;
+        assert_eq!(
+            voucher_from_json(raw).unwrap_err().message,
+            "Ogiltig --input: ogiltigt belopp i \"debit\"."
+        );
     }
 
     #[test]

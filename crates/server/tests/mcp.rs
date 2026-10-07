@@ -1,6 +1,7 @@
 mod common;
 
-use common::{TestServer, api_token, company, device, http, post_json};
+use common::{TestServer, api_token, authed, company, device, http, post_json};
+use doris_proto::auth::v1 as pb;
 use serde_json::{Value, json};
 
 const V2026: &str = "2026-07-28";
@@ -549,4 +550,85 @@ async fn the_tools_answer_exactly_as_doris_cli_does() {
         balance,
         cli(&["report", "trial-balance", "--year", "2026"]).await
     );
+}
+
+#[tokio::test]
+async fn expired_and_revoked_tokens_get_401() {
+    let server = TestServer::start().await;
+    let mut annas = device();
+    let anna = server.sign_up(&mut annas, "anna@example.se", None).await;
+    let id = company(&server, &anna, "556016-0680").await;
+    let me = server
+        .grpc()
+        .get_status(authed(pb::GetStatusRequest {}, &anna))
+        .await
+        .unwrap()
+        .into_inner()
+        .current_user
+        .unwrap()
+        .id;
+    let then = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48);
+    let (_, expired) = doris_identity::create_api_token(
+        &server.pool,
+        me.parse().unwrap(),
+        "Gammal",
+        then + jiff::SignedDuration::from_hours(24),
+        vec![doris_identity::domain::Grant {
+            company_id: id.parse().unwrap(),
+            scopes: vec![doris_identity::domain::Scope::LedgerRead],
+        }],
+        then,
+    )
+    .await
+    .unwrap();
+    let revoked = api_token(&server, &anna, &mut annas, &[(&id, &["ledger:read"])]).await;
+    let token_id = server
+        .grpc()
+        .list_api_tokens(authed(pb::ListApiTokensRequest {}, &anna))
+        .await
+        .unwrap()
+        .into_inner()
+        .tokens[0]
+        .id
+        .clone();
+    server
+        .grpc()
+        .revoke_api_token(authed(pb::RevokeApiTokenRequest { token_id }, &anna))
+        .await
+        .unwrap();
+
+    for secret in [expired, revoked] {
+        let (status, _) = rpc(&server, &secret, json!(1), "ping", json!({})).await;
+        assert_eq!(status, 401);
+    }
+}
+
+#[tokio::test]
+async fn an_origin_in_cors_origins_is_allowed() {
+    let server = TestServer::start_with(
+        vec![axum::http::HeaderValue::from_static(
+            "https://app.example.se",
+        )],
+        true,
+    )
+    .await;
+    let (_, _, token) = anna_with_token(&server, &["ledger:read"]).await;
+    let bearer = format!("Bearer {token}");
+    let body = message(json!(1), "ping", json!({}))
+        .to_string()
+        .into_bytes();
+
+    let (status, _) = raw(
+        &server,
+        &[
+            ("authorization", bearer.as_str()),
+            ("mcp-protocol-version", V2026),
+            ("mcp-method", "ping"),
+            ("origin", "https://app.example.se"),
+        ],
+        body,
+    )
+    .await;
+
+    assert_eq!(status, 200);
 }

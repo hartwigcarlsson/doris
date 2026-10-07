@@ -227,14 +227,18 @@ async fn handle(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) ->
             let call = tokio::task::spawn_blocking(move || {
                 runtime.block_on(doris_cli::tools::call(doris, &tool, arguments))
             });
-            let Ok(outcome) = call.await else {
-                return error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    id,
-                    -32603,
-                    "internal",
-                    None,
-                );
+            let outcome = match call.await {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    tracing::warn!("mcp tool call: {err}");
+                    return error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        id,
+                        -32603,
+                        "internal",
+                        None,
+                    );
+                }
             };
             match outcome {
                 None => error(

@@ -8,9 +8,9 @@ use crate::output::{Failure, Output};
 use serde_json::{Map, Value, json};
 
 const COMPANY: &str =
-    "Organisationsnummer (med eller utan bindestreck) eller id. Utelämnas: tokenens enda företag.";
-const YEAR: &str = "Räkenskapsåret: ett år (\"2026\") eller dess startdatum (\"2026-07-01\"). Utelämnas: året som innehåller idag.";
-const DRY_RUN: &str = "true: kör alla regler och rulla tillbaka; ingenting sparas.";
+    "Organisation number (with or without hyphen) or id. Omitted: the token's only company.";
+const YEAR: &str = "The räkenskapsår: a year (\"2026\") or its start date (\"2026-07-01\"). Omitted: the year containing today.";
+const DRY_RUN: &str = "true: run every rule, then roll back; nothing is saved.";
 
 fn string(description: &str) -> Value {
     json!({"type": "string", "description": description})
@@ -58,8 +58,8 @@ pub fn list() -> Vec<Value> {
         "type": "object",
         "properties": {
             "account": {"type": "integer"},
-            "debit": {"type": ["string", "number"], "description": "Kronor, t.ex. \"800.00\"."},
-            "credit": {"type": ["string", "number"], "description": "Kronor, t.ex. \"800.00\"."}
+            "debit": {"type": ["string", "number"], "description": "Kronor, e.g. \"800.00\"."},
+            "credit": {"type": ["string", "number"], "description": "Kronor, e.g. \"800.00\"."}
         },
         "required": ["account"], "additionalProperties": false
     });
@@ -109,7 +109,7 @@ pub fn list() -> Vec<Value> {
         tool(
             "get_voucher",
             "One voucher with its lines and underlag (ver view).",
-            company_year(json!({"number": integer("Verifikationsnummer.")})),
+            company_year(json!({"number": integer("Voucher number.")})),
             &["number"],
             None,
         ),
@@ -118,8 +118,8 @@ pub fn list() -> Vec<Value> {
             "Book a voucher (ver new). Rehearse with dry_run: true first. A booked voucher can never be changed or removed.",
             json!({
                 "company": string(COMPANY),
-                "date": string("ÅÅÅÅ-MM-DD; decides the fiscal year."),
-                "text": string("Verifikationstext."),
+                "date": string("YYYY-MM-DD; decides the fiscal year."),
+                "text": string("Voucher text."),
                 "lines": {"type": "array", "items": line, "minItems": 1},
                 "dry_run": {"type": "boolean", "description": DRY_RUN}
             }),
@@ -130,8 +130,8 @@ pub fn list() -> Vec<Value> {
             "correct_voucher",
             "Reverse every line of a voucher with a new rättelse voucher (ver correct). Rehearse with dry_run: true first.",
             company_year(json!({
-                "number": integer("Verifikationet som rättas."),
-                "date": string("Rättelsens datum, ÅÅÅÅ-MM-DD: idag."),
+                "number": integer("The voucher to correct."),
+                "date": string("Date of the rättelse, YYYY-MM-DD: today."),
                 "dry_run": {"type": "boolean", "description": DRY_RUN}
             })),
             &["number", "date"],
@@ -147,7 +147,7 @@ pub fn list() -> Vec<Value> {
         tool(
             "account_ledger",
             "Huvudbok for one account (report ledger).",
-            company_year(json!({"account": integer("Kontonummer.")})),
+            company_year(json!({"account": integer("Account number.")})),
             &["account"],
             None,
         ),
